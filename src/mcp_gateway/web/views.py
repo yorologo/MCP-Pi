@@ -21,7 +21,7 @@ from flask import (
 )
 
 from .. import __version__
-from ..policy import summarize_grant_capabilities
+from ..policy import TOOL_CAPABILITIES, authorize_client, summarize_grant_capabilities
 from .auth import (
     check_password_hash,
     is_rate_limited,
@@ -437,6 +437,99 @@ def project_toggle_write(target_id: str, project_id: str):
 # AI Clients Management
 # ==========================================
 
+GRANT_COMMON_CAPABILITIES = (
+    ("read", "Read"),
+    ("write", "Write"),
+    ("execute", "Tasks / Execute"),
+    ("target_shell", "Target shell"),
+    ("admin", "Gateway admin"),
+    ("*", "All capabilities (*)"),
+)
+
+
+def _known_grant_capabilities():
+    caps = {"*"}
+    for allowed in TOOL_CAPABILITIES.values():
+        caps.update(allowed)
+    return caps
+
+
+def _normalize_grant_capability(raw: str) -> str:
+    tokens = []
+    for token in str(raw or "").split(","):
+        token = token.strip()
+        if token and token not in tokens:
+            tokens.append(token)
+    if not tokens:
+        raise ValueError("Capability is required.")
+    known = _known_grant_capabilities()
+    unknown = [token for token in tokens if token not in known]
+    if unknown:
+        raise ValueError(f"Unknown grant capability: {', '.join(unknown)}")
+    if "*" in tokens and len(tokens) > 1:
+        raise ValueError("'*' cannot be combined with other capabilities.")
+    return ",".join(tokens)
+
+
+def _grant_form_data(registry, client_id: str):
+    # Validate the client first so malformed URLs fail closed.
+    registry.get_client(client_id)
+    target_id = request.form.get("target_id", "").strip()
+    project_id = request.form.get("project_id", "").strip() or "*"
+    capability = _normalize_grant_capability(request.form.get("capability", ""))
+
+    target_ids = {t["id"] for t in registry.list_targets()}
+    projects = registry.list_projects()
+    if target_id != "*" and target_id not in target_ids:
+        raise ValueError(f"Unknown Target: {target_id}")
+    if target_id == "*" and project_id != "*":
+        raise ValueError("Project must be '*' when Target is '*'.")
+    if project_id != "*":
+        if not any(p["target_id"] == target_id and p["id"] == project_id for p in projects):
+            raise ValueError(f"Project '{project_id}' is not configured under Target '{target_id}'.")
+
+    if target_id == "*" and project_id == "*" and capability == "*":
+        if request.form.get("confirm_global") != "on":
+            raise ValueError("Global */*/* grant requires explicit confirmation.")
+
+    return {
+        "client_id": client_id,
+        "target_id": target_id,
+        "project_id": project_id,
+        "capability": capability,
+        "enabled": request.form.get("enabled") == "on",
+    }
+
+
+def _grant_for_client_or_404(registry, client_id: str, grant_id: int):
+    try:
+        grant = registry.get_grant(grant_id)
+    except KeyError:
+        abort(404, description="Grant not found")
+    if grant.get("client_id") != client_id:
+        abort(404, description="Grant not found")
+    return grant
+
+
+def _client_grants_context(registry, client_id: str, editing_grant=None, access_result=None):
+    client = registry.get_client(client_id)
+    targets = registry.list_targets()
+    projects = registry.list_projects()
+    grants = registry.list_grants(client_id=client_id)
+    common_values = {value for value, _ in GRANT_COMMON_CAPABILITIES}
+    specific = sorted(_known_grant_capabilities() - common_values)
+    return {
+        "client": client,
+        "grants": grants,
+        "targets": targets,
+        "projects": projects,
+        "common_capabilities": GRANT_COMMON_CAPABILITIES,
+        "specific_capabilities": specific,
+        "tool_names": sorted(TOOL_CAPABILITIES),
+        "editing_grant": editing_grant,
+        "access_result": access_result,
+    }
+
 @bp.route("/clients")
 @login_required
 def clients_list():
@@ -522,6 +615,140 @@ def client_toggle(client_id: str):
     except KeyError:
         abort(404, description="AI Client not found")
     return redirect(url_for("admin.clients_list"))
+
+
+@bp.route("/clients/<client_id>/grants")
+@login_required
+def client_grants(client_id: str):
+    registry = get_registry()
+    try:
+        editing_grant = None
+        edit_id = request.args.get("edit", "").strip()
+        if edit_id:
+            editing_grant = _grant_for_client_or_404(registry, client_id, int(edit_id))
+        return render_template("client_grants.html", **_client_grants_context(registry, client_id, editing_grant=editing_grant))
+    except KeyError:
+        abort(404, description="AI Client not found")
+    except ValueError:
+        abort(404, description="Grant not found")
+
+
+@bp.route("/clients/<client_id>/grants/add", methods=["POST"])
+@login_required
+def client_grant_add(client_id: str):
+    registry = get_registry()
+    try:
+        data = _grant_form_data(registry, client_id)
+        grant_id = registry.add_grant(data)
+        record_audit(
+            "add_grant",
+            target_id=data["target_id"],
+            project_id=data["project_id"],
+            detail=f"client={client_id} grant_id={grant_id} capability={data['capability']} enabled={data['enabled']}",
+        )
+        flash(f"Grant #{grant_id} created for '{client_id}'.", "success")
+    except KeyError:
+        abort(404, description="AI Client not found")
+    except ValueError as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("admin.client_grants", client_id=client_id))
+
+
+@bp.route("/clients/<client_id>/grants/<int:grant_id>/edit", methods=["POST"])
+@login_required
+def client_grant_edit(client_id: str, grant_id: int):
+    registry = get_registry()
+    _grant_for_client_or_404(registry, client_id, grant_id)
+    try:
+        data = _grant_form_data(registry, client_id)
+        registry.update_grant(grant_id, {k: v for k, v in data.items() if k != "client_id"})
+        record_audit(
+            "update_grant",
+            target_id=data["target_id"],
+            project_id=data["project_id"],
+            detail=f"client={client_id} grant_id={grant_id} capability={data['capability']} enabled={data['enabled']}",
+        )
+        flash(f"Grant #{grant_id} updated.", "success")
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("admin.client_grants", client_id=client_id, edit=grant_id))
+    return redirect(url_for("admin.client_grants", client_id=client_id))
+
+
+@bp.route("/clients/<client_id>/grants/<int:grant_id>/toggle", methods=["POST"])
+@login_required
+def client_grant_toggle(client_id: str, grant_id: int):
+    registry = get_registry()
+    grant = _grant_for_client_or_404(registry, client_id, grant_id)
+    new_state = not grant.get("enabled", True)
+    registry.update_grant(grant_id, {"enabled": new_state})
+    record_audit(
+        "toggle_grant",
+        target_id=grant.get("target_id"),
+        project_id=grant.get("project_id"),
+        detail=f"client={client_id} grant_id={grant_id} enabled={new_state}",
+    )
+    flash(f"Grant #{grant_id} is now {'enabled' if new_state else 'disabled'}.", "info")
+    return redirect(url_for("admin.client_grants", client_id=client_id))
+
+
+@bp.route("/clients/<client_id>/grants/<int:grant_id>/delete", methods=["POST"])
+@login_required
+def client_grant_delete(client_id: str, grant_id: int):
+    registry = get_registry()
+    grant = _grant_for_client_or_404(registry, client_id, grant_id)
+    registry.delete_grant(grant_id)
+    record_audit(
+        "delete_grant",
+        target_id=grant.get("target_id"),
+        project_id=grant.get("project_id"),
+        detail=f"client={client_id} grant_id={grant_id} capability={grant.get('capability')}",
+    )
+    flash(f"Grant #{grant_id} deleted.", "warning")
+    return redirect(url_for("admin.client_grants", client_id=client_id))
+
+
+@bp.route("/clients/<client_id>/grants/check", methods=["POST"])
+@login_required
+def client_grant_check(client_id: str):
+    registry = get_registry()
+    try:
+        registry.get_client(client_id)
+    except KeyError:
+        abort(404, description="AI Client not found")
+
+    target_id = request.form.get("target_id", "").strip()
+    project_id = request.form.get("project_id", "").strip()
+    tool_name = request.form.get("tool_name", "").strip()
+    if tool_name not in TOOL_CAPABILITIES:
+        flash("Unknown tool selected for access check.", "danger")
+        return redirect(url_for("admin.client_grants", client_id=client_id))
+
+    policy_target = None if target_id in ("", "*") else target_id
+    policy_project = None if project_id in ("", "*") else project_id
+    allowed, error = authorize_client(
+        client_id=client_id,
+        target_id=policy_target,
+        project_id=policy_project,
+        tool_name=tool_name,
+        registry=registry,
+    )
+    access_result = {
+        "allowed": allowed,
+        "message": "ALLOWED" if allowed else (error or "DENIED"),
+        "target_id": target_id or "*",
+        "project_id": project_id or "*",
+        "tool_name": tool_name,
+    }
+    record_audit(
+        "check_grant_access",
+        target_id=policy_target,
+        project_id=policy_project,
+        success=allowed,
+        error_code=None if allowed else "ACCESS_DENIED",
+        detail=f"client={client_id} tool={tool_name} result={access_result['message']}",
+    )
+    return render_template("client_grants.html", **_client_grants_context(registry, client_id, access_result=access_result))
 
 
 # ==========================================

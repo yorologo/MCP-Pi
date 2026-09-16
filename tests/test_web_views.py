@@ -291,6 +291,194 @@ class TestWebViews(unittest.TestCase):
         client_after = self.registry.get_client("gemini-client")
         self.assertFalse(client_after["enabled"])
 
+    def test_client_grants_crud_and_effective_access(self):
+        self._login()
+        self.registry.add_client({
+            "id": "grant-client",
+            "display_name": "Grant Client",
+            "provider": "test",
+            "protocol": "mcp",
+            "enabled": True,
+            "notes": "",
+        })
+
+        # Grant management page exists and is reachable from the real client scope.
+        res_page = self.client.get("/clients/grant-client/grants")
+        self.assertEqual(res_page.status_code, 200)
+        self.assertIn(b"Client Grants: grant-client", res_page.data)
+        self.assertIn(b"Check Effective Access", res_page.data)
+
+        # Add a read-only grant.
+        res_add = self.client.post(
+            "/clients/grant-client/grants/add",
+            data={
+                "target_id": "t1",
+                "project_id": "p1",
+                "capability": "read",
+                "enabled": "on",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(res_add.status_code, 200)
+        grants = self.registry.list_grants(client_id="grant-client")
+        self.assertEqual(len(grants), 1)
+        grant_id = grants[0]["id"]
+        self.assertEqual(grants[0]["capability"], "read")
+
+        # Real Policy Engine says read_file is allowed, run_command is not.
+        res_check_read = self.client.post(
+            "/clients/grant-client/grants/check",
+            data={
+                "target_id": "t1",
+                "project_id": "p1",
+                "tool_name": "read_file",
+                "csrf_token": "valid-token",
+            },
+        )
+        self.assertEqual(res_check_read.status_code, 200)
+        self.assertIn(b"ALLOWED", res_check_read.data)
+
+        res_check_shell = self.client.post(
+            "/clients/grant-client/grants/check",
+            data={
+                "target_id": "t1",
+                "project_id": "p1",
+                "tool_name": "run_command",
+                "csrf_token": "valid-token",
+            },
+        )
+        self.assertEqual(res_check_shell.status_code, 200)
+        self.assertIn(b"DENIED", res_check_shell.data)
+        self.assertIn(b"TOOL_NOT_ALLOWED", res_check_shell.data)
+
+        # Edit the same grant to target_shell, then Policy Engine allows run_command.
+        res_edit = self.client.post(
+            f"/clients/grant-client/grants/{grant_id}/edit",
+            data={
+                "target_id": "t1",
+                "project_id": "p1",
+                "capability": "target_shell",
+                "enabled": "on",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(res_edit.status_code, 200)
+        self.assertEqual(self.registry.get_grant(grant_id)["capability"], "target_shell")
+        self.registry.set_setting("shell_enabled", "true")
+
+        res_check_shell = self.client.post(
+            "/clients/grant-client/grants/check",
+            data={
+                "target_id": "t1",
+                "project_id": "p1",
+                "tool_name": "run_command",
+                "csrf_token": "valid-token",
+            },
+        )
+        self.assertEqual(res_check_shell.status_code, 200)
+        self.assertIn(b"ALLOWED", res_check_shell.data)
+
+        # Disable/enable is reversible and immediately changes effective policy.
+        res_toggle = self.client.post(
+            f"/clients/grant-client/grants/{grant_id}/toggle",
+            data={"csrf_token": "valid-token"},
+            follow_redirects=True,
+        )
+        self.assertEqual(res_toggle.status_code, 200)
+        self.assertFalse(self.registry.get_grant(grant_id)["enabled"])
+
+        res_check_disabled = self.client.post(
+            "/clients/grant-client/grants/check",
+            data={
+                "target_id": "t1",
+                "project_id": "p1",
+                "tool_name": "run_command",
+                "csrf_token": "valid-token",
+            },
+        )
+        self.assertIn(b"DENIED", res_check_disabled.data)
+
+        self.client.post(
+            f"/clients/grant-client/grants/{grant_id}/toggle",
+            data={"csrf_token": "valid-token"},
+        )
+        self.assertTrue(self.registry.get_grant(grant_id)["enabled"])
+
+        # Delete removes the grant rather than silently disabling it.
+        res_delete = self.client.post(
+            f"/clients/grant-client/grants/{grant_id}/delete",
+            data={"csrf_token": "valid-token"},
+            follow_redirects=True,
+        )
+        self.assertEqual(res_delete.status_code, 200)
+        self.assertEqual(self.registry.list_grants(client_id="grant-client"), [])
+
+    def test_client_grant_validation_and_scope_ownership(self):
+        self._login()
+        for client_id in ("client-a", "client-b"):
+            self.registry.add_client({
+                "id": client_id,
+                "display_name": client_id,
+                "provider": "test",
+                "protocol": "mcp",
+                "enabled": True,
+                "notes": "",
+            })
+
+        # Wildcard Target + named Project is ambiguous and rejected.
+        res_invalid_scope = self.client.post(
+            "/clients/client-a/grants/add",
+            data={
+                "target_id": "*",
+                "project_id": "p1",
+                "capability": "read",
+                "enabled": "on",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(res_invalid_scope.status_code, 200)
+        self.assertIn(b"Project must be", res_invalid_scope.data)
+        self.assertEqual(self.registry.list_grants(client_id="client-a"), [])
+
+        # Fully global */*/* requires explicit acknowledgement.
+        res_global_denied = self.client.post(
+            "/clients/client-a/grants/add",
+            data={
+                "target_id": "*",
+                "project_id": "*",
+                "capability": "*",
+                "enabled": "on",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"requires explicit confirmation", res_global_denied.data)
+        self.assertEqual(self.registry.list_grants(client_id="client-a"), [])
+
+        self.client.post(
+            "/clients/client-a/grants/add",
+            data={
+                "target_id": "*",
+                "project_id": "*",
+                "capability": "*",
+                "enabled": "on",
+                "confirm_global": "on",
+                "csrf_token": "valid-token",
+            },
+        )
+        grant_id = self.registry.list_grants(client_id="client-a")[0]["id"]
+
+        # A grant cannot be manipulated through another client's URL.
+        res_cross_client = self.client.post(
+            f"/clients/client-b/grants/{grant_id}/toggle",
+            data={"csrf_token": "valid-token"},
+        )
+        self.assertEqual(res_cross_client.status_code, 404)
+        self.assertTrue(self.registry.get_grant(grant_id)["enabled"])
+
     def test_activity_view(self):
         self._login()
         self.registry.record_activity({"action": "sample_tool_run", "target_id": "t1", "success": True})

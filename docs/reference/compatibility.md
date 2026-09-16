@@ -2,11 +2,11 @@
 
 `compatibility.json` is the machine-readable source for versioned software contracts. Documentation must match it; historical release notes must not be rewritten to look current.
 
-## Current 1.3.2 contracts
+## Current 1.3.3 contracts
 
 | Contract | Value |
 | --- | --- |
-| Gateway | `1.3.2` |
+| Gateway | `1.3.3` |
 | Core API | `1` |
 | Bridge API | `1` |
 | Tool catalog | `3` |

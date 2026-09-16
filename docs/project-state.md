@@ -2,15 +2,15 @@
 
 This document is intentionally short and dynamic. Detailed historical evidence belongs in `docs/releases/`, `docs/archive/` and Git history.
 
-**Software baseline:** MCP-Pi Gateway 1.3.2
+**Software baseline:** MCP-Pi Gateway 1.3.3
 **Development branch:** `develop`
-**Latest immutable tag:** `v1.3.2`
-**Current work:** post-1.3.2 maintenance; release state is represented by the immutable tag and runtime provenance
+**Latest immutable tag:** `v1.3.3`
+**Current work:** post-1.3.3 maintenance; release state is represented by the immutable tag and runtime provenance
 
 ## Current production baseline
 
 ```text
-Gateway: 1.3.2
+Gateway: 1.3.3
 Core API: 1
 Bridge API: 1
 Tool catalog: 3 / 21 tools

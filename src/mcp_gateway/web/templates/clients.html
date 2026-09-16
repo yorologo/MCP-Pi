@@ -64,6 +64,9 @@
               {% endif %}
             </form>
 
+            <a href="{{ url_for('admin.client_grants', client_id=c.id) }}" class="inline-flex min-h-11 items-center rounded border border-fuchsia-800 bg-fuchsia-950/60 px-3 py-2 text-fuchsia-300 transition hover:bg-fuchsia-900">
+              Grants
+            </a>
             <a href="{{ url_for('admin.client_edit', client_id=c.id) }}" class="inline-flex min-h-11 items-center rounded border border-indigo-800 bg-indigo-950/60 px-3 py-2 text-indigo-300 transition hover:bg-indigo-900">
               Edit
             </a>

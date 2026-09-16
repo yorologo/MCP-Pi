@@ -59,7 +59,7 @@ Existing installations preserve these persisted values when application code is 
 
 ## Targets and Projects
 
-Targets, Projects, AI clients and grants live in the Registry and should normally be managed through Admin Console. `config/targets.local.json` is a local compatibility/bootstrap file, not the production source of truth once SQLite is active.
+Targets, Projects, AI clients and grants live in the Registry and should normally be managed through Admin Console. Client grants are managed under **AI Clients → Grants**; direct SQLite editing is not part of the normal workflow. `config/targets.local.json` is a local compatibility/bootstrap file, not the production source of truth once SQLite is active.
 
 A Target includes endpoint/user/platform information; identity must still be verified by the pinned SSH host key.
 

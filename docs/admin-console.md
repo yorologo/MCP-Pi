@@ -37,11 +37,26 @@ sudo -u mcp-gateway mcp-gateway setup
 - **Dashboard** — operational summary and recent activity.
 - **Targets** — endpoint/platform/identity-related configuration and connectivity test.
 - **Projects** — authorized roots and read/write policy.
-- **Clients** — AI client identities and effective capabilities.
+- **Clients** — AI client identities, effective capabilities and per-client Grant management.
+  - **Grants** — list, create, edit, enable/disable and delete Target/Project capability grants.
+  - **Check Effective Access** — evaluate a selected tool through the real `authorize_client()` Policy Engine before relying on a grant.
 - **Activity** — audit records.
 - **System** — runtime/hardware information.
 - **Settings** — limits and kill switches.
 - **Maintenance** — Doctor, backup and safe maintenance actions.
+
+
+## Client grants
+
+Open **AI Clients → Grants** for a client. Each grant reuses the existing Registry model:
+
+```text
+Client → Target → Project → Capability → Enabled
+```
+
+Prefer the narrowest scope that meets the need. `*` is supported for compatibility and deliberate broad access, but a fully global `* / * / *` grant requires explicit confirmation in the UI. The page supports create/edit/enable/disable/delete without direct SQLite access.
+
+**Check Effective Access** calls the same `authorize_client()` function used by MCP discovery/execution, so results include grants plus client/Target/Project state and global kill switches. It does not maintain a parallel permission model.
 
 ## Security
 

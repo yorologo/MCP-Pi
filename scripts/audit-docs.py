@@ -33,7 +33,7 @@ CURRENT_FILES = [
 
 CONTEXT_FILES = [
     ROOT / "CHANGELOG.md",
-    DOCS / "releases" / "v1.3.2.md",
+    DOCS / "releases" / "v1.3.3.md",
     DOCS / "reference" / "compatibility.md",
     DOCS / "reference" / "roadmap.md",
 ]
@@ -166,6 +166,18 @@ def main() -> int:
         for required in ("nohup setsid flock", ".local/state", "STATE=", "INTERRUPTED", "--expect-marker", "MCP_PI_RESUMABLE_JOB_ID"):
             if required not in runner:
                 add(errors, f"resumable runner contract missing {required}")
+
+    grant_template = ROOT / "src" / "mcp_gateway" / "web" / "templates" / "client_grants.html"
+    grant_views = (ROOT / "src" / "mcp_gateway" / "web" / "views.py").read_text(encoding="utf-8")
+    if not grant_template.exists():
+        add(errors, "Admin grant management template is missing")
+    for required in ("client_grants", "client_grant_add", "client_grant_edit", "client_grant_toggle", "client_grant_delete", "client_grant_check", "authorize_client"):
+        if required not in grant_views:
+            add(errors, f"Admin grant management contract missing {required}")
+    admin_doc = (DOCS / "admin-console.md").read_text(encoding="utf-8")
+    for required in ("AI Clients → Grants", "Check Effective Access", "authorize_client()"):
+        if required not in admin_doc:
+            add(errors, f"Admin grant documentation missing {required}")
 
     deployer = (ROOT / "scripts" / "deploy-pi.sh").read_text(encoding="utf-8")
     for required in ("MCP_PI_RESUMABLE_JOB_ID", "MCP_DEPLOY_ALLOW_DIRECT", "CONTROL_PLANE_RESTART=EXPECTED", "CONTROL_PLANE_RESTORED"):

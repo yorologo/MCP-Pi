@@ -2,6 +2,20 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
+## 1.3.3 — 2026-09-16
+
+### Added
+- Admin Console Grant management under **AI Clients → Grants** using the existing Registry CRUD and authorization model.
+- Real-policy **Check Effective Access** backed directly by `authorize_client()`.
+- Validation, CSRF-protected mutations, audit events, cross-client ownership checks and explicit confirmation for global `* / * / *` grants.
+
+### Compatibility
+- No Registry schema, Tool Catalog, MCP protocol or authorization-semantics changes.
+- Direct SQLite editing is no longer required for normal Grant administration.
+
+### Verification
+- 1.3.3 promotion requires the full local gate, CI on `develop` and `main`, deterministic ARMv6 packaging from the immutable tag, and post-release production deployment/Doctor acceptance on the same SHA.
+
 ## 1.3.2 — 2026-09-15
 
 ### Changed

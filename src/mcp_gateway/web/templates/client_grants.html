@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Client Grants - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Client Grants: {{ client.id }}</h1>
+      <p class="page-description">Explicit Target / Project capabilities for this AI client</p>
+    </div>
+    <a href="{{ url_for('admin.clients_list') }}" class="btn-secondary w-full sm:w-auto">&larr; Back to Clients</a>
+  </div>
+
+  <div class="card p-4 text-sm text-slate-300">
+    Grants answer <strong>which client may do what and where</strong>. Project read/write flags and global kill switches remain independent gates.
+    Use <strong>Check Effective Access</strong> to evaluate the real Policy Engine before relying on a permission.
+  </div>
+
+  <form id="grant-form" method="POST" action="{% if editing_grant %}{{ url_for('admin.client_grant_edit', client_id=client.id, grant_id=editing_grant.id) }}{% else %}{{ url_for('admin.client_grant_add', client_id=client.id) }}{% endif %}" class="card space-y-5 p-4 sm:p-6">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="flex items-center justify-between gap-4">
+      <div>
+        <h2 class="text-lg font-semibold text-white">{% if editing_grant %}Edit Grant #{{ editing_grant.id }}{% else %}Add Grant{% endif %}</h2>
+        <p class="text-xs text-slate-400">Prefer the narrowest Target, Project and capability that meets the need.</p>
+      </div>
+      {% if editing_grant %}<a href="{{ url_for('admin.client_grants', client_id=client.id) }}" class="btn-secondary">Cancel edit</a>{% endif %}
+    </div>
+
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div>
+        <label for="grant-target" class="field-label">Target</label>
+        <select id="grant-target" name="target_id" class="field font-mono" required>
+          {% set selected_target = editing_grant.target_id if editing_grant else '' %}
+          <option value="">Select Target</option>
+          <option value="*" {% if selected_target == '*' %}selected{% endif %}>* (all targets)</option>
+          {% for target in targets %}<option value="{{ target.id }}" {% if selected_target == target.id %}selected{% endif %}>{{ target.id }}{% if not target.enabled %} (disabled){% endif %}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="grant-project" class="field-label">Project</label>
+        {% set selected_project = editing_grant.project_id if editing_grant else '*' %}
+        <select id="grant-project" name="project_id" class="field font-mono" required>
+          <option value="*" {% if selected_project == '*' %}selected{% endif %}>* (all projects in scope)</option>
+          {% for project in projects %}<option value="{{ project.id }}" {% if selected_project == project.id %}selected{% endif %}>{{ project.target_id }} / {{ project.id }}{% if not project.enabled %} (disabled){% endif %}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="grant-capability" class="field-label">Capability</label>
+        <input id="grant-capability" name="capability" class="field font-mono" list="grant-capability-options" required value="{{ editing_grant.capability if editing_grant else 'read' }}">
+        <datalist id="grant-capability-options">
+          {% for value, label in common_capabilities %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          {% for value in specific_capabilities %}<option value="{{ value }}">Specific tool capability</option>{% endfor %}
+        </datalist>
+        <p class="mt-1 text-xs text-slate-500">Known capabilities only; comma-separated values are supported for compatibility. Use separate grants when practical.</p>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-5">
+      <label class="inline-flex items-center gap-2 text-sm text-slate-300">
+        <input type="checkbox" name="enabled" class="rounded" {% if not editing_grant or editing_grant.enabled %}checked{% endif %}> Enabled
+      </label>
+      <label class="inline-flex items-center gap-2 text-xs text-amber-300">
+        <input type="checkbox" name="confirm_global" class="rounded"> I understand that <code>* / * / *</code> grants every compatible capability globally.
+      </label>
+    </div>
+
+    <div class="flex justify-end">
+      <button type="submit" class="btn-primary">{% if editing_grant %}Save Grant{% else %}Add Grant{% endif %}</button>
+    </div>
+  </form>
+
+  <div class="table-region" role="region" aria-label="Client grants" tabindex="0">
+    <table class="data-table min-w-[56rem]">
+      <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
+        <tr><th class="py-3 px-4">ID</th><th class="py-3 px-4">Target</th><th class="py-3 px-4">Project</th><th class="py-3 px-4">Capability</th><th class="py-3 px-4">Status</th><th class="py-3 px-4 text-right">Actions</th></tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800 text-slate-300">
+        {% for grant in grants %}
+        <tr class="hover:bg-slate-900/40">
+          <td class="py-3 px-4 font-mono">#{{ grant.id }}</td>
+          <td class="py-3 px-4 font-mono">{{ grant.target_id }}</td>
+          <td class="py-3 px-4 font-mono">{{ grant.project_id or '*' }}</td>
+          <td class="py-3 px-4 font-mono text-indigo-300">{{ grant.capability }}</td>
+          <td class="py-3 px-4">{% if grant.enabled %}<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">ENABLED</span>{% else %}<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950 text-rose-300 border border-rose-800">DISABLED</span>{% endif %}</td>
+          <td class="py-3 px-4 text-right space-x-2">
+            <form method="POST" action="{{ url_for('admin.client_grant_toggle', client_id=client.id, grant_id=grant.id) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn-secondary">{% if grant.enabled %}Disable{% else %}Enable{% endif %}</button>
+            </form>
+            <a href="{{ url_for('admin.client_grants', client_id=client.id, edit=grant.id) }}#grant-form" class="btn-secondary">Edit</a>
+            <form method="POST" action="{{ url_for('admin.client_grant_delete', client_id=client.id, grant_id=grant.id) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="px-3 py-2 rounded border border-rose-800 bg-rose-950/60 text-rose-300" data-confirm="Delete grant #{{ grant.id }} for {{ client.id }}?">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="py-6 text-center text-slate-500">No grants configured for this client.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <form method="POST" action="{{ url_for('admin.client_grant_check', client_id=client.id) }}" class="card space-y-5 p-4 sm:p-6">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div>
+      <h2 class="text-lg font-semibold text-white">Check Effective Access</h2>
+      <p class="text-xs text-slate-400">Calls the same <code>authorize_client()</code> policy used by MCP tool discovery and execution.</p>
+    </div>
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div><label for="check-target" class="field-label">Target</label><select id="check-target" name="target_id" class="field font-mono"><option value="*">* (no Target constraint)</option>{% for target in targets %}<option value="{{ target.id }}">{{ target.id }}</option>{% endfor %}</select></div>
+      <div><label for="check-project" class="field-label">Project</label><select id="check-project" name="project_id" class="field font-mono"><option value="*">* (no Project constraint)</option>{% for project in projects %}<option value="{{ project.id }}">{{ project.target_id }} / {{ project.id }}</option>{% endfor %}</select></div>
+      <div><label for="check-tool" class="field-label">Tool</label><select id="check-tool" name="tool_name" class="field font-mono" required>{% for tool in tool_names %}<option value="{{ tool }}">{{ tool }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="flex justify-end"><button type="submit" class="btn-primary">Check Access</button></div>
+    {% if access_result %}
+    <div class="rounded border p-4 {% if access_result.allowed %}border-emerald-800 bg-emerald-950/30{% else %}border-rose-800 bg-rose-950/30{% endif %}">
+      <div class="font-semibold {% if access_result.allowed %}text-emerald-300{% else %}text-rose-300{% endif %}">{{ 'ALLOWED' if access_result.allowed else 'DENIED' }}</div>
+      <div class="mt-1 font-mono text-xs text-slate-300">{{ access_result.tool_name }} @ {{ access_result.target_id }} / {{ access_result.project_id }}</div>
+      <div class="mt-2 text-sm text-slate-300">{{ access_result.message }}</div>
+    </div>
+    {% endif %}
+  </form>
+</div>
+{% endblock %}

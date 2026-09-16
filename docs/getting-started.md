@@ -55,7 +55,7 @@ In Admin Console:
 1. **Targets → Add Target** — ID, host, port, user and SSH alias if used.
 2. Verify the SSH host fingerprint before trusting the Target; keep `StrictHostKeyChecking=yes`.
 3. **Projects → Add Project** — select Target and define the allowed root.
-4. **Clients / Grants** — create the client identity and grant only the capabilities it needs.
+4. **AI Clients → Grants** — create the client identity, open its Grants page and grant only the Target/Project capabilities it needs; use **Check Effective Access** before relying on the permission.
 5. Enable structured writes or trusted Target shell only if required.
 
 Fresh security defaults are:

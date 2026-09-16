@@ -16,7 +16,7 @@ flowchart LR
 
 | Contract | Value |
 | --- | --- |
-| Gateway | **1.3.2** |
+| Gateway | **1.3.3** |
 | Core API | 1 |
 | Bridge API | 1 |
 | Tool catalog | v3 / 21 tools |
@@ -24,7 +24,7 @@ flowchart LR
 | MCP protocol | `2026-07-28` |
 | Python | 3.9+ |
 
-`main` is the stable release branch and `develop` remains the integration branch. The current published release is `v1.3.2`.
+`main` is the stable release branch and `develop` remains the integration branch. The current published release is `v1.3.3`.
 
 ## Why this exists
 
@@ -59,7 +59,7 @@ Then configure the Admin password:
 sudo -u mcp-gateway mcp-gateway setup
 ```
 
-Open the Admin Console using the appliance IP shown by your network, sign in, then add the first Target, Project, AI client and grant.
+Open the Admin Console using the appliance IP shown by your network, sign in, then add the first Target, Project and AI client. Manage that client's permissions from **AI Clients → Grants** and use **Check Effective Access** to verify the real policy decision.
 
 A source checkout also supports `./install.sh --check`; if no prebuilt adapter is present it can build one only when Go is already installed. Development builds should happen on a workstation/Termux rather than forcing a constrained ARMv6 appliance to compile Go.
 

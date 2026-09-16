@@ -68,6 +68,10 @@ Do not regenerate credentials merely because the backend was temporarily restart
 
 Never use `StrictHostKeyChecking=no` as a diagnostic shortcut.
 
+## `TOOL_NOT_ALLOWED` for a registered client
+
+Open **AI Clients → Grants** for the affected client and confirm that an enabled grant matches the requested Target, Project and tool capability. Use **Check Effective Access** on that page to run the real Policy Engine and surface the exact next gate (`TOOL_NOT_ALLOWED`, `TARGET_SHELL_DISABLED`, `WRITE_NOT_ALLOWED`, etc.). Do not edit SQLite directly or broaden the grant to `*` merely to make the error disappear.
+
 ## `WRITES_DISABLED`
 
 Structured filesystem mutations are intentionally disabled when `writes_enabled=false`. Enable them only after verifying Project write scope and client grants.
@@ -78,7 +82,7 @@ Structured filesystem mutations are intentionally disabled when `writes_enabled=
 
 ## Fewer tools than expected
 
-The Core catalog for 1.3.2 contains 21 tools. A client may see fewer because `tools/list` is filtered by its grants. Compare:
+The Core catalog for 1.3.3 contains 21 tools. A client may see fewer because `tools/list` is filtered by its grants. Compare:
 
 - Core catalog metadata;
 - registered client identity;
