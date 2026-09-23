@@ -1,11 +1,25 @@
 """SSH transport wrapper for remote execution across configured targets."""
 
+import base64
 import json
 import os
 import shlex
 import subprocess
 import time
+import zlib
 from typing import Any, Dict, List, Optional, Protocol, Tuple
+
+
+def build_remote_python_command(py_code: str, argv: Optional[List[Any]] = None) -> str:
+    """Build a shell-safe Python helper command without exposing dynamic data to the remote shell."""
+    args = [str(arg) for arg in (argv or [])]
+    script = "import sys\nsys.argv = ['mcp-helper'] + " + json.dumps(args) + "\n" + py_code
+    payload = base64.b64encode(zlib.compress(script.encode("utf-8"))).decode("ascii")
+    return (
+        'python3 -c "import base64,zlib;'
+        "exec(zlib.decompress(base64.b64decode('" + payload + "')))"
+        '"'
+    )
 
 
 class SSHError(Exception):
@@ -175,6 +189,7 @@ class SSHTransport:
         remote_cmd: str,
         timeout: Optional[int],
         cwd: Optional[str],
+        env: Optional[Dict[str, str]],
         input_data: Optional[bytes],
         request_id: Optional[str],
         trigger_reason: str = "NETWORK_CONNECTIVITY_ERROR",
@@ -221,6 +236,7 @@ class SSHTransport:
                 remote_cmd,
                 timeout=timeout,
                 cwd=cwd,
+                env=env,
                 input_data=input_data,
                 request_id=request_id,
                 is_retry=True,
@@ -241,15 +257,35 @@ class SSHTransport:
         """Execute a remote shell command string safely constructed by the gateway."""
         effective_timeout = timeout or self.default_timeout
 
-        cmd_parts = []
-        if env:
-            for k, v in env.items():
-                if str(k).isidentifier():
-                    cmd_parts.append(f"export {k}={shlex.quote(str(v))};")
-        if cwd:
-            cmd_parts.append(f"cd {shlex.quote(cwd)} &&")
-        cmd_parts.append(remote_cmd)
-        full_remote_cmd = " ".join(cmd_parts)
+        platform_name = str(target.get("platform") or "").lower()
+        if platform_name == "windows" and (cwd or env):
+            safe_env = {
+                str(k): str(v)
+                for k, v in (env or {}).items()
+                if str(k).isidentifier()
+            }
+            bootstrap = (
+                "import os, subprocess, sys\n"
+                f"command = {json.dumps(remote_cmd)}\n"
+                f"cwd = {json.dumps(cwd)}\n"
+                f"env = {json.dumps(safe_env)}\n"
+                "if cwd:\n"
+                "    os.chdir(cwd)\n"
+                "if env:\n"
+                "    os.environ.update(env)\n"
+                "sys.exit(subprocess.run(command, shell=True).returncode)\n"
+            )
+            full_remote_cmd = build_remote_python_command(bootstrap)
+        else:
+            cmd_parts = []
+            if env:
+                for k, v in env.items():
+                    if str(k).isidentifier():
+                        cmd_parts.append(f"export {k}={shlex.quote(str(v))};")
+            if cwd:
+                cmd_parts.append(f"cd {shlex.quote(cwd)} &&")
+            cmd_parts.append(remote_cmd)
+            full_remote_cmd = " ".join(cmd_parts)
 
         ssh_args = self._build_ssh_args(target, effective_timeout)
         ssh_args.append(full_remote_cmd)
@@ -275,6 +311,7 @@ class SSHTransport:
                     remote_cmd,
                     timeout,
                     cwd,
+                    env,
                     input_data,
                     request_id,
                     trigger_reason=failure_class,
@@ -305,6 +342,7 @@ class SSHTransport:
                     remote_cmd,
                     timeout,
                     cwd,
+                    env,
                     input_data,
                     request_id,
                     trigger_reason=failure_class,
@@ -324,9 +362,8 @@ class SSHTransport:
         self, target: Dict[str, Any], candidate_path: str, timeout: int = 10
     ) -> str:
         """Resolve the remote canonical realpath of a candidate path."""
-        # Use python on the remote system to resolve realpath reliably across POSIX/Windows/Android
         py_code = "import os, sys; print(os.path.realpath(sys.argv[1]))"
-        remote_cmd = f"python3 -c {shlex.quote(py_code)} {shlex.quote(candidate_path)} 2>/dev/null || realpath -m {shlex.quote(candidate_path)}"
+        remote_cmd = build_remote_python_command(py_code, [candidate_path])
 
         res = self.run_command(target, remote_cmd, timeout=timeout)
         if not res.ok or not res.stdout.strip():
@@ -363,7 +400,7 @@ class SSHTransport:
             "sys.stdout.buffer.write(data)\n"
         )
 
-        remote_cmd = f"python3 -c {shlex.quote(py_code)} {shlex.quote(canonical_path)} {limit}"
+        remote_cmd = build_remote_python_command(py_code, [canonical_path, limit])
         res = self.run_command(target, remote_cmd, timeout=15)
 
         if res.exit_code == 2:
@@ -428,7 +465,7 @@ class SSHTransport:
             "    'content': content,\n"
             "}))\n"
         )
-        cmd = f"python3 -c {shlex.quote(py_code)} {shlex.quote(candidate_path)}"
+        cmd = build_remote_python_command(py_code, [candidate_path])
         res = self.run_command(target, cmd, timeout=timeout)
         if not res.ok or not res.stdout.strip():
             raise SSHError(f"Probe failed: {res.stderr.strip()}", code="SSH_FAILED", exit_code=res.exit_code)
@@ -495,7 +532,10 @@ class SSHTransport:
             "        emit(False, 'PATH_OUTSIDE_ALLOWED_ROOT', f'Destination is on a different path domain: {candidate}'); sys.exit(20)\n"
             "emit(True, root_canonical=root_real, parent_canonical=parent_real, destination_path=dest, exists=dest_exists, canonical_path=dest_real)\n"
         )
-        cmd = f"python3 -c {shlex.quote(py_code)} {shlex.quote(project_root)} {shlex.quote(candidate_path)} {'1' if allow_missing_parents else '0'}"
+        cmd = build_remote_python_command(
+            py_code,
+            [project_root, candidate_path, "1" if allow_missing_parents else "0"],
+        )
         res = self.run_command(target, cmd, timeout=timeout)
         line = res.stdout.strip().splitlines()[-1] if res.stdout.strip() else ""
         try:
@@ -620,7 +660,10 @@ class SSHTransport:
         c_flag = "1" if create else "0"
         e_sha = expected_sha256 or ""
         b_dir = backup_dir or ""
-        remote_cmd = f"python3 -c {shlex.quote(py_code)} {shlex.quote(dest_path)} {c_flag} {shlex.quote(e_sha)} {shlex.quote(b_dir)} {max_write_bytes}"
+        remote_cmd = build_remote_python_command(
+            py_code,
+            [dest_path, c_flag, e_sha, b_dir, max_write_bytes],
+        )
         res = self.run_command(target, remote_cmd, timeout=timeout, input_data=content_bytes)
 
         out_str = res.stdout.strip()

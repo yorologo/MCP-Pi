@@ -1,6 +1,8 @@
 """Policy enforcement and path validation for MCP Gateway."""
 
+import ntpath
 import os
+import posixpath
 import re
 from typing import Any, Dict, Optional, Tuple
 
@@ -61,27 +63,27 @@ def validate_relative_path(relative_path: str) -> str:
     return norm
 
 
-def validate_canonical_path(canonical_path: str, allowed_root: str) -> None:
-    """Verify that canonicalized remote path strictly resides within allowed_root.
+def path_module_for_platform(platform_name: Optional[str]):
+    """Return path semantics for the remote Target, not for the Gateway host."""
+    return ntpath if str(platform_name or "").lower() == "windows" else posixpath
 
-    Protects against:
-    - Traversal escapes
-    - Symlink escapes
-    - Sibling-prefix escapes (e.g., /allowed-root vs /allowed-root-evil)
-    """
-    norm_root = os.path.normpath(allowed_root).replace("\\", "/").rstrip("/")
-    if not norm_root:
-        norm_root = "/"
 
-    norm_canon = os.path.normpath(canonical_path).replace("\\", "/").rstrip("/")
-    if not norm_canon:
-        norm_canon = "/"
+def validate_canonical_path(
+    canonical_path: str,
+    allowed_root: str,
+    platform_name: Optional[str] = None,
+) -> None:
+    """Verify that a canonical remote path is inside the allowed project root."""
+    pathmod = path_module_for_platform(platform_name)
+    norm_root = pathmod.normcase(pathmod.normpath(allowed_root))
+    norm_canon = pathmod.normcase(pathmod.normpath(canonical_path))
 
-    if norm_canon == norm_root:
-        return
+    try:
+        common = pathmod.commonpath([norm_root, norm_canon])
+    except (ValueError, TypeError):
+        common = ""
 
-    expected_prefix = norm_root + "/"
-    if not norm_canon.startswith(expected_prefix):
+    if common != norm_root:
         raise PolicyError(
             f"Path '{canonical_path}' resolves outside allowed root '{allowed_root}'",
             code="PATH_OUTSIDE_ALLOWED_ROOT",

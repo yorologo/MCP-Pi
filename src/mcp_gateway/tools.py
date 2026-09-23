@@ -21,6 +21,7 @@ from .policy import (
     PolicyError,
     authorize_client,
     check_capability,
+    path_module_for_platform,
     validate_canonical_path,
     validate_content_utf8,
     validate_relative_path,
@@ -28,7 +29,12 @@ from .policy import (
     validate_write_relative_path,
     validate_write_size,
 )
-from .ssh_transport import RemoteTransport, SSHError, SSHTransport
+from .ssh_transport import (
+    RemoteTransport,
+    SSHError,
+    SSHTransport,
+    build_remote_python_command,
+)
 from .discovery import TargetDiscovery, TargetIdentityError
 
 
@@ -319,7 +325,7 @@ class GatewayTools:
             "    pass\n"
             "print(json.dumps(facts, separators=(',', ':')))\n"
         )
-        cmd = f"python3 -c {shlex.quote(py_code)}"
+        cmd = build_remote_python_command(py_code)
         try:
             res = self.transport.run_command(target_cfg, cmd, timeout=10, request_id=self.request_id)
             if res.ok and res.stdout.strip():
@@ -478,14 +484,16 @@ class GatewayTools:
         """Helper to validate syntax, construct candidate path, and canonicalize remotely."""
         clean_rel = validate_relative_path(relative_path)
         root = project_cfg["root"]
+        platform_name = target_cfg.get("platform")
+        pathmod = path_module_for_platform(platform_name)
 
         if clean_rel == ".":
             candidate = root
         else:
-            candidate = f"{root}/{clean_rel}"
+            candidate = pathmod.normpath(pathmod.join(root, clean_rel))
 
         canonical = self.transport.resolve_canonical_path(target_cfg, candidate)
-        validate_canonical_path(canonical, root)
+        validate_canonical_path(canonical, root, platform_name)
         return canonical
 
     def list_directory(
@@ -523,7 +531,7 @@ class GatewayTools:
                 "    sys.exit(4)\n"
             )
 
-            cmd = f"python3 -c {shlex.quote(py_code)} {shlex.quote(canonical)}"
+            cmd = build_remote_python_command(py_code, [canonical])
             res = self.transport.run_command(target_cfg, cmd, timeout=15, request_id=self.request_id)
 
             if res.exit_code == 2:
@@ -572,7 +580,7 @@ class GatewayTools:
                 "print(json.dumps({'exists': True, 'type': t, 'size': st.st_size, 'mtime': int(st.st_mtime)}))\n"
             )
 
-            cmd = f"python3 -c {shlex.quote(py_code)} {shlex.quote(canonical)}"
+            cmd = build_remote_python_command(py_code, [canonical])
             res = self.transport.run_command(target_cfg, cmd, timeout=10, request_id=self.request_id)
 
             if res.exit_code == 2:
@@ -634,7 +642,7 @@ class GatewayTools:
 
             # Validate root exists remotely
             canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(canonical, root)
+            validate_canonical_path(canonical, root, target_cfg.get("platform"))
 
             res = self.transport.run_command(target_cfg, "git status --short", cwd=canonical, timeout=20, request_id=self.request_id)
             if not res.ok:
@@ -670,10 +678,17 @@ class GatewayTools:
 
             root = project_cfg["root"]
             canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(canonical, root)
+            validate_canonical_path(canonical, root, target_cfg.get("platform"))
 
             argv = task_def["argv"]
-            quoted_cmd = " ".join(shlex.quote(arg) for arg in argv)
+            if str(target_cfg.get("platform") or "").lower() == "windows":
+                task_runner = (
+                    "import subprocess, sys\n"
+                    "sys.exit(subprocess.run(sys.argv[1:]).returncode)\n"
+                )
+                quoted_cmd = build_remote_python_command(task_runner, argv)
+            else:
+                quoted_cmd = " ".join(shlex.quote(arg) for arg in argv)
             self._record_audit(
                 "RUN_TASK_ATTEMPT", target_id=target, project_id=project,
                 start_time=start_time, required=True, detail={"task": task}
@@ -755,21 +770,15 @@ class GatewayTools:
             # 7. Validate path syntax (strictly relative, not root, no traversal)
             norm_rel_path = validate_write_relative_path(relative_path)
 
-            # 8. Target write adapter capability check
-            write_adapter = target_cfg.get("write_adapter", "posix-python")
-            if write_adapter != "posix-python":
-                raise PolicyError(
-                    f"Target does not support write adapter: {write_adapter}",
-                    code="WRITE_UNSUPPORTED_ON_TARGET"
-                )
-
-            # 9. Resolve project canonical root
+            # 8. Resolve project canonical root
             root = project_cfg["root"]
+            platform_name = target_cfg.get("platform")
+            pathmod = path_module_for_platform(platform_name)
             root_canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(root_canonical, root)
+            validate_canonical_path(root_canonical, root, platform_name)
 
-            # 10. Resolve destination parent REMOTELY so nested symlinks cannot escape the project.
-            lexical_candidate = os.path.join(root_canonical, norm_rel_path)
+            # 9. Resolve destination parent REMOTELY so nested symlinks cannot escape the project.
+            lexical_candidate = pathmod.normpath(pathmod.join(root_canonical, norm_rel_path))
             safe_dest = self.transport.resolve_safe_destination(
                 target_cfg, root_canonical, lexical_candidate, allow_missing_parents=False
             )
@@ -781,7 +790,7 @@ class GatewayTools:
             if not probe.get("parent_exists"):
                 raise PolicyError(f"Parent directory does not exist for path: {relative_path}", code="NOT_FOUND")
             parent_canon = probe.get("parent_canonical_path", safe_dest.get("parent_canonical", ""))
-            validate_canonical_path(parent_canon, root_canonical)
+            validate_canonical_path(parent_canon, root_canonical, platform_name)
 
             # Preconditions for create vs overwrite
             if create:
@@ -794,7 +803,7 @@ class GatewayTools:
                     raise PolicyError(f"Target path is a directory: {relative_path}", code="INVALID_PATH")
 
                 dest_canon = probe.get("canonical_path", "")
-                validate_canonical_path(dest_canon, root_canonical)
+                validate_canonical_path(dest_canon, root_canonical, platform_name)
 
                 if not expected_sha256:
                     raise PolicyError(
@@ -811,7 +820,7 @@ class GatewayTools:
 
             proposed_sha256 = hashlib.sha256(content_bytes).hexdigest()
 
-            # 11. Dry Run Mode
+            # 10. Dry Run Mode
             if dry_run:
                 if probe.get("exists"):
                     current_content = probe.get("content", "")
@@ -855,7 +864,7 @@ class GatewayTools:
                 )
                 return self._success_response("write_file", dry_res, target, project, start_time)
 
-            # 12. Create backup on Gateway (retained up to 5 versions)
+            # 11. Create backup on Gateway (retained up to 5 versions)
             backup_path = None
             if not create and probe.get("exists"):
                 try:
@@ -876,7 +885,7 @@ class GatewayTools:
                 except Exception:
                     pass
 
-            # 13. Critical mutation requires a working audit sink before touching the target.
+            # 12. Critical mutation requires a working audit sink before touching the target.
             self._record_audit(
                 "WRITE_ATTEMPT", target_id=target, project_id=project, start_time=start_time,
                 required=True, detail={"path": relative_path, "create": create}
@@ -1311,16 +1320,18 @@ class GatewayTools:
 
             project_cfg = self.config.get_project(target, project)
             root = project_cfg["root"]
+            platform_name = target_cfg.get("platform")
+            pathmod = path_module_for_platform(platform_name)
             root_canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(root_canonical, root)
+            validate_canonical_path(root_canonical, root, platform_name)
 
             # cwd is an execution convenience, not a filesystem security boundary.
             if not cwd or str(cwd).strip() in (".", ""):
                 effective_cwd = root_canonical
-            elif os.path.isabs(str(cwd)):
-                effective_cwd = os.path.normpath(str(cwd))
+            elif pathmod.isabs(str(cwd)):
+                effective_cwd = pathmod.normpath(str(cwd))
             else:
-                effective_cwd = os.path.normpath(os.path.join(root_canonical, str(cwd)))
+                effective_cwd = pathmod.normpath(pathmod.join(root_canonical, str(cwd)))
 
             input_bytes = stdin.encode("utf-8") if stdin else None
             effective_timeout = int(timeout) if timeout else None
@@ -1410,10 +1421,12 @@ class GatewayTools:
 
             norm_rel_path = validate_write_relative_path(path)
             root = project_cfg["root"]
+            platform_name = target_cfg.get("platform")
+            pathmod = path_module_for_platform(platform_name)
             root_canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(root_canonical, root)
+            validate_canonical_path(root_canonical, root, platform_name)
 
-            lexical_candidate = os.path.join(root_canonical, norm_rel_path)
+            lexical_candidate = pathmod.normpath(pathmod.join(root_canonical, norm_rel_path))
             safe_dest = self.transport.resolve_safe_destination(
                 target_cfg, root_canonical, lexical_candidate, allow_missing_parents=False
             )
@@ -1425,7 +1438,7 @@ class GatewayTools:
                 raise PolicyError(f"Cannot append to directory or symlink: {path}", code="INVALID_PATH")
 
             dest_canon = probe.get("canonical_path", candidate_full_path)
-            validate_canonical_path(dest_canon, root_canonical)
+            validate_canonical_path(dest_canon, root_canonical, platform_name)
 
             append_script = (
                 f"import sys, hashlib; p = {json.dumps(dest_canon)}; "
@@ -1439,7 +1452,7 @@ class GatewayTools:
             )
             res = self.transport.run_command(
                 target=target_cfg,
-                remote_cmd=f"python3 -c {shlex.quote(append_script)}",
+                remote_cmd=build_remote_python_command(append_script),
                 input_data=content_bytes,
                 timeout=15,
             )
@@ -1484,10 +1497,12 @@ class GatewayTools:
 
             norm_rel_path = validate_write_relative_path(path)
             root = project_cfg["root"]
+            platform_name = target_cfg.get("platform")
+            pathmod = path_module_for_platform(platform_name)
             root_canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(root_canonical, root)
+            validate_canonical_path(root_canonical, root, platform_name)
 
-            lexical_candidate = os.path.join(root_canonical, norm_rel_path)
+            lexical_candidate = pathmod.normpath(pathmod.join(root_canonical, norm_rel_path))
             safe_dest = self.transport.resolve_safe_destination(
                 target_cfg, root_canonical, lexical_candidate, allow_missing_parents=False
             )
@@ -1502,7 +1517,7 @@ class GatewayTools:
                 raise PolicyError(f"File not found: {path}", code="NOT_FOUND")
 
             dest_canon = probe.get("canonical_path", candidate_full_path)
-            validate_canonical_path(dest_canon, root_canonical)
+            validate_canonical_path(dest_canon, root_canonical, platform_name)
 
             del_script = (
                 f"import os; p = {json.dumps(dest_canon)}; "
@@ -1514,7 +1529,7 @@ class GatewayTools:
             )
             res = self.transport.run_command(
                 target=target_cfg,
-                remote_cmd=f"python3 -c {shlex.quote(del_script)}",
+                remote_cmd=build_remote_python_command(del_script),
                 timeout=15,
             )
             if res.exit_code != 0:
@@ -1554,18 +1569,20 @@ class GatewayTools:
             norm_src = validate_write_relative_path(source_path)
             norm_dst = validate_write_relative_path(dest_path)
             root = project_cfg["root"]
+            platform_name = target_cfg.get("platform")
+            pathmod = path_module_for_platform(platform_name)
             root_canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(root_canonical, root)
+            validate_canonical_path(root_canonical, root, platform_name)
 
-            src_full = os.path.join(root_canonical, norm_src)
-            dst_full = os.path.join(root_canonical, norm_dst)
+            src_full = pathmod.normpath(pathmod.join(root_canonical, norm_src))
+            dst_full = pathmod.normpath(pathmod.join(root_canonical, norm_dst))
 
             probe_src = self.transport.probe_remote_path(target_cfg, src_full)
             if not probe_src.get("exists"):
                 raise PolicyError(f"Source file not found: {source_path}", code="NOT_FOUND")
 
             src_canon = probe_src.get("canonical_path", src_full)
-            validate_canonical_path(src_canon, root_canonical)
+            validate_canonical_path(src_canon, root_canonical, platform_name)
 
             if probe_src.get("is_symlink"):
                 raise PolicyError(f"Source symlink is not accepted for structured copy: {source_path}", code="SYMLINK_WRITE_DENIED")
@@ -1579,7 +1596,11 @@ class GatewayTools:
                 "COPY_FILE_ATTEMPT", target_id=target, project_id=project, start_time=start_time,
                 required=True, detail={"source": norm_src, "dest": norm_dst}
             )
-            res = self.transport.run_command(target=target_cfg, remote_cmd=f"python3 -c {shlex.quote(cp_script)}", timeout=15)
+            res = self.transport.run_command(
+                target=target_cfg,
+                remote_cmd=build_remote_python_command(cp_script),
+                timeout=15,
+            )
             if res.exit_code != 0:
                 raise PolicyError(f"Copy failed: {res.stderr}", code="WRITE_FAILED")
 
@@ -1617,18 +1638,20 @@ class GatewayTools:
             norm_src = validate_write_relative_path(source_path)
             norm_dst = validate_write_relative_path(dest_path)
             root = project_cfg["root"]
+            platform_name = target_cfg.get("platform")
+            pathmod = path_module_for_platform(platform_name)
             root_canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(root_canonical, root)
+            validate_canonical_path(root_canonical, root, platform_name)
 
-            src_full = os.path.join(root_canonical, norm_src)
-            dst_full = os.path.join(root_canonical, norm_dst)
+            src_full = pathmod.normpath(pathmod.join(root_canonical, norm_src))
+            dst_full = pathmod.normpath(pathmod.join(root_canonical, norm_dst))
 
             probe_src = self.transport.probe_remote_path(target_cfg, src_full)
             if not probe_src.get("exists"):
                 raise PolicyError(f"Source file not found: {source_path}", code="NOT_FOUND")
 
             src_canon = probe_src.get("canonical_path", src_full)
-            validate_canonical_path(src_canon, root_canonical)
+            validate_canonical_path(src_canon, root_canonical, platform_name)
 
             if probe_src.get("is_symlink"):
                 raise PolicyError(f"Source symlink is not accepted for structured move: {source_path}", code="SYMLINK_WRITE_DENIED")
@@ -1642,7 +1665,11 @@ class GatewayTools:
                 "MOVE_FILE_ATTEMPT", target_id=target, project_id=project, start_time=start_time,
                 required=True, detail={"source": norm_src, "dest": norm_dst}
             )
-            res = self.transport.run_command(target=target_cfg, remote_cmd=f"python3 -c {shlex.quote(mv_script)}", timeout=15)
+            res = self.transport.run_command(
+                target=target_cfg,
+                remote_cmd=build_remote_python_command(mv_script),
+                timeout=15,
+            )
             if res.exit_code != 0:
                 raise PolicyError(f"Move failed: {res.stderr}", code="WRITE_FAILED")
 
@@ -1679,22 +1706,28 @@ class GatewayTools:
 
             norm_rel_path = validate_write_relative_path(path)
             root = project_cfg["root"]
+            platform_name = target_cfg.get("platform")
+            pathmod = path_module_for_platform(platform_name)
             root_canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(root_canonical, root)
+            validate_canonical_path(root_canonical, root, platform_name)
 
-            lexical_candidate = os.path.join(root_canonical, norm_rel_path)
+            lexical_candidate = pathmod.normpath(pathmod.join(root_canonical, norm_rel_path))
             safe_dest = self.transport.resolve_safe_destination(
                 target_cfg, root_canonical, lexical_candidate, allow_missing_parents=bool(parents)
             )
             candidate_full_path = safe_dest["destination_path"]
-            validate_canonical_path(candidate_full_path, root_canonical)
+            validate_canonical_path(candidate_full_path, root_canonical, platform_name)
 
             mkdir_script = f"import os; os.makedirs({json.dumps(candidate_full_path)}, exist_ok={bool(parents)})"
             self._record_audit(
                 "MKDIR_ATTEMPT", target_id=target, project_id=project, start_time=start_time,
                 required=True, detail={"path": norm_rel_path, "parents": bool(parents)}
             )
-            res = self.transport.run_command(target=target_cfg, remote_cmd=f"python3 -c {shlex.quote(mkdir_script)}", timeout=15)
+            res = self.transport.run_command(
+                target=target_cfg,
+                remote_cmd=build_remote_python_command(mkdir_script),
+                timeout=15,
+            )
             if res.exit_code != 0:
                 raise PolicyError(f"mkdir failed: {res.stderr}", code="WRITE_FAILED")
 
@@ -1730,11 +1763,13 @@ class GatewayTools:
 
             rel_dir = validate_relative_path(path or ".")
             root = project_cfg["root"]
+            platform_name = target_cfg.get("platform")
+            pathmod = path_module_for_platform(platform_name)
             root_canonical = self.transport.resolve_canonical_path(target_cfg, root)
-            validate_canonical_path(root_canonical, root)
+            validate_canonical_path(root_canonical, root, platform_name)
 
-            search_dir = os.path.normpath(os.path.join(root_canonical, rel_dir))
-            validate_canonical_path(search_dir, root_canonical)
+            search_dir = pathmod.normpath(pathmod.join(root_canonical, rel_dir))
+            validate_canonical_path(search_dir, root_canonical, platform_name)
 
             search_script = (
                 f"import os, re, json; "
@@ -1758,7 +1793,11 @@ class GatewayTools:
                 f"    if len(matches) >= 100: break\n"
                 f"print(json.dumps(matches))"
             )
-            res = self.transport.run_command(target=target_cfg, remote_cmd=f"python3 -c {shlex.quote(search_script)}", timeout=20)
+            res = self.transport.run_command(
+                target=target_cfg,
+                remote_cmd=build_remote_python_command(search_script),
+                timeout=20,
+            )
             matches = []
             if res.exit_code == 0 and res.stdout.strip():
                 try:

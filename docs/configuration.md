@@ -64,6 +64,8 @@ Targets, Projects, AI clients and grants live in the Registry and should normall
 A Target includes endpoint/user/platform information; identity is the Target ID plus its pinned SSH host key. **Targets → Edit Target** displays the pinned and currently presented SHA256 fingerprints and is the normal place to trust, explicitly replace or remove that pin. The Admin UI reuses the existing OpenSSH/known_hosts identity mechanism; it never auto-accepts a first or changed key.
 The Target Registry is authoritative for SSH host, port and username. The Gateway uses its managed `~/.ssh/mcp_gateway_ed25519` client identity with `IdentitiesOnly=yes` and strict host-key checking. `ssh_alias` is optional advanced configuration only; use it for extra OpenSSH behavior such as `ProxyJump`, not to redefine Target endpoint, username or identity.
 
+Structured filesystem helpers require `python3` on the Target. Remote path handling follows the configured Target platform (`windows` or POSIX semantics), so Windows Targets do not require WSL, Coreutils or another Unix compatibility layer merely to use project tools.
+
 A Project defines an authorized root plus read/write/task policy. A Project root confines structured filesystem tools but does not turn trusted shell into a filesystem sandbox.
 
 ## MCP adapter token

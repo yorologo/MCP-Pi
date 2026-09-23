@@ -85,7 +85,7 @@ Structured filesystem mutations are intentionally disabled when `writes_enabled=
 
 ## Fewer tools than expected
 
-The Core catalog for 1.3.5 contains 21 tools. A client may see fewer because `tools/list` is filtered by its grants. Compare:
+The Core catalog for 1.3.6 contains 21 tools. A client may see fewer because `tools/list` is filtered by its grants. Compare:
 
 - Core catalog metadata;
 - registered client identity;

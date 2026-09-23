@@ -63,3 +63,16 @@ jobs:
           tar -tzf "$pkg" | grep -q '/bin/mcp-gateway-adapter$'
           tar -tzf "$pkg" | grep -q '/install.sh$'
           sha256sum "$pkg"
+
+
+  windows-transport:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Windows transport tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -p "test_windows_transport.py" -v

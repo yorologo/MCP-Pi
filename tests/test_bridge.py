@@ -76,7 +76,7 @@ class TestBridge(unittest.TestCase):
         self.assertEqual(code, 0)
         output = json.loads(buf.getvalue())
         self.assertTrue(output["ok"])
-        self.assertEqual(output["gateway_version"], "1.3.5")
+        self.assertEqual(output["gateway_version"], "1.3.6")
         self.assertEqual(output["core_api_version"], 1)
 
         self.assertEqual(output["bridge_api_version"], 1)

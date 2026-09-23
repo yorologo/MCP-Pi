@@ -2,6 +2,24 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
+## 1.3.6 — 2026-09-23
+
+### Fixed
+- Windows Targets now use their native path semantics for Project roots, relative paths and trusted-shell working directories instead of interpreting them with the Gateway host's POSIX path rules.
+- Internal remote Python helpers no longer depend on POSIX shell quoting, redirection or the external `realpath` command, restoring structured read/write and Git operations through the normal SSH transport on Windows.
+- Windows trusted-shell `cwd` and environment setup now reuse the existing target-side Python runtime instead of emitting POSIX `export`/`cd` prefixes.
+
+### Changed
+- Removed the unused `posix-python` write-adapter gate; the existing Python helper path is now the single cross-platform mechanism.
+- CI now includes focused Windows transport coverage, including a real `cmd.exe` helper smoke test, without duplicating the full Linux/ARM release job.
+
+### Compatibility
+- No Core API, Bridge API, Tool Catalog, Registry schema, MCP protocol or grant-policy changes.
+- Target project helpers continue to require `python3`; Windows Targets do not require WSL or Unix compatibility utilities.
+
+### Verification
+- Promotion requires the normal full local/CI gates plus live acceptance against the configured Windows Target before production is considered verified.
+
 ## 1.3.5 — 2026-09-23
 
 ### Fixed

@@ -9,7 +9,7 @@ MCP-Pi is a small security gateway between authorized AI/MCP clients and private
 Current software contract:
 
 ```text
-Gateway: 1.3.5
+Gateway: 1.3.6
 Core API: 1
 Bridge API: 1
 Tool catalog: v3 / 21 tools
@@ -17,7 +17,7 @@ Registry schema: 1
 MCP: 2026-07-28
 ```
 
-The current immutable release tag is `v1.3.5`. `main` is the stable release branch and `develop` remains the integration branch.
+The current immutable release tag is `v1.3.6`. `main` is the stable release branch and `develop` remains the integration branch.
 
 ## Non-negotiable principles
 

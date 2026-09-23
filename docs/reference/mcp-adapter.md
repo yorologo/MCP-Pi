@@ -39,7 +39,7 @@ El adaptador MCP actúa como una capa de serialización y transporte agnóstica 
 | Componente | Qué HACE | Qué NO HACE |
 |---|---|---|
 | **Go MCP Adapter** | Handshake de protocolo MCP, exposición de esquemas de herramientas, transporte stdio y Streamable HTTP, serialización/deserialización JSON-RPC. | **NO** ejecuta SSH, **NO** valida rutas en disco, **NO** evalúa políticas de target o proyecto, **NO** decide el kill switch, **NO** accede directamente a la base de datos SQLite. |
-| **Python Gateway Core** | Autoridad única de seguridad, consulta de base de datos SQLite, comprobación de kill switch global y por target, validación canónica de rutas (`realpath`), filtrado de tareas y transporte SSH. | No gestiona la sesión ni el transporte HTTP/SSE del protocolo MCP directamente. |
+| **Python Gateway Core** | Autoridad única de seguridad, consulta de base de datos SQLite, comprobación de kill switch global y por target, validación canónica de rutas mediante `os.path.realpath()` en el Target, filtrado de tareas y transporte SSH. | No gestiona la sesión ni el transporte HTTP/SSE del protocolo MCP directamente. |
 
 ---
 
