@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from werkzeug.security import generate_password_hash
 from mcp_gateway.registry import SQLiteRegistry
 from mcp_gateway.ssh_transport import SSHTransportResult
+from mcp_gateway.discovery import TargetDiscovery, parse_known_hosts_line
 from mcp_gateway.tools import GatewayTools
 from mcp_gateway.web import create_app
 
@@ -199,6 +200,47 @@ class TestWebViews(unittest.TestCase):
         )
         self.assertEqual(res_test.status_code, 200)
         self.assertIn(b"reachable", res_test.data)
+
+    def test_edit_target_manages_ssh_host_trust_fail_closed(self):
+        self._login()
+        known_hosts = os.path.join(self.temp_dir.name, "known_hosts")
+        discovery = TargetDiscovery(known_hosts_path=known_hosts)
+        key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAIO558VBc3DlRhK/vRg5CPZV4kTD0DaY5GXoEEvjyCLmR"
+        offered = parse_known_hosts_line(f"192.168.1.50 ssh-ed25519 {key_b64}")
+        discovery.get_remote_host_keys = lambda host, port, timeout=2.0: [offered]
+        self.tools.transport.discovery = discovery
+
+        res = self.client.get("/targets/t1/edit")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b"SSH Host Identity", res.data)
+        self.assertIn(b"Not trusted", res.data)
+        self.assertIn(offered["fingerprint"].encode(), res.data)
+
+        bad = self.client.post(
+            "/targets/t1/ssh/trust",
+            data={"csrf_token": "valid-token", "fingerprint": "SHA256:wrong"},
+            follow_redirects=True,
+        )
+        self.assertIn(b"SSH_IDENTITY_CHANGED", bad.data)
+        self.assertEqual(discovery.get_canonical_keys("t1"), [])
+
+        trusted = self.client.post(
+            "/targets/t1/ssh/trust",
+            data={"csrf_token": "valid-token", "fingerprint": offered["fingerprint"]},
+            follow_redirects=True,
+        )
+        self.assertEqual(trusted.status_code, 200)
+        self.assertIn(b"Trusted", trusted.data)
+        self.assertEqual(discovery.get_canonical_keys("t1")[0]["fingerprint"], offered["fingerprint"])
+
+        removed = self.client.post(
+            "/targets/t1/ssh/untrust",
+            data={"csrf_token": "valid-token"},
+            follow_redirects=True,
+        )
+        self.assertEqual(removed.status_code, 200)
+        self.assertIn(b"Not trusted", removed.data)
+        self.assertEqual(discovery.get_canonical_keys("t1"), [])
 
     def test_projects_crud(self):
         self._login()

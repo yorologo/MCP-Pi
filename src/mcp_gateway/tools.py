@@ -29,7 +29,7 @@ from .policy import (
     validate_write_size,
 )
 from .ssh_transport import RemoteTransport, SSHError, SSHTransport
-from .discovery import TargetDiscovery
+from .discovery import TargetDiscovery, TargetIdentityError
 
 
 logger = logging.getLogger(__name__)
@@ -327,6 +327,120 @@ class GatewayTools:
             return {"probe_status": "unavailable", "reason": res.stderr.strip() or "facts probe failed"}
         except Exception as exc:
             return {"probe_status": "unavailable", "reason": str(exc)}
+
+    def _target_discovery(self) -> TargetDiscovery:
+        discovery = getattr(self.transport, "discovery", None)
+        if discovery is None:
+            raise TargetIdentityError(
+                "SSH identity management is unavailable for this transport",
+                code="SSH_IDENTITY_UNAVAILABLE",
+            )
+        return discovery
+
+    def target_ssh_identity(self, target: str) -> Dict[str, Any]:
+        """Inspect a Target's pinned and currently presented SSH host identity."""
+        start_time = time.monotonic()
+        try:
+            target_cfg = self.config.get_target(target)
+            result = self._target_discovery().inspect_target_identity(target_cfg)
+            return self._success_response("target_ssh_identity", result, target=target, start_time=start_time)
+        except (ConfigError, PolicyError) as e:
+            return self._error_response("target_ssh_identity", e.code, str(e), target=target, start_time=start_time)
+        except TargetIdentityError as e:
+            return self._error_response("target_ssh_identity", e.code, str(e), target=target, start_time=start_time)
+        except OSError as e:
+            return self._error_response("target_ssh_identity", "SSH_IDENTITY_IO_ERROR", str(e), target=target, start_time=start_time)
+
+    def trust_target_ssh_identity(
+        self,
+        target: str,
+        expected_fingerprint: str,
+        *,
+        replace: bool = False,
+    ) -> Dict[str, Any]:
+        """Pin exactly the reviewed host fingerprint for a Target."""
+        start_time = time.monotonic()
+        try:
+            target_cfg = self.config.get_target(target)
+            self._record_audit(
+                "SSH_TRUST_CHANGE_ATTEMPT",
+                target_id=target,
+                start_time=start_time,
+                required=True,
+                detail={"replace": bool(replace), "fingerprint": expected_fingerprint},
+            )
+            result = self._target_discovery().trust_presented_key(
+                target_cfg,
+                expected_fingerprint,
+                replace=replace,
+            )
+            self._record_audit(
+                "SSH_TRUST_REPLACED" if replace else "SSH_TRUST_ADDED",
+                target_id=target,
+                start_time=start_time,
+                success=True,
+                detail={"fingerprint": expected_fingerprint},
+            )
+            return self._success_response("trust_target_ssh_identity", result, target=target, start_time=start_time)
+        except (ConfigError, PolicyError) as e:
+            return self._error_response("trust_target_ssh_identity", e.code, str(e), target=target, start_time=start_time)
+        except TargetIdentityError as e:
+            return self._error_response("trust_target_ssh_identity", e.code, str(e), target=target, start_time=start_time)
+        except OSError as e:
+            return self._error_response("trust_target_ssh_identity", "SSH_IDENTITY_IO_ERROR", str(e), target=target, start_time=start_time)
+
+    def remove_target_ssh_identity(self, target: str) -> Dict[str, Any]:
+        """Remove a Target's pinned host key without trusting a replacement."""
+        start_time = time.monotonic()
+        try:
+            target_cfg = self.config.get_target(target)
+            self._record_audit(
+                "SSH_TRUST_REMOVE_ATTEMPT",
+                target_id=target,
+                start_time=start_time,
+                required=True,
+            )
+            result = self._target_discovery().remove_trusted_key(target_cfg)
+            self._record_audit(
+                "SSH_TRUST_REMOVED",
+                target_id=target,
+                start_time=start_time,
+                success=True,
+            )
+            return self._success_response("remove_target_ssh_identity", result, target=target, start_time=start_time)
+        except (ConfigError, PolicyError) as e:
+            return self._error_response("remove_target_ssh_identity", e.code, str(e), target=target, start_time=start_time)
+        except TargetIdentityError as e:
+            return self._error_response("remove_target_ssh_identity", e.code, str(e), target=target, start_time=start_time)
+        except OSError as e:
+            return self._error_response("remove_target_ssh_identity", "SSH_IDENTITY_IO_ERROR", str(e), target=target, start_time=start_time)
+
+    def gateway_ssh_public_key(self) -> Dict[str, Any]:
+        """Return only the Gateway's public SSH key, never private key material."""
+        start_time = time.monotonic()
+        path = os.environ.get(
+            "MCP_GATEWAY_SSH_PUBLIC_KEY",
+            os.path.expanduser("~/.ssh/mcp_gateway_ed25519.pub"),
+        )
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                public_key = f.read(16384).strip()
+            parts = public_key.split()
+            if len(parts) < 2 or not parts[0].startswith("ssh-"):
+                raise ValueError("invalid OpenSSH public key")
+            safe_key = " ".join(parts[:2])
+            return self._success_response(
+                "gateway_ssh_public_key",
+                {"public_key": safe_key, "key_type": parts[0]},
+                start_time=start_time,
+            )
+        except (OSError, ValueError) as e:
+            return self._error_response(
+                "gateway_ssh_public_key",
+                "SSH_PUBLIC_KEY_UNAVAILABLE",
+                str(e),
+                start_time=start_time,
+            )
 
     def target_status(self, target: str) -> Dict[str, Any]:
         """Verify reachability and latency of a target."""

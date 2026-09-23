@@ -62,11 +62,12 @@ Do not regenerate credentials merely because the backend was temporarily restart
 
 1. Confirm the Target is online.
 2. Confirm SSH daemon/port.
-3. Verify the pinned host fingerprint.
-4. Use `target_status`/Admin Target test.
-5. If DHCP changed the endpoint, allow normal discovery to verify identity before updating it.
+3. Open **Targets → Edit Target** and compare the pinned and currently presented fingerprints.
+4. If the Target is new, verify the presented fingerprint independently and choose **Trust Host Key**. If it changed, keep the connection blocked unless you independently verify the replacement.
+5. Use **Check Connection**/`target_status`.
+6. If DHCP changed only the endpoint, allow normal discovery to verify the existing pinned identity before updating it.
 
-Never use `StrictHostKeyChecking=no` as a diagnostic shortcut.
+Never use `StrictHostKeyChecking=no` or `accept-new` as a diagnostic shortcut.
 
 ## `TOOL_NOT_ALLOWED` for a registered client
 
@@ -82,7 +83,7 @@ Structured filesystem mutations are intentionally disabled when `writes_enabled=
 
 ## Fewer tools than expected
 
-The Core catalog for 1.3.3 contains 21 tools. A client may see fewer because `tools/list` is filtered by its grants. Compare:
+The Core catalog for 1.3.4 contains 21 tools. A client may see fewer because `tools/list` is filtered by its grants. Compare:
 
 - Core catalog metadata;
 - registered client identity;

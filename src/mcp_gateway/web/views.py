@@ -43,6 +43,14 @@ def get_tools():
     return current_app.config["TOOLS"]
 
 
+def _target_ssh_context(target_id: str) -> Dict[str, Any]:
+    tools = get_tools()
+    return {
+        "ssh_identity": tools.target_ssh_identity(target_id),
+        "gateway_public_key": tools.gateway_ssh_public_key(),
+    }
+
+
 def record_audit(action: str, target_id: str = None, project_id: str = None, success: bool = True, error_code: str = None, detail: str = ""):
     try:
         reg = get_registry()
@@ -256,7 +264,12 @@ def target_edit(target_id: str):
 
     if request.method == "GET":
         target["id"] = target_id
-        return render_template("target_form.html", target=target, is_edit=True)
+        return render_template(
+            "target_form.html",
+            target=target,
+            is_edit=True,
+            **_target_ssh_context(target_id),
+        )
 
     # POST edit target
     update_data = {
@@ -277,7 +290,12 @@ def target_edit(target_id: str):
         flash(f"Error updating target: {e}", "danger")
         target["id"] = target_id
         target.update(update_data)
-        return render_template("target_form.html", target=target, is_edit=True)
+        return render_template(
+            "target_form.html",
+            target=target,
+            is_edit=True,
+            **_target_ssh_context(target_id),
+        )
 
 
 @bp.route("/targets/<target_id>/toggle", methods=["POST"])
@@ -310,7 +328,37 @@ def target_test(target_id: str):
     else:
         err = res.get("error", {})
         flash(f"Target check failed [{err.get('code')}]: {err.get('message')}", "danger")
+    return_to = request.form.get("return_to", "")
+    if return_to == "edit":
+        return redirect(url_for("admin.target_edit", target_id=target_id))
     return redirect(url_for("admin.targets_list"))
+
+
+@bp.route("/targets/<target_id>/ssh/trust", methods=["POST"])
+@login_required
+def target_ssh_trust(target_id: str):
+    fingerprint = request.form.get("fingerprint", "").strip()
+    replace = request.form.get("replace") == "1"
+    res = get_tools().trust_target_ssh_identity(target_id, fingerprint, replace=replace)
+    if res.get("ok"):
+        action = "replaced" if replace else "trusted"
+        flash(f"SSH host identity for '{target_id}' {action} successfully.", "success")
+    else:
+        err = res.get("error", {})
+        flash(f"SSH trust update failed [{err.get('code')}]: {err.get('message')}", "danger")
+    return redirect(url_for("admin.target_edit", target_id=target_id))
+
+
+@bp.route("/targets/<target_id>/ssh/untrust", methods=["POST"])
+@login_required
+def target_ssh_untrust(target_id: str):
+    res = get_tools().remove_target_ssh_identity(target_id)
+    if res.get("ok"):
+        flash(f"SSH host identity for '{target_id}' removed. Connections remain fail-closed until re-trusted.", "info")
+    else:
+        err = res.get("error", {})
+        flash(f"SSH trust removal failed [{err.get('code')}]: {err.get('message')}", "danger")
+    return redirect(url_for("admin.target_edit", target_id=target_id))
 
 
 # ==========================================

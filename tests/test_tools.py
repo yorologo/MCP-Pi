@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
@@ -329,6 +330,24 @@ class TestGatewayTools(unittest.TestCase):
                 res = call()
                 self.assertFalse(res["ok"])
                 self.assertIn(res["error"]["code"], {"PATH_OUTSIDE_ALLOWED_ROOT", "SYMLINK_WRITE_DENIED"})
+
+    def test_ssh_trust_change_fails_closed_when_audit_unavailable(self):
+        discovery = MagicMock()
+        discovery.trust_presented_key.return_value = {"status": "TRUSTED"}
+        self.transport.discovery = discovery
+
+        def broken_audit(event):
+            raise OSError("audit disk unavailable")
+
+        self.config.record_activity = broken_audit
+        res = self.tools.trust_target_ssh_identity(
+            "mock-target",
+            "SHA256:reviewed",
+        )
+
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error"]["code"], "AUDIT_UNAVAILABLE")
+        discovery.trust_presented_key.assert_not_called()
 
     def test_critical_mutation_fails_closed_when_audit_unavailable(self):
         self.tools._is_writes_enabled = lambda: True

@@ -16,7 +16,7 @@ flowchart LR
 
 | Contract | Value |
 | --- | --- |
-| Gateway | **1.3.3** |
+| Gateway | **1.3.4** |
 | Core API | 1 |
 | Bridge API | 1 |
 | Tool catalog | v3 / 21 tools |
@@ -24,7 +24,7 @@ flowchart LR
 | MCP protocol | `2026-07-28` |
 | Python | 3.9+ |
 
-`main` is the stable release branch and `develop` remains the integration branch. The current published release is `v1.3.3`.
+`main` is the stable release branch and `develop` remains the integration branch. The current published release is `v1.3.4`.
 
 ## Why this exists
 

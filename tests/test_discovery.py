@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from mcp_gateway.registry import SQLiteRegistry
 from mcp_gateway.discovery import (
     TargetDiscovery,
+    TargetIdentityError,
     DiscoveryResult,
     compute_sha256_fingerprint,
     parse_known_hosts_line,
@@ -106,6 +107,85 @@ class TestDiscovery(unittest.TestCase):
         keys = self.discovery.get_canonical_keys("termux-main", "termux-local")
         self.assertEqual(len(keys), 1)
         self.assertEqual(keys[0]["fingerprint"], SAMPLE_FINGERPRINT)
+
+    def test_identity_trust_requires_reviewed_fingerprint_and_can_be_removed(self):
+        self.registry.add_target({
+            "id": "new-target",
+            "display_name": "New Target",
+            "platform": "linux",
+            "host": "192.168.68.91",
+            "port": 22,
+            "user": "worker",
+            "ssh_alias": "",
+            "enabled": True,
+        })
+        target = self.registry.get_target("new-target")
+        offered = parse_known_hosts_line(f"192.168.68.91 ssh-ed25519 {SAMPLE_ED25519_KEY_B64}")
+
+        with patch.object(self.discovery, "get_remote_host_keys", return_value=[offered]):
+            state = self.discovery.inspect_target_identity(target)
+            self.assertEqual(state["status"], "UNTRUSTED")
+            self.assertEqual(state["presented_key"]["fingerprint"], SAMPLE_FINGERPRINT)
+
+            with self.assertRaises(TargetIdentityError) as ctx:
+                self.discovery.trust_presented_key(target, "SHA256:not-the-reviewed-key")
+            self.assertEqual(ctx.exception.code, "SSH_IDENTITY_CHANGED")
+            self.assertEqual(self.discovery.get_canonical_keys("new-target"), [])
+
+            trusted = self.discovery.trust_presented_key(target, SAMPLE_FINGERPRINT)
+            self.assertEqual(trusted["status"], "TRUSTED")
+            self.assertEqual(
+                self.discovery.get_canonical_keys("new-target")[0]["fingerprint"],
+                SAMPLE_FINGERPRINT,
+            )
+
+            removed = self.discovery.remove_trusted_key(target)
+            self.assertEqual(removed["status"], "UNTRUSTED")
+            self.assertEqual(self.discovery.get_canonical_keys("new-target"), [])
+
+    def test_identity_change_requires_explicit_replace_and_preserves_other_targets(self):
+        target = self.registry.get_target("termux-main")
+        changed = parse_known_hosts_line(f"192.168.68.84 ssh-ed25519 {WRONG_ED25519_KEY_B64}")
+        changed_fp = changed["fingerprint"]
+
+        with patch.object(self.discovery, "get_remote_host_keys", return_value=[changed]):
+            state = self.discovery.inspect_target_identity(target)
+            self.assertEqual(state["status"], "CHANGED")
+
+            with self.assertRaises(TargetIdentityError) as ctx:
+                self.discovery.trust_presented_key(target, changed_fp)
+            self.assertEqual(ctx.exception.code, "SSH_IDENTITY_REPLACE_REQUIRED")
+            self.assertEqual(
+                self.discovery.get_canonical_keys("termux-main", "termux-local")[0]["fingerprint"],
+                SAMPLE_FINGERPRINT,
+            )
+
+            replaced = self.discovery.trust_presented_key(target, changed_fp, replace=True)
+            self.assertEqual(replaced["status"], "TRUSTED")
+            self.assertEqual(
+                self.discovery.get_canonical_keys("termux-main", "termux-local")[0]["fingerprint"],
+                changed_fp,
+            )
+            self.assertEqual(
+                self.discovery.get_canonical_keys("target-b", "alias-b")[0]["fingerprint"],
+                SAMPLE_FINGERPRINT,
+            )
+
+    def test_identity_is_trusted_when_any_presented_key_matches_pin(self):
+        target = self.registry.get_target("termux-main")
+        foreign = {
+            "key_type": "ecdsa-sha2-nistp256",
+            "key_b64": WRONG_ED25519_KEY_B64,
+            "raw_key": b"foreign",
+            "fingerprint": "SHA256:foreign",
+            "patterns": ["192.168.68.84"],
+            "marker": None,
+        }
+        canonical = parse_known_hosts_line(f"192.168.68.84 ssh-ed25519 {SAMPLE_ED25519_KEY_B64}")
+        with patch.object(self.discovery, "get_remote_host_keys", return_value=[foreign, canonical]):
+            state = self.discovery.inspect_target_identity(target)
+        self.assertEqual(state["status"], "TRUSTED")
+        self.assertEqual(state["presented_key"]["fingerprint"], SAMPLE_FINGERPRINT)
 
     # --- 2. Failure Classification (Network vs Security Fail-Closed) ---
 

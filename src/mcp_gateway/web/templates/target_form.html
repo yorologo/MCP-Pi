@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{% if is_edit %}Edit Target{% else %}Add Target{% endif %} - MCP Gateway Admin{% endblock %}
 {% block content %}
-<div class="max-w-2xl mx-auto space-y-6">
+<div class="max-w-3xl mx-auto space-y-6">
   <div class="page-header">
     <h1 class="page-title">
       {% if is_edit %}Edit Target: {{ target.id }}{% else %}Add New Target Host{% endif %}
@@ -55,7 +55,7 @@
     <div>
       <label for="target-ssh-alias" class="field-label">SSH Config Alias (optional)</label>
       <input id="target-ssh-alias" type="text" name="ssh_alias" value="{{ target.ssh_alias if target else '' }}" class="field font-mono" placeholder="termux-local" aria-describedby="target-ssh-alias-help">
-      <p id="target-ssh-alias-help" class="field-help">If specified, SSH uses the configured alias.</p>
+      <p id="target-ssh-alias-help" class="field-help">If specified, SSH uses the configured alias while the Target ID remains the pinned host identity.</p>
     </div>
 
     <div class="flex items-center gap-2 pt-2">
@@ -64,13 +64,98 @@
     </div>
 
     <div class="flex flex-col-reverse gap-3 border-t border-slate-800 pt-5 sm:flex-row sm:justify-end">
-      <a href="{{ url_for('admin.targets_list') }}" class="btn-secondary">
-        Cancel
-      </a>
-      <button type="submit" class="btn-primary">
-        Save Target
-      </button>
+      <a href="{{ url_for('admin.targets_list') }}" class="btn-secondary">Cancel</a>
+      <button type="submit" class="btn-primary">Save Target</button>
     </div>
   </form>
+
+  {% if is_edit %}
+  <section class="card space-y-5 p-4 sm:p-6" aria-labelledby="ssh-identity-heading">
+    <div>
+      <h2 id="ssh-identity-heading" class="text-lg font-semibold text-white">SSH Host Identity</h2>
+      <p class="field-help mt-1">The Target ID is pinned to a verified SSH host fingerprint. Unknown or changed keys remain blocked until explicitly reviewed.</p>
+    </div>
+
+    {% if ssh_identity and ssh_identity.ok %}
+      {% set ident = ssh_identity.result %}
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <div class="text-xs uppercase tracking-wide text-slate-500">Status</div>
+          {% if ident.status == 'TRUSTED' %}
+            <div class="mt-1 font-semibold text-emerald-300">Trusted</div>
+          {% elif ident.status == 'UNTRUSTED' %}
+            <div class="mt-1 font-semibold text-amber-300">Not trusted</div>
+          {% elif ident.status == 'CHANGED' %}
+            <div class="mt-1 font-semibold text-rose-300">Host key changed — blocked</div>
+          {% else %}
+            <div class="mt-1 font-semibold text-slate-300">Identity unavailable</div>
+          {% endif %}
+        </div>
+        <div>
+          <div class="text-xs uppercase tracking-wide text-slate-500">Endpoint</div>
+          <div class="mt-1 break-all font-mono text-sm text-slate-200">{{ ident.endpoint }}</div>
+        </div>
+      </div>
+
+      {% if ident.trusted_keys %}
+      <div>
+        <div class="text-xs uppercase tracking-wide text-slate-500">Pinned fingerprint{% if ident.trusted_keys|length > 1 %}s{% endif %}</div>
+        {% for key in ident.trusted_keys %}
+          <div class="mt-1 break-all font-mono text-sm text-slate-200">{{ key.key_type }} · {{ key.fingerprint }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if ident.presented_key %}
+      <div class="rounded-lg border border-slate-700 bg-slate-950/50 p-4">
+        <div class="text-xs uppercase tracking-wide text-slate-500">Currently presented by Target</div>
+        <div class="mt-2 break-all font-mono text-sm text-white">{{ ident.presented_key.key_type }} · {{ ident.presented_key.fingerprint }}</div>
+        {% if ident.status in ('UNTRUSTED', 'CHANGED') %}
+          <p class="mt-3 text-xs text-amber-200">Verify this SHA256 fingerprint independently on the Target before trusting it.</p>
+          <form method="POST" action="{{ url_for('admin.target_ssh_trust', target_id=target.id) }}" class="mt-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="fingerprint" value="{{ ident.presented_key.fingerprint }}">
+            {% if ident.status == 'CHANGED' %}
+              <input type="hidden" name="replace" value="1">
+              <button type="submit" class="btn-primary" data-confirm="Replace the pinned SSH host key for {{ target.id }} only after verifying the new fingerprint on the Target?">Replace Trusted Key</button>
+            {% else %}
+              <button type="submit" class="btn-primary" data-confirm="Trust this SSH host fingerprint for {{ target.id }} after verifying it independently?">Trust Host Key</button>
+            {% endif %}
+          </form>
+        {% endif %}
+      </div>
+      {% else %}
+        <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">No SSH host key could be retrieved from the configured endpoint. Trust cannot be changed from an unverified state.</div>
+      {% endif %}
+
+      {% if ident.trusted_keys %}
+      <form method="POST" action="{{ url_for('admin.target_ssh_untrust', target_id=target.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn-secondary" data-confirm="Remove the pinned SSH identity for {{ target.id }}? Connections will remain blocked until a fingerprint is trusted again.">Remove Trust</button>
+      </form>
+      {% endif %}
+    {% else %}
+      <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+        SSH identity inspection is unavailable{% if ssh_identity and ssh_identity.error %}: {{ ssh_identity.error.message }}{% endif %}.
+      </div>
+    {% endif %}
+
+    <div class="border-t border-slate-800 pt-5">
+      <h3 class="text-sm font-semibold text-white">Gateway Authentication</h3>
+      {% if gateway_public_key and gateway_public_key.ok %}
+        <p class="field-help mt-1">Install this public key on the Target account when public-key authentication is not yet authorized. Private key material is never displayed.</p>
+        <div class="mt-3 break-all rounded-lg border border-slate-800 bg-slate-950/60 p-3 font-mono text-xs text-slate-200">{{ gateway_public_key.result.public_key }}</div>
+      {% else %}
+        <p class="field-help mt-1">Gateway public key is unavailable on this runtime.</p>
+      {% endif %}
+    </div>
+
+    <form method="POST" action="{{ url_for('admin.target_test', target_id=target.id) }}" class="border-t border-slate-800 pt-5">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="edit">
+      <button type="submit" class="btn-secondary">Check Connection</button>
+    </form>
+  </section>
+  {% endif %}
 </div>
 {% endblock %}

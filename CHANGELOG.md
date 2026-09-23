@@ -2,6 +2,24 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
+## 1.3.4 — 2026-09-23
+
+### Added
+- SSH host identity management in **Targets → Edit Target**, reusing the existing pinned-identity discovery layer and OpenSSH known_hosts.
+- Explicit review flows for first trust, changed-key replacement and trust removal, plus visibility of the Gateway public key for Target authorization.
+- Fail-closed tests covering reviewed-fingerprint pinning, changed-key replacement, unrelated Target preservation and Admin UI trust operations.
+
+### Changed
+- Target edit now shows the currently presented and pinned SHA256 host fingerprints and provides an in-place connection check.
+- Host trust updates re-scan the endpoint and require the exact fingerprint the administrator reviewed before mutating known_hosts.
+
+### Compatibility
+- No Registry schema, Tool Catalog, MCP protocol or grant-policy changes.
+- Existing pinned Target entries remain authoritative; no trust is migrated or accepted automatically.
+
+### Verification
+- 1.3.4 promotion requires the full local gate, immutable v1.3.4 tag, exact-commit deployment and production Doctor/Target acceptance on the same SHA.
+
 ## 1.3.3 — 2026-09-16
 
 ### Added

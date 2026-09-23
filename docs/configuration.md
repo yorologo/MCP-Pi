@@ -61,7 +61,7 @@ Existing installations preserve these persisted values when application code is 
 
 Targets, Projects, AI clients and grants live in the Registry and should normally be managed through Admin Console. Client grants are managed under **AI Clients → Grants**; direct SQLite editing is not part of the normal workflow. `config/targets.local.json` is a local compatibility/bootstrap file, not the production source of truth once SQLite is active.
 
-A Target includes endpoint/user/platform information; identity must still be verified by the pinned SSH host key.
+A Target includes endpoint/user/platform information; identity is the Target ID plus its pinned SSH host key. **Targets → Edit Target** displays the pinned and currently presented SHA256 fingerprints and is the normal place to trust, explicitly replace or remove that pin. The Admin UI reuses the existing OpenSSH/known_hosts identity mechanism; it never auto-accepts a first or changed key.
 
 A Project defines an authorized root plus read/write/task policy. A Project root confines structured filesystem tools but does not turn trusted shell into a filesystem sandbox.
 

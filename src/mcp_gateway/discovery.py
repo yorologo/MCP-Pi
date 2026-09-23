@@ -18,6 +18,7 @@ import hashlib
 import ipaddress
 import threading
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple, Set
 import concurrent.futures
@@ -33,6 +34,14 @@ class DiscoveryResult:
     candidate_key: Optional[str] = None
     fingerprint: Optional[str] = None
     error: Optional[str] = None
+
+
+class TargetIdentityError(Exception):
+    """Raised when target SSH identity inspection or mutation fails safely."""
+
+    def __init__(self, message: str, code: str = "SSH_IDENTITY_ERROR"):
+        super().__init__(message)
+        self.code = code
 
 
 def compute_sha256_fingerprint(raw_key_bytes: bytes) -> str:
@@ -109,6 +118,7 @@ class TargetDiscovery:
         self._target_locks: Dict[str, threading.Lock] = {}
         self._last_attempt: Dict[str, float] = {}
         self._last_result: Dict[str, DiscoveryResult] = {}
+        self._known_hosts_lock = threading.Lock()
 
     def _get_target_lock(self, target_id: str) -> threading.Lock:
         with self._lock:
@@ -141,6 +151,178 @@ class TargetDiscovery:
             return []
 
         return matched
+
+    @staticmethod
+    def _validate_known_hosts_name(value: str) -> str:
+        value = (value or "").strip()
+        if not value or any(ch.isspace() for ch in value) or "," in value or value.startswith("@"):
+            raise TargetIdentityError("Invalid Target ID or SSH alias for known_hosts", code="INVALID_TARGET_IDENTITY")
+        return value
+
+    @staticmethod
+    def _preferred_remote_key(keys: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not keys:
+            return None
+        priority = {
+            "ssh-ed25519": 0,
+            "ecdsa-sha2-nistp256": 1,
+            "ecdsa-sha2-nistp384": 2,
+            "ecdsa-sha2-nistp521": 3,
+            "ssh-rsa": 4,
+        }
+        return sorted(keys, key=lambda item: priority.get(item.get("key_type", ""), 99))[0]
+
+    def inspect_target_identity(self, target: Dict[str, Any]) -> Dict[str, Any]:
+        """Inspect pinned and currently presented host identity without mutating trust."""
+        target_id = self._validate_known_hosts_name(target.get("id") or target.get("ssh_alias", ""))
+        alias = target.get("ssh_alias") or None
+        if alias:
+            self._validate_known_hosts_name(alias)
+        host = (target.get("host") or "").strip()
+        port = int(target.get("port", 22))
+        if not host or port <= 0 or port > 65535:
+            raise TargetIdentityError("Target endpoint is incomplete or invalid", code="INVALID_TARGET_ENDPOINT")
+
+        trusted = self.get_canonical_keys(target_id, alias)
+        presented_keys = self.get_remote_host_keys(host, port)
+        trusted_fingerprints = {item["fingerprint"] for item in trusted}
+        matched = next(
+            (item for item in presented_keys if item["fingerprint"] in trusted_fingerprints),
+            None,
+        )
+        presented = matched or self._preferred_remote_key(presented_keys)
+
+        trusted_public = [
+            {"key_type": item["key_type"], "fingerprint": item["fingerprint"]}
+            for item in trusted
+        ]
+        presented_public = (
+            {"key_type": presented["key_type"], "fingerprint": presented["fingerprint"]}
+            if presented
+            else None
+        )
+
+        if not presented:
+            status = "UNAVAILABLE"
+        elif not trusted:
+            status = "UNTRUSTED"
+        elif matched:
+            status = "TRUSTED"
+        else:
+            status = "CHANGED"
+
+        return {
+            "status": status,
+            "target_id": target_id,
+            "endpoint": f"{host}:{port}",
+            "trusted_keys": trusted_public,
+            "presented_key": presented_public,
+        }
+
+    def _rewrite_known_hosts(self, target_id: str, alias: Optional[str], new_line: Optional[str]) -> None:
+        """Atomically replace this target's pin while preserving unrelated known_hosts entries."""
+        target_id = self._validate_known_hosts_name(target_id)
+        names = {target_id}
+        if alias:
+            names.add(self._validate_known_hosts_name(alias))
+
+        path = self.known_hosts_path
+        directory = os.path.dirname(path) or "."
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+
+        with self._known_hosts_lock:
+            existing_lines: List[str] = []
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    existing_lines = f.readlines()
+
+            kept: List[str] = []
+            for line in existing_lines:
+                parsed = parse_known_hosts_line(line)
+                if parsed and names.intersection(parsed["patterns"]):
+                    continue
+                kept.append(line if line.endswith("\n") else line + "\n")
+
+            if new_line:
+                kept.append(new_line.rstrip("\n") + "\n")
+
+            old_mode = 0o600
+            if os.path.exists(path):
+                old_mode = os.stat(path).st_mode & 0o777
+
+            fd, tmp_path = tempfile.mkstemp(prefix=".known_hosts.", dir=directory, text=True)
+            try:
+                os.fchmod(fd, old_mode)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.writelines(kept)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, path)
+            except Exception:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+
+    def trust_presented_key(
+        self,
+        target: Dict[str, Any],
+        expected_fingerprint: str,
+        *,
+        replace: bool = False,
+    ) -> Dict[str, Any]:
+        """Pin exactly the host key fingerprint that the administrator reviewed."""
+        target_id = self._validate_known_hosts_name(target.get("id") or target.get("ssh_alias", ""))
+        alias = target.get("ssh_alias") or None
+        host = (target.get("host") or "").strip()
+        port = int(target.get("port", 22))
+        if not expected_fingerprint or not expected_fingerprint.startswith("SHA256:"):
+            raise TargetIdentityError("A reviewed SHA256 fingerprint is required", code="INVALID_FINGERPRINT")
+
+        presented_keys = self.get_remote_host_keys(host, port)
+        presented = next(
+            (item for item in presented_keys if item.get("fingerprint") == expected_fingerprint),
+            None,
+        )
+        if not presented:
+            raise TargetIdentityError(
+                "The Target no longer presents the reviewed host fingerprint",
+                code="SSH_IDENTITY_CHANGED",
+            )
+
+        trusted = self.get_canonical_keys(target_id, alias)
+        if any(item["fingerprint"] == expected_fingerprint for item in trusted):
+            return self.inspect_target_identity(target)
+        if trusted and not replace:
+            raise TargetIdentityError(
+                "A different host fingerprint is already pinned; explicit replacement is required",
+                code="SSH_IDENTITY_REPLACE_REQUIRED",
+            )
+
+        self._rewrite_known_hosts(
+            target_id,
+            alias,
+            f"{target_id} {presented['key_type']} {presented['key_b64']}",
+        )
+        result = self.inspect_target_identity(target)
+        if result["status"] != "TRUSTED":
+            raise TargetIdentityError(
+                "The reviewed key was pinned, but the Target no longer presents it",
+                code="SSH_IDENTITY_CHANGED",
+            )
+        return result
+
+    def remove_trusted_key(self, target: Dict[str, Any]) -> Dict[str, Any]:
+        """Remove this Target's pinned host identity without trusting any replacement."""
+        target_id = self._validate_known_hosts_name(target.get("id") or target.get("ssh_alias", ""))
+        alias = target.get("ssh_alias") or None
+        self._rewrite_known_hosts(target_id, alias, None)
+        return self.inspect_target_identity(target)
 
     def get_kernel_neighbors(self) -> List[str]:
         """Fast Tier 1 discovery: read ARP cache / kernel neighbor table."""

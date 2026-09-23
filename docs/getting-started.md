@@ -53,7 +53,7 @@ The installer records LAN binding/Host allowlist in the private file:
 In Admin Console:
 
 1. **Targets → Add Target** — ID, host, port, user and SSH alias if used.
-2. Verify the SSH host fingerprint before trusting the Target; keep `StrictHostKeyChecking=yes`.
+2. Open **Targets → Edit Target**, compare the presented SHA256 host fingerprint with the fingerprint obtained independently on the Target, then choose **Trust Host Key**. Changed fingerprints stay blocked until explicitly replaced.
 3. **Projects → Add Project** — select Target and define the allowed root.
 4. **AI Clients → Grants** — create the client identity, open its Grants page and grant only the Target/Project capabilities it needs; use **Check Effective Access** before relying on the permission.
 5. Enable structured writes or trusted Target shell only if required.
