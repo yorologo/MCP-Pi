@@ -3,5 +3,5 @@
 Lightweight, secure, target-agnostic Model Context Protocol Gateway Core.
 """
 
-__version__ = "1.3.4"
+__version__ = "1.3.5"
 

@@ -55,7 +55,7 @@
     <div>
       <label for="target-ssh-alias" class="field-label">SSH Config Alias (optional)</label>
       <input id="target-ssh-alias" type="text" name="ssh_alias" value="{{ target.ssh_alias if target else '' }}" class="field font-mono" placeholder="termux-local" aria-describedby="target-ssh-alias-help">
-      <p id="target-ssh-alias-help" class="field-help">If specified, SSH uses the configured alias while the Target ID remains the pinned host identity.</p>
+      <p id="target-ssh-alias-help" class="field-help">Advanced/optional. Use only an existing Gateway SSH config alias for extra options such as ProxyJump. Host, port, username, Gateway identity and pinned host identity remain controlled by this Target.</p>
     </div>
 
     <div class="flex items-center gap-2 pt-2">

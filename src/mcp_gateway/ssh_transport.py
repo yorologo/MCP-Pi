@@ -124,6 +124,7 @@ class SSHTransport:
         ssh_binary: str = "ssh",
         discovery: Optional[Any] = None,
         registry: Optional[Any] = None,
+        identity_file: Optional[str] = None,
     ):
         self.default_timeout = default_timeout
         self.max_output_bytes = max_output_bytes
@@ -131,6 +132,10 @@ class SSHTransport:
         self.ssh_binary = ssh_binary
         self.discovery = discovery
         self.registry = registry
+        self.identity_file = os.path.expanduser(
+            identity_file
+            or os.environ.get("MCP_GATEWAY_SSH_IDENTITY_FILE", "~/.ssh/mcp_gateway_ed25519")
+        )
 
     def _build_ssh_args(self, target: Dict[str, Any], timeout: int) -> List[str]:
         """Construct SSH argument list ensuring Registry is single source of truth for endpoints."""
@@ -139,28 +144,29 @@ class SSHTransport:
         port = str(target.get("port", 22))
         target_id = target.get("id") or alias
 
+        user = target["user"]
         base_cmd = [
             self.ssh_binary,
             "-o", "BatchMode=yes",
             "-o", f"ConnectTimeout={min(timeout, 10)}",
+            "-o", "StrictHostKeyChecking=yes",
+            "-o", "IdentitiesOnly=yes",
+            "-o", f"IdentityFile={self.identity_file}",
+            "-o", f"User={user}",
         ]
 
-        if alias:
-            # Command-line -o HostName and -o Port override ~/.ssh/config, making Registry the single authority,
-            # while inheriting User, IdentityFile, IdentitiesOnly, StrictHostKeyChecking from the SSH alias.
-            if host:
-                base_cmd.extend(["-o", f"HostName={host}"])
-            if port:
-                base_cmd.extend(["-o", f"Port={port}"])
-            if target_id:
-                base_cmd.extend(["-o", f"HostKeyAlias={target_id}"])
-            base_cmd.append(alias)
-        else:
-            if target_id:
-                base_cmd.extend(["-o", f"HostKeyAlias={target_id}"])
-            user = target["user"]
-            base_cmd.extend(["-p", port, f"{user}@{host}"])
+        # Registry values are authoritative for endpoint and remote account.
+        # An optional SSH alias may still contribute non-authoritative options
+        # such as ProxyJump, but it cannot override host, port, user, pinned
+        # host identity, or the Gateway client identity.
+        if host:
+            base_cmd.extend(["-o", f"HostName={host}"])
+        if port:
+            base_cmd.extend(["-o", f"Port={port}"])
+        if target_id:
+            base_cmd.extend(["-o", f"HostKeyAlias={target_id}"])
 
+        base_cmd.append(alias or host)
         return base_cmd
 
     def _attempt_discovery_and_retry(

@@ -234,7 +234,7 @@ class TestDiscovery(unittest.TestCase):
     # --- 3. Command Line Argument Construction ---
 
     def test_build_ssh_args_single_source_of_truth(self):
-        transport = SSHTransport()
+        transport = SSHTransport(identity_file="/tmp/gateway-test-key")
         target = {
             "id": "termux-main",
             "host": "192.168.68.71",
@@ -243,12 +243,36 @@ class TestDiscovery(unittest.TestCase):
             "user": "u0_a435",
         }
         args = transport._build_ssh_args(target, 10)
-        # Verify -o HostName and -o Port are present before the alias to override ~/.ssh/config
+        # Registry Target data and the Gateway identity remain authoritative
+        # even when an SSH alias contributes optional extra configuration.
         self.assertIn("-o", args)
         self.assertIn("HostName=192.168.68.71", args)
         self.assertIn("Port=8022", args)
+        self.assertIn("User=u0_a435", args)
         self.assertIn("HostKeyAlias=termux-main", args)
+        self.assertIn("IdentityFile=/tmp/gateway-test-key", args)
+        self.assertIn("IdentitiesOnly=yes", args)
+        self.assertIn("StrictHostKeyChecking=yes", args)
         self.assertEqual(args[-1], "termux-local")
+
+    def test_build_ssh_args_without_alias_uses_gateway_identity_and_registry_user(self):
+        transport = SSHTransport(identity_file="/tmp/gateway-test-key")
+        target = {
+            "id": "windows-main",
+            "host": "192.168.68.75",
+            "port": 22,
+            "ssh_alias": "",
+            "user": "esaud",
+        }
+        args = transport._build_ssh_args(target, 10)
+        self.assertIn("HostName=192.168.68.75", args)
+        self.assertIn("Port=22", args)
+        self.assertIn("User=esaud", args)
+        self.assertIn("HostKeyAlias=windows-main", args)
+        self.assertIn("IdentityFile=/tmp/gateway-test-key", args)
+        self.assertIn("IdentitiesOnly=yes", args)
+        self.assertIn("StrictHostKeyChecking=yes", args)
+        self.assertEqual(args[-1], "192.168.68.75")
 
     # --- 4. Fast Path: Correct Endpoint Performs No Discovery ---
 

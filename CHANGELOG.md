@@ -2,6 +2,17 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
+## 1.3.5 — 2026-09-23
+
+### Fixed
+- Target SSH connections now always use the Target Registry username instead of silently inheriting the Gateway service account from an undefined or mismatched SSH alias.
+- Target SSH connections now explicitly use the Gateway target identity key, IdentitiesOnly=yes and StrictHostKeyChecking=yes, so the public key displayed in **Edit Target** is the same identity actually offered during authentication.
+- SSH aliases are now optional advanced configuration only; they can contribute non-authoritative options such as ProxyJump but cannot override Target host, port, username, Gateway identity or pinned host identity.
+
+### Verification
+- Added regression coverage for both configured-alias and no-alias Targets, including Windows-style Target usernames.
+- Promotion requires full local/CI validation and exact-commit deployment before final Target authentication acceptance.
+
 ## 1.3.4 — 2026-09-23
 
 ### Added
