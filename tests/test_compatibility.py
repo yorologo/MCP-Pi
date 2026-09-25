@@ -17,14 +17,14 @@ class TestCompatibility(unittest.TestCase):
         self.assertIn("registry_schema_version", compat)
         self.assertEqual(compatibility.get_core_api_version(), 1)
         self.assertEqual(compatibility.get_bridge_api_version(), 1)
-        self.assertEqual(compatibility.get_tool_catalog_version(), 3)
-        self.assertEqual(compatibility.get_registry_schema_version(), 1)
+        self.assertEqual(compatibility.get_tool_catalog_version(), 4)
+        self.assertEqual(compatibility.get_registry_schema_version(), 4)
 
     def test_verify_compatibility_success(self):
         valid_candidate = {
             "core_api_version": 1,
             "bridge_api_version": 1,
-            "registry_schema_version": 1,
+            "registry_schema_version": 4,
         }
         ok, errors = compatibility.verify_compatibility(valid_candidate)
         self.assertTrue(ok)

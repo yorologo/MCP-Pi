@@ -35,7 +35,7 @@ sudo -u mcp-gateway mcp-gateway setup
 ## Sections
 
 - **Dashboard** — operational summary and recent activity.
-- **Targets** — endpoint/platform/identity-related configuration and connectivity test.
+- **Targets** — endpoint/platform/SSH identity, connectivity, and Target privilege policy/approval state.
 - **Projects** — authorized roots and read/write policy.
 - **Clients** — AI client identities, effective capabilities and per-client Grant management.
   - **Grants** — list, create, edit, enable/disable and delete Target/Project capability grants.
@@ -54,9 +54,26 @@ Open **AI Clients → Grants** for a client. Each grant reuses the existing Regi
 Client → Target → Project → Capability → Enabled
 ```
 
-Prefer the narrowest scope that meets the need. `*` is supported for compatibility and deliberate broad access, but a fully global `* / * / *` grant requires explicit confirmation in the UI. The page supports create/edit/enable/disable/delete without direct SQLite access.
+Prefer the narrowest scope that meets the need. `*` is supported for compatibility and deliberate broad access, but a fully global wildcard grant or a global `target_admin` grant requires explicit confirmation in the UI. The page supports create/edit/enable/disable/delete without direct SQLite access.
 
 **Check Effective Access** calls the same `authorize_client()` function used by MCP discovery/execution, so results include grants plus client/Target/Project state and global kill switches. It does not maintain a parallel permission model.
+
+## Target privilege policy
+
+Open **Targets → Edit Target → Administrative Privileges** to choose the consent policy for elevated Target operations. The UI shows observed current/maximum privilege, backend readiness and cached approval state; it does not infer readiness only from the configured policy.
+
+- **Never allow** is the safe default.
+- **Ask before every privileged request** stores a short-lived, one-use approval for the selected client/project scope.
+- **Ask once per Target boot** binds a client/project-scoped approval to the probed boot identity and fails closed if that identity cannot be obtained.
+- **Always allow** removes future approval prompts only after a separate warning page, exact Target-ID confirmation and Admin-password re-authentication. Entering this flow does not save unrelated Target edits; save those separately first. It does not bypass client grants or global/Target/Project gates.
+
+The client must still hold trusted shell access and an explicit `target_admin` capability for the same Target/Project. Existing `*` grants do not silently acquire Target system privilege after upgrade.
+
+For Linux/Windows Targets, **Privileged SSH User** may optionally configure a separate administrative login such as `root` or `Administrator`. The normal Target user remains unchanged for standard operations. MCP-Pi reuses the same pinned host and Gateway SSH key, probes the alternate login, and marks the backend ready only if it observes real root/Administrator privilege. Merely entering an account name does not enable elevation, and Windows UAC or generic `sudo` prompts are not bypassed. Android/Termux continues to use its verified Shizuku/`rish` backend when available.
+
+Changing the privilege authorization context invalidates cached approvals: operational Target settings, the scoped Project, client enabled state and Grants all revoke affected approvals. Cosmetic labels do not. Approvals are temporary operational state persisted only so their defined client/project scope can survive a Gateway restart; `ask_always` approvals additionally expire after a short window. They are not included in sanitized configuration exports. Schema-v1 Targets migrate with `privilege_policy=never`, so an SSH transport that is already root/Administrator intentionally stops privileged `run_command`/`run_task` execution until an administrator explicitly selects a policy and grants `target_admin`.
+
+For arbitrary `run_command` access, MCP-Pi also treats the normal SSH account as privilege-capable when it exposes a detectable independent elevator such as Termux `rish`, Windows `sudo` or working non-interactive Linux `sudo`. The command still starts under the normal SSH user, but the same `target_admin` + policy/approval gate is required because filtering shell strings cannot safely prevent an indirect elevation.
 
 ## Security
 

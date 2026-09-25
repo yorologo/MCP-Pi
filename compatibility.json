@@ -3,8 +3,8 @@
 
   "core_api_version": 1,
   "bridge_api_version": 1,
-  "tool_catalog_version": 3,
-  "registry_schema_version": 1,
+  "tool_catalog_version": 4,
+  "registry_schema_version": 4,
   "mcp": {
     "sdk": "go-sdk",
     "version": "1.7.0",

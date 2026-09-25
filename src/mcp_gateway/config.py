@@ -4,6 +4,8 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from .policy import normalize_privilege_policy
+
 
 class ConfigError(Exception):
     """Raised when configuration cannot be loaded or is invalid."""
@@ -96,9 +98,29 @@ class GatewayConfig:
             if not ssh_alias or not isinstance(ssh_alias, str):
                 raise ConfigError(f"Target '{target_id}' missing valid 'ssh_alias'", code="CONFIG_ERROR")
 
+            privilege_user = target_info.get("privilege_user", "")
+            if privilege_user is None:
+                privilege_user = ""
+            if not isinstance(privilege_user, str):
+                raise ConfigError(
+                    f"Target '{target_id}' 'privilege_user' must be a string",
+                    code="CONFIG_ERROR",
+                )
+            privilege_user = privilege_user.strip()
+
             enabled = target_info.get("enabled", True)
             if not isinstance(enabled, bool):
                 raise ConfigError(f"Target '{target_id}' 'enabled' must be boolean", code="CONFIG_ERROR")
+
+            try:
+                privilege_policy = normalize_privilege_policy(
+                    target_info.get("privilege_policy", "never")
+                )
+            except Exception as exc:
+                raise ConfigError(
+                    f"Target '{target_id}' has invalid privilege_policy: {exc}",
+                    code="CONFIG_ERROR",
+                ) from exc
 
             raw_projects = target_info.get("projects", {})
             if not isinstance(raw_projects, dict):
@@ -157,6 +179,8 @@ class GatewayConfig:
                 "port": port,
                 "user": user,
                 "ssh_alias": ssh_alias,
+                "privilege_user": privilege_user,
+                "privilege_policy": privilege_policy,
                 "enabled": enabled,
                 "projects": validated_projects,
             }
@@ -199,6 +223,8 @@ class GatewayConfig:
             result.append({
                 "id": target_id,
                 "platform": target.get("platform"),
+                "privilege_user": target.get("privilege_user", ""),
+                "privilege_policy": target.get("privilege_policy", "never"),
                 "enabled": target.get("enabled", True),
                 "project_count": len(projects),
                 "projects": sorted(list(projects.keys())),

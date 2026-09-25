@@ -8,6 +8,7 @@ import uuid
 import time
 
 from .config import GatewayConfig, ConfigError
+from .policy import PRIVILEGE_APPROVAL_TTL_SECONDS, normalize_privilege_policy
 from .schema import init_db
 
 class RegistryBase(abc.ABC):
@@ -81,6 +82,37 @@ class RegistryBase(abc.ABC):
     def delete_grant(self, grant_id: int) -> None:
         pass
 
+    @abc.abstractmethod
+    def get_privilege_approval(self, target_id: str) -> Optional[Dict]:
+        pass
+
+    @abc.abstractmethod
+    def set_privilege_approval(
+        self,
+        target_id: str,
+        policy: str,
+        client_id: str,
+        project_id: str,
+        boot_id: str = "",
+    ) -> None:
+        pass
+
+    @abc.abstractmethod
+    def clear_privilege_approval(self, target_id: str) -> None:
+        pass
+
+    @abc.abstractmethod
+    def consume_privilege_approval(
+        self,
+        target_id: str,
+        policy: str,
+        client_id: str,
+        project_id: str,
+        boot_id: str = "",
+        max_age_seconds: int = PRIVILEGE_APPROVAL_TTL_SECONDS,
+    ) -> bool:
+        pass
+
     def get_client_grants(self, client_id: str) -> List[Dict]:
         return [g for g in self.list_grants(client_id=client_id) if g.get("enabled", True)]
 
@@ -134,8 +166,21 @@ class JsonRegistry(RegistryBase):
         self._clients: Dict[str, Dict] = {}
         self._grants: Dict[int, Dict] = {}
         self._next_grant_id: int = 1
+        self._privilege_approvals: Dict[str, Dict] = {}
         self._activity: List[Dict] = []
         self._admin_users: Dict[str, Dict] = {}
+
+    def _clear_privilege_approvals_for_client(self, client_id: str) -> None:
+        client_id = str(client_id or "").strip()
+        if not client_id:
+            return
+        stale = [
+            target_id
+            for target_id, approval in self._privilege_approvals.items()
+            if approval.get("client_id") == client_id
+        ]
+        for target_id in stale:
+            self._privilege_approvals.pop(target_id, None)
 
     def list_targets(self) -> List[Dict]:
         return self.config.list_targets()
@@ -192,7 +237,10 @@ class JsonRegistry(RegistryBase):
     def update_client(self, client_id: str, data: Dict) -> None:
         if client_id not in self._clients:
             raise KeyError(f"Client {client_id} not found")
+        previous_enabled = bool(self._clients[client_id].get("enabled", True))
         self._clients[client_id].update(data)
+        if "enabled" in data and bool(data["enabled"]) != previous_enabled:
+            self._clear_privilege_approvals_for_client(client_id)
 
     def list_grants(self, client_id: Optional[str] = None) -> List[Dict]:
         if client_id:
@@ -209,17 +257,90 @@ class JsonRegistry(RegistryBase):
         self._next_grant_id += 1
         gdata = {"id": gid, "enabled": True, **data}
         self._grants[gid] = gdata
+        self._clear_privilege_approvals_for_client(gdata.get("client_id", ""))
         return gid
 
     def update_grant(self, grant_id: int, data: Dict) -> None:
         if grant_id not in self._grants:
             raise KeyError(f"Grant {grant_id} not found")
+        old_client_id = self._grants[grant_id].get("client_id", "")
         self._grants[grant_id].update(data)
+        new_client_id = self._grants[grant_id].get("client_id", "")
+        self._clear_privilege_approvals_for_client(old_client_id)
+        if new_client_id != old_client_id:
+            self._clear_privilege_approvals_for_client(new_client_id)
 
     def delete_grant(self, grant_id: int) -> None:
         if grant_id not in self._grants:
             raise KeyError(f"Grant {grant_id} not found")
+        client_id = self._grants[grant_id].get("client_id", "")
         del self._grants[grant_id]
+        self._clear_privilege_approvals_for_client(client_id)
+
+    def get_privilege_approval(self, target_id: str) -> Optional[Dict]:
+        approval = self._privilege_approvals.get(target_id)
+        return dict(approval) if approval else None
+
+    def set_privilege_approval(
+        self,
+        target_id: str,
+        policy: str,
+        client_id: str,
+        project_id: str,
+        boot_id: str = "",
+    ) -> None:
+        policy = normalize_privilege_policy(policy)
+        client_id = str(client_id or "").strip()
+        project_id = str(project_id or "").strip()
+        if policy not in ("ask_always", "ask_once_per_boot"):
+            raise ValueError(f"Policy '{policy}' does not use cached approval")
+        if not client_id or not project_id:
+            raise ValueError("Privilege approval requires client and project scope")
+        self._privilege_approvals[target_id] = {
+            "target_id": target_id,
+            "policy": policy,
+            "client_id": client_id,
+            "project_id": project_id,
+            "boot_id": str(boot_id or ""),
+            "approved_at": time.time(),
+        }
+
+    def clear_privilege_approval(self, target_id: str) -> None:
+        self._privilege_approvals.pop(target_id, None)
+
+    def consume_privilege_approval(
+        self,
+        target_id: str,
+        policy: str,
+        client_id: str,
+        project_id: str,
+        boot_id: str = "",
+        max_age_seconds: int = PRIVILEGE_APPROVAL_TTL_SECONDS,
+    ) -> bool:
+        policy = normalize_privilege_policy(policy)
+        approval = self._privilege_approvals.get(target_id)
+        if not approval or approval.get("policy") != policy:
+            return False
+        if approval.get("client_id") != str(client_id or "").strip():
+            return False
+        if approval.get("project_id") != str(project_id or "").strip():
+            return False
+        if policy == "ask_once_per_boot":
+            if bool(boot_id) and approval.get("boot_id") == boot_id:
+                return True
+            self._privilege_approvals.pop(target_id, None)
+            return False
+        if policy == "ask_always":
+            try:
+                age = time.time() - float(approval.get("approved_at", 0))
+            except (TypeError, ValueError):
+                age = max_age_seconds + 1
+            if age < 0 or age > max_age_seconds:
+                self._privilege_approvals.pop(target_id, None)
+                return False
+            self._privilege_approvals.pop(target_id, None)
+            return True
+        return False
 
     def get_setting(self, key: str, default=None) -> Any:
         return self._settings.get(key, default)
@@ -275,10 +396,36 @@ class SQLiteRegistry(RegistryBase):
         finally:
             conn.close()
 
+    @staticmethod
+    def _clear_privilege_approvals_in_conn(
+        conn: sqlite3.Connection,
+        *,
+        target_id: Optional[str] = None,
+        client_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> None:
+        clauses = []
+        values = []
+        if target_id is not None:
+            clauses.append("target_id = ?")
+            values.append(target_id)
+        if client_id is not None:
+            clauses.append("client_id = ?")
+            values.append(client_id)
+        if project_id is not None:
+            clauses.append("project_id = ?")
+            values.append(project_id)
+        if not clauses:
+            return
+        conn.execute(
+            f"DELETE FROM privilege_approvals WHERE {' AND '.join(clauses)}",
+            tuple(values),
+        )
+
     def list_targets(self) -> List[Dict]:
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, display_name, platform, enabled FROM targets")
+            cursor.execute("SELECT id, display_name, platform, privilege_policy, enabled FROM targets")
             results = []
             for row in cursor.fetchall():
                 t = dict(row)
@@ -417,8 +564,8 @@ class SQLiteRegistry(RegistryBase):
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO targets (id, display_name, platform, host, port, user, ssh_alias, enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO targets (id, display_name, platform, host, port, user, ssh_alias, privilege_user, privilege_policy, enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 tid,
                 data.get("display_name", tid),
@@ -427,6 +574,8 @@ class SQLiteRegistry(RegistryBase):
                 data.get("port", 22),
                 data.get("user", ""),
                 data.get("ssh_alias", ""),
+                str(data.get("privilege_user", "") or "").strip(),
+                normalize_privilege_policy(data.get("privilege_policy", "never")),
                 int(data.get("enabled", True))
             ))
             conn.commit()
@@ -435,24 +584,66 @@ class SQLiteRegistry(RegistryBase):
     def update_target(self, target_id: str, data: Dict) -> None:
         set_clauses = []
         values = []
-        for key in ["display_name", "platform", "host", "port", "user", "ssh_alias", "enabled"]:
-            if key in data:
-                set_clauses.append(f"{key} = ?")
-                val = data[key]
-                if key == "enabled":
-                    val = int(val)
-                values.append(val)
-                
-        if set_clauses:
-            set_clauses.append("updated_at = datetime('now')")
-            values.append(target_id)
-            query = f"UPDATE targets SET {', '.join(set_clauses)} WHERE id = ?"
-            with self._get_conn() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query, tuple(values))
-                if cursor.rowcount == 0:
-                    raise KeyError(f"Target {target_id} not found")
-                conn.commit()
+        normalized_updates: Dict[str, Any] = {}
+        for key in [
+            "display_name",
+            "platform",
+            "host",
+            "port",
+            "user",
+            "ssh_alias",
+            "privilege_user",
+            "privilege_policy",
+            "enabled",
+        ]:
+            if key not in data:
+                continue
+            val = data[key]
+            if key == "enabled":
+                val = int(bool(val))
+            elif key == "privilege_policy":
+                val = normalize_privilege_policy(val)
+            elif key == "privilege_user":
+                val = str(val or "").strip()
+            elif key == "port":
+                val = int(val)
+            normalized_updates[key] = val
+            set_clauses.append(f"{key} = ?")
+            values.append(val)
+
+        if not set_clauses:
+            return
+
+        set_clauses.append("updated_at = datetime('now')")
+        values.append(target_id)
+        query = f"UPDATE targets SET {', '.join(set_clauses)} WHERE id = ?"
+        security_fields = {
+            "platform",
+            "host",
+            "port",
+            "user",
+            "ssh_alias",
+            "privilege_user",
+            "privilege_policy",
+            "enabled",
+        }
+
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM targets WHERE id = ?", (target_id,))
+            current = cursor.fetchone()
+            if not current:
+                raise KeyError(f"Target {target_id} not found")
+
+            security_context_changed = any(
+                key in normalized_updates and normalized_updates[key] != current[key]
+                for key in security_fields
+            )
+
+            cursor.execute(query, tuple(values))
+            if security_context_changed:
+                self._clear_privilege_approvals_in_conn(conn, target_id=target_id)
+            conn.commit()
 
     def add_project(self, target_id: str, data: Dict) -> str:
         pid = data.get("id") or str(uuid.uuid4())
@@ -495,49 +686,83 @@ class SQLiteRegistry(RegistryBase):
     def update_project(self, target_id: str, project_id: str, data: Dict) -> None:
         set_clauses = []
         values = []
-        
+        normalized_updates: Dict[str, Any] = {}
         mapping = {
             "display_name": "display_name",
             "root": "root",
             "read": "read_enabled",
             "write": "write_enabled",
-            "enabled": "enabled"
+            "enabled": "enabled",
         }
-        
-        for k, db_col in mapping.items():
-            if k in data:
-                set_clauses.append(f"{db_col} = ?")
-                val = data[k]
-                if isinstance(val, bool):
-                    val = int(val)
-                values.append(val)
-                
+
+        for key, db_col in mapping.items():
+            if key not in data:
+                continue
+            val = data[key]
+            if key in {"read", "write", "enabled"}:
+                val = int(bool(val))
+            normalized_updates[db_col] = val
+            set_clauses.append(f"{db_col} = ?")
+            values.append(val)
+
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            
-            if set_clauses:
-                set_clauses.append("updated_at = datetime('now')")
-                values.extend([target_id, project_id])
-                query = f"UPDATE projects SET {', '.join(set_clauses)} WHERE target_id = ? AND id = ?"
-                cursor.execute(query, tuple(values))
-                if cursor.rowcount == 0:
-                    raise KeyError(f"Project {project_id} in {target_id} not found")
-                    
+            cursor.execute(
+                "SELECT * FROM projects WHERE target_id = ? AND id = ?",
+                (target_id, project_id),
+            )
+            current = cursor.fetchone()
+            if not current:
+                raise KeyError(f"Project {project_id} in {target_id} not found")
+
+            security_context_changed = any(
+                col != "display_name"
+                and normalized_updates.get(col, current[col]) != current[col]
+                for col in normalized_updates
+            )
             if "tasks" in data:
-                cursor.execute("DELETE FROM project_tasks WHERE target_id = ? AND project_id = ?", (target_id, project_id))
+                security_context_changed = True
+
+            if set_clauses:
+                clauses = list(set_clauses)
+                clauses.append("updated_at = datetime('now')")
+                query_values = list(values)
+                query_values.extend([target_id, project_id])
+                query = (
+                    f"UPDATE projects SET {', '.join(clauses)} "
+                    "WHERE target_id = ? AND id = ?"
+                )
+                cursor.execute(query, tuple(query_values))
+
+            if "tasks" in data:
+                cursor.execute(
+                    "DELETE FROM project_tasks WHERE target_id = ? AND project_id = ?",
+                    (target_id, project_id),
+                )
                 for task_name, task_info in data["tasks"].items():
-                    cursor.execute('''
-                        INSERT INTO project_tasks (target_id, project_id, task_name, argv_json, timeout, enabled)
+                    cursor.execute(
+                        """
+                        INSERT INTO project_tasks (
+                            target_id, project_id, task_name, argv_json, timeout, enabled
+                        )
                         VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (
-                        target_id,
-                        project_id,
-                        task_name,
-                        json.dumps(task_info.get("argv", [])),
-                        task_info.get("timeout", 30),
-                        int(task_info.get("enabled", True))
-                    ))
-            
+                        """,
+                        (
+                            target_id,
+                            project_id,
+                            task_name,
+                            json.dumps(task_info.get("argv", [])),
+                            task_info.get("timeout", 30),
+                            int(task_info.get("enabled", True)),
+                        ),
+                    )
+
+            if security_context_changed:
+                self._clear_privilege_approvals_in_conn(
+                    conn,
+                    target_id=target_id,
+                    project_id=project_id,
+                )
             conn.commit()
 
     def add_client(self, data: Dict) -> str:
@@ -561,24 +786,41 @@ class SQLiteRegistry(RegistryBase):
     def update_client(self, client_id: str, data: Dict) -> None:
         set_clauses = []
         values = []
+        normalized_updates: Dict[str, Any] = {}
         for key in ["display_name", "provider", "protocol", "enabled", "notes"]:
-            if key in data:
-                set_clauses.append(f"{key} = ?")
-                val = data[key]
-                if key == "enabled":
-                    val = int(val)
-                values.append(val)
-                
-        if set_clauses:
-            set_clauses.append("updated_at = datetime('now')")
-            values.append(client_id)
-            query = f"UPDATE ai_clients SET {', '.join(set_clauses)} WHERE id = ?"
-            with self._get_conn() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query, tuple(values))
-                if cursor.rowcount == 0:
-                    raise KeyError(f"Client {client_id} not found")
-                conn.commit()
+            if key not in data:
+                continue
+            val = data[key]
+            if key == "enabled":
+                val = int(bool(val))
+            normalized_updates[key] = val
+            set_clauses.append(f"{key} = ?")
+            values.append(val)
+
+        if not set_clauses:
+            return
+
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM ai_clients WHERE id = ?", (client_id,))
+            current = cursor.fetchone()
+            if not current:
+                raise KeyError(f"Client {client_id} not found")
+
+            enabled_changed = (
+                "enabled" in normalized_updates
+                and normalized_updates["enabled"] != current["enabled"]
+            )
+
+            clauses = list(set_clauses)
+            clauses.append("updated_at = datetime('now')")
+            query_values = list(values)
+            query_values.append(client_id)
+            query = f"UPDATE ai_clients SET {', '.join(clauses)} WHERE id = ?"
+            cursor.execute(query, tuple(query_values))
+            if enabled_changed:
+                self._clear_privilege_approvals_in_conn(conn, client_id=client_id)
+            conn.commit()
 
     def list_grants(self, client_id: Optional[str] = None) -> List[Dict]:
         with self._get_conn() as conn:
@@ -606,19 +848,24 @@ class SQLiteRegistry(RegistryBase):
             return g
 
     def add_grant(self, data: Dict) -> int:
+        client_id = data["client_id"]
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
+            cursor.execute(
+                """
                 INSERT INTO grants (client_id, target_id, project_id, capability, enabled)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (
-                data["client_id"],
-                data.get("target_id", "*"),
-                data.get("project_id", "*"),
-                data.get("capability", "read"),
-                1 if data.get("enabled", True) else 0,
-            ))
+                """,
+                (
+                    client_id,
+                    data.get("target_id", "*"),
+                    data.get("project_id", "*"),
+                    data.get("capability", "read"),
+                    1 if data.get("enabled", True) else 0,
+                ),
+            )
             gid = cursor.lastrowid
+            self._clear_privilege_approvals_in_conn(conn, client_id=client_id)
             conn.commit()
             return gid
 
@@ -633,23 +880,140 @@ class SQLiteRegistry(RegistryBase):
             set_clauses.append("enabled = ?")
             values.append(1 if data["enabled"] else 0)
 
-        if set_clauses:
+        if not set_clauses:
+            return
+
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM grants WHERE id = ?", (grant_id,))
+            current = cursor.fetchone()
+            if not current:
+                raise KeyError(f"Grant {grant_id} not found")
+
             values.append(grant_id)
             query = f"UPDATE grants SET {', '.join(set_clauses)} WHERE id = ?"
-            with self._get_conn() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query, tuple(values))
-                if cursor.rowcount == 0:
-                    raise KeyError(f"Grant {grant_id} not found")
-                conn.commit()
+            cursor.execute(query, tuple(values))
+
+            old_client_id = current["client_id"]
+            new_client_id = str(data.get("client_id", old_client_id))
+            self._clear_privilege_approvals_in_conn(
+                conn, client_id=old_client_id
+            )
+            if new_client_id != old_client_id:
+                self._clear_privilege_approvals_in_conn(
+                    conn, client_id=new_client_id
+                )
+            conn.commit()
 
     def delete_grant(self, grant_id: int) -> None:
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM grants WHERE id = ?", (grant_id,))
-            if cursor.rowcount == 0:
+            cursor.execute("SELECT client_id FROM grants WHERE id = ?", (grant_id,))
+            current = cursor.fetchone()
+            if not current:
                 raise KeyError(f"Grant {grant_id} not found")
+            cursor.execute("DELETE FROM grants WHERE id = ?", (grant_id,))
+            self._clear_privilege_approvals_in_conn(
+                conn, client_id=current["client_id"]
+            )
             conn.commit()
+
+    def get_privilege_approval(self, target_id: str) -> Optional[Dict]:
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM privilege_approvals WHERE target_id = ?", (target_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def set_privilege_approval(
+        self,
+        target_id: str,
+        policy: str,
+        client_id: str,
+        project_id: str,
+        boot_id: str = "",
+    ) -> None:
+        policy = normalize_privilege_policy(policy)
+        client_id = str(client_id or "").strip()
+        project_id = str(project_id or "").strip()
+        if policy not in ("ask_always", "ask_once_per_boot"):
+            raise ValueError(f"Policy '{policy}' does not use cached approval")
+        if not client_id or not project_id:
+            raise ValueError("Privilege approval requires client and project scope")
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO privilege_approvals (
+                    target_id, policy, client_id, project_id, boot_id, approved_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(target_id) DO UPDATE SET
+                    policy = excluded.policy,
+                    client_id = excluded.client_id,
+                    project_id = excluded.project_id,
+                    boot_id = excluded.boot_id,
+                    approved_at = excluded.approved_at
+                """,
+                (
+                    target_id,
+                    policy,
+                    client_id,
+                    project_id,
+                    str(boot_id or ""),
+                    time.time(),
+                ),
+            )
+            conn.commit()
+
+    def clear_privilege_approval(self, target_id: str) -> None:
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM privilege_approvals WHERE target_id = ?", (target_id,))
+            conn.commit()
+
+    def consume_privilege_approval(
+        self,
+        target_id: str,
+        policy: str,
+        client_id: str,
+        project_id: str,
+        boot_id: str = "",
+        max_age_seconds: int = PRIVILEGE_APPROVAL_TTL_SECONDS,
+    ) -> bool:
+        policy = normalize_privilege_policy(policy)
+        client_id = str(client_id or "").strip()
+        project_id = str(project_id or "").strip()
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute("SELECT * FROM privilege_approvals WHERE target_id = ?", (target_id,))
+            row = cursor.fetchone()
+            if not row or row["policy"] != policy:
+                conn.rollback()
+                return False
+            if row["client_id"] != client_id or row["project_id"] != project_id:
+                conn.rollback()
+                return False
+            if policy == "ask_once_per_boot":
+                if bool(boot_id) and row["boot_id"] == boot_id:
+                    conn.commit()
+                    return True
+                cursor.execute("DELETE FROM privilege_approvals WHERE target_id = ?", (target_id,))
+                conn.commit()
+                return False
+            if policy == "ask_always":
+                try:
+                    age = time.time() - float(row["approved_at"])
+                except (TypeError, ValueError):
+                    age = max_age_seconds + 1
+                cursor.execute("DELETE FROM privilege_approvals WHERE target_id = ?", (target_id,))
+                if age < 0 or age > max_age_seconds:
+                    conn.commit()
+                    return False
+                conn.commit()
+                return True
+            conn.rollback()
+            return False
 
     def get_setting(self, key: str, default=None) -> Any:
         with self._get_conn() as conn:
@@ -769,6 +1133,8 @@ def import_from_json(config: GatewayConfig, registry: SQLiteRegistry) -> Dict[st
                         port = ?,
                         user = ?,
                         ssh_alias = ?,
+                        privilege_user = ?,
+                        privilege_policy = ?,
                         enabled = ?,
                         updated_at = datetime('now')
                     WHERE id = ?
@@ -779,13 +1145,15 @@ def import_from_json(config: GatewayConfig, registry: SQLiteRegistry) -> Dict[st
                     target_data.get("port", 22),
                     target_data.get("user", ""),
                     target_data.get("ssh_alias", ""),
+                    str(target_data.get("privilege_user", "") or "").strip(),
+                    normalize_privilege_policy(target_data.get("privilege_policy", "never")),
                     int(target_data.get("enabled", True)),
                     target_id,
                 ))
             else:
                 cursor.execute("""
-                    INSERT INTO targets (id, display_name, platform, host, port, user, ssh_alias, enabled)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO targets (id, display_name, platform, host, port, user, ssh_alias, privilege_user, privilege_policy, enabled)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     target_id,
                     target_data.get("display_name", target_id),
@@ -794,8 +1162,14 @@ def import_from_json(config: GatewayConfig, registry: SQLiteRegistry) -> Dict[st
                     target_data.get("port", 22),
                     target_data.get("user", ""),
                     target_data.get("ssh_alias", ""),
+                    str(target_data.get("privilege_user", "") or "").strip(),
+                    normalize_privilege_policy(target_data.get("privilege_policy", "never")),
                     int(target_data.get("enabled", True)),
                 ))
+            # Privilege approvals are temporary runtime authorization and are never
+            # imported/exported. Re-importing Target configuration must not
+            # preserve a stale approval across a policy/configuration change.
+            cursor.execute("DELETE FROM privilege_approvals WHERE target_id = ?", (target_id,))
             targets_count += 1
 
             for project_id, project_data in target_data.get("projects", {}).items():

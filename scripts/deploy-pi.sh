@@ -108,6 +108,7 @@ REMOTE_CANDIDATE="${REMOTE_TARGET_DIR}.candidate-${SHORT_SHA}-${STAMP}"
 REMOTE_PREVIOUS="${REMOTE_TARGET_DIR}.previous-${STAMP}"
 REMOTE_FAILED="${REMOTE_TARGET_DIR}.failed-${STAMP}"
 REMOTE_UNIT_BACKUP="${REMOTE_DATA_DIR}/deploy-unit-backup-${STAMP}"
+REMOTE_REGISTRY_BACKUP="${REMOTE_DATA_DIR}/backups/deploy-pre-${SHORT_SHA}-${STAMP}.db"
 OLD_DEPLOY_SHA=""
 ACTIVATED=0
 ROLLBACK_VERIFIED=0
@@ -142,13 +143,14 @@ rollback() {
     local rollback_rc=0
     ssh_pi bash -s -- \
         "${REMOTE_TARGET_DIR}" "${REMOTE_PREVIOUS}" "${REMOTE_FAILED}" \
-        "${REMOTE_UNIT_BACKUP}" "${OLD_DEPLOY_SHA}" <<'REMOTE' || rollback_rc=$?
+        "${REMOTE_UNIT_BACKUP}" "${OLD_DEPLOY_SHA}" "${REMOTE_REGISTRY_BACKUP}" <<'REMOTE' || rollback_rc=$?
 set -euo pipefail
 current="$1"
 previous="$2"
 failed="$3"
 unit_backup="$4"
 old_sha="$5"
+registry_backup="$6"
 
 sudo systemctl stop mcp-gateway-tunnel 2>/dev/null || true
 sudo systemctl stop mcp-gateway-mcp 2>/dev/null || true
@@ -164,6 +166,15 @@ for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-tunnel
     sudo test -f "$unit_backup/$unit" || { echo "ROLLBACK ERROR: unit backup missing: $unit" >&2; exit 81; }
     sudo install -m 0644 "$unit_backup/$unit" "/etc/systemd/system/$unit"
 done
+sudo test -s "$registry_backup" || { echo "ROLLBACK ERROR: Registry backup missing: $registry_backup" >&2; exit 86; }
+sudo -u mcp-gateway env PYTHONPATH="$current/src" MCP_GATEWAY_DB=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db \
+    python3 - "$registry_backup" <<'PY'
+import sys
+from mcp_gateway.lifecycle import restore_database
+
+if restore_database(sys.argv[1]) is not True:
+    raise SystemExit("Registry restore did not report success")
+PY
 sudo systemctl daemon-reload
 sudo systemctl reset-failed mcp-gateway-admin mcp-gateway-mcp mcp-gateway-tunnel
 sudo systemctl restart mcp-gateway-admin
@@ -189,6 +200,7 @@ if [ -n "$old_sha" ]; then
 fi
 sudo -u mcp-gateway "$current/bin/mcp-gateway" doctor >/dev/null
 sudo rm -rf "$failed" "$unit_backup"
+sudo rm -f "$registry_backup"
 REMOTE
     if [ "${rollback_rc}" -ne 0 ]; then
         echo "ROLLBACK_REMOTE_FAILED rc=${rollback_rc}" >&2
@@ -205,7 +217,7 @@ cleanup_remote_transfer() {
         ssh_pi "sudo rm -rf '${REMOTE_UPLOAD_DIR}'" >/dev/null 2>&1 || true
     fi
     if [ "${ACTIVATED}" -eq 0 ]; then
-        ssh_pi "sudo rm -rf '${REMOTE_CANDIDATE}'" >/dev/null 2>&1 || true
+        ssh_pi "sudo rm -rf '${REMOTE_CANDIDATE}'; sudo rm -f '${REMOTE_REGISTRY_BACKUP}'" >/dev/null 2>&1 || true
     fi
 }
 
@@ -284,11 +296,16 @@ printf '%s\n' "$HELP" | grep -q -- '-auth-token-file'
 printf '%s\n' "$HELP" | grep -q -- '-client-id'
 sudo -u mcp-gateway env PYTHONPATH="$candidate/src" MCP_GATEWAY_DB=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db \
     python3 -m mcp_gateway.bridge version >/dev/null
-sudo -u mcp-gateway env PYTHONPATH="$candidate/src" python3 - <<PY
+sudo -u mcp-gateway env PYTHONPATH="$candidate/src" python3 - "$candidate/manifest.json" <<PY
+import json
+import sys
 from mcp_gateway.bridge import ALLOWED_TOOLS, get_catalog_metadata
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    manifest = json.load(fh)
 m = get_catalog_metadata(sorted(ALLOWED_TOOLS))
-assert m['tool_count'] == 21, m
-assert m['tool_catalog_version'] == 3, m
+assert m['tool_count'] == len(ALLOWED_TOOLS), m
+assert m['tool_catalog_version'] == manifest['tool_catalog'], (m, manifest)
 assert len(m['catalog_hash']) == 64, m
 PY
 for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-tunnel.service; do
@@ -296,17 +313,31 @@ for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-tunnel
 done
 REMOTE
 
-echo "[5/10] Backing up active runtime/unit set and atomically activating candidate..."
-ssh_pi bash -s -- "${REMOTE_TARGET_DIR}" "${REMOTE_CANDIDATE}" "${REMOTE_PREVIOUS}" "${REMOTE_UNIT_BACKUP}" <<'REMOTE'
+echo "[5/10] Backing up Registry/runtime/unit set and atomically activating candidate..."
+ssh_pi bash -s -- "${REMOTE_TARGET_DIR}" "${REMOTE_CANDIDATE}" "${REMOTE_PREVIOUS}" "${REMOTE_UNIT_BACKUP}" "${REMOTE_REGISTRY_BACKUP}" <<'REMOTE'
 set -euo pipefail
 current="$1"
 candidate="$2"
 previous="$3"
 unit_backup="$4"
+registry_backup="$5"
 [ -d "$current" ]
 [ -d "$candidate" ]
 sudo rm -rf "$previous" "$unit_backup"
 sudo mkdir -p "$unit_backup"
+sudo install -d -o mcp-gateway -g mcp-gateway -m 0700 "$(dirname "$registry_backup")"
+sudo -u mcp-gateway "$current/bin/mcp-gateway" backup "$registry_backup" >/dev/null
+sudo -u mcp-gateway python3 - "$registry_backup" <<'PY'
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+try:
+    assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert conn.execute("PRAGMA user_version").fetchone()[0] >= 1
+finally:
+    conn.close()
+PY
 for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-tunnel.service; do
     sudo cp -a "/etc/systemd/system/$unit" "$unit_backup/$unit"
 done
@@ -453,3 +484,4 @@ echo "adapter_sha256=${LOCAL_ADAPTER_SHA}"
 echo "package_sha256=${PACKAGE_SHA}"
 echo "rollback_runtime=${REMOTE_PREVIOUS}"
 echo "rollback_units=${REMOTE_UNIT_BACKUP}"
+echo "rollback_registry=${REMOTE_REGISTRY_BACKUP}"

@@ -85,10 +85,17 @@ def check_registry_integrity(db_path: Optional[str] = None) -> List[CheckResult]
         cur.execute("PRAGMA user_version;")
         ver = cur.fetchone()[0]
         expected_ver = compatibility.get_registry_schema_version()
-        if ver >= expected_ver:
-            results.append(CheckResult("Schema Version", True, f"Schema user_version={ver} (expected >={expected_ver})"))
+        if ver == expected_ver:
+            results.append(CheckResult("Schema Version", True, f"Schema user_version={ver} (expected {expected_ver})"))
         else:
-            results.append(CheckResult("Schema Version", False, f"Schema mismatch: user_version={ver} < {expected_ver}"))
+            direction = "older" if ver < expected_ver else "newer"
+            results.append(
+                CheckResult(
+                    "Schema Version",
+                    False,
+                    f"Schema mismatch: user_version={ver} is {direction} than runtime schema {expected_ver}",
+                )
+            )
         conn.close()
 
     except Exception as e:

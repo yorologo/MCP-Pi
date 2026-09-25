@@ -125,6 +125,49 @@ func TestServerToolDiscovery(t *testing.T) {
 	}
 }
 
+func TestRunCommandSchemaIncludesPrivilegeIntent(t *testing.T) {
+	ctx := context.Background()
+	bridge := getTestBridgeConfig()
+	state := NewAdapterState()
+	state.SetReady(true, "ready", nil)
+	server := NewGatewayServer(bridge, state)
+
+	tServer, tClient := mcp.NewInMemoryTransports()
+	go server.Run(ctx, tServer)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	session, err := client.Connect(ctx, tClient, nil)
+	if err != nil {
+		t.Fatalf("client.Connect failed: %v", err)
+	}
+	defer session.Close()
+
+	toolsList, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	var runCommand *mcp.Tool
+	for _, tool := range toolsList.Tools {
+		if tool.Name == "run_command" {
+			runCommand = tool
+			break
+		}
+	}
+	if runCommand == nil {
+		t.Fatal("run_command tool missing")
+	}
+	raw, err := json.Marshal(runCommand.InputSchema)
+	if err != nil {
+		t.Fatalf("marshal run_command schema: %v", err)
+	}
+	schema := string(raw)
+	if !strings.Contains(schema, "\"privilege\"") ||
+		!strings.Contains(schema, "\"standard\"") ||
+		!strings.Contains(schema, "\"required\"") {
+		t.Fatalf("run_command privilege schema missing or incomplete: %s", schema)
+	}
+}
+
 func TestServerHealthCall(t *testing.T) {
 	ctx := context.Background()
 	bridge := getTestBridgeConfig()

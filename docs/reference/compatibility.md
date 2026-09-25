@@ -2,22 +2,22 @@
 
 `compatibility.json` is the machine-readable source for versioned software contracts. Documentation must match it; historical release notes must not be rewritten to look current.
 
-## Current 1.3.3 contracts
+## Current 1.3.6 source contracts
 
 | Contract | Value |
 | --- | --- |
-| Gateway | `1.3.3` |
+| Gateway | `1.3.6` |
 | Core API | `1` |
 | Bridge API | `1` |
-| Tool catalog | `3` |
-| Registry schema | `1` |
+| Tool catalog | `4` |
+| Registry schema | `4` |
 | MCP SDK | Go SDK `1.7.0` |
 | MCP protocol | `2026-07-28` |
 | Legacy MCP protocol | `2025-11-25` |
 | Python | `3.9+` |
 | Declared architectures | `armv6l`, `aarch64`, `x86_64` |
 
-The current deterministic Core catalog contains **21 tools**. Client-visible `tools/list` may contain fewer because policy/grants filter the catalog.
+The current deterministic Core catalog contains **21 tools**. Catalog v4 keeps the same names but extends the `run_command` input contract with the explicit `privilege=standard|required` field, so schema-aware clients can distinguish it from v3. Client-visible `tools/list` may contain fewer because policy/grants filter the catalog.
 
 ## Fail-closed compatibility
 
@@ -45,4 +45,4 @@ The Gateway exposes deterministic metadata including tool count, catalog version
 
 ## Registry schema
 
-SQLite uses `PRAGMA user_version=1`. Application updates must preserve compatible persistent state and should back up the Registry before schema-changing work.
+SQLite uses `PRAGMA user_version=4`. Schema v1 migrates through the privilege-policy changes to v4; `privilege_policy` defaults safely to `never`, temporary approvals are scoped to client/project, and schema v4 adds optional `privilege_user` with an empty default. Schema v2 existed only on the privilege-policy feature branch, so its unscoped approvals are intentionally discarded during migration; schema v3 approvals remain scoped while v3→v4 only adds the privileged SSH username field. Backup/restore accepts v1..v4, migrates older supported databases immediately to v4, and clears temporary privilege approvals after restore so authorization state cannot be resurrected. Newer-than-runtime schemas fail closed. Application updates must back up the Registry before schema-changing work.

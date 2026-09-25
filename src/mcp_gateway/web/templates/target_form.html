@@ -58,6 +58,24 @@
       <p id="target-ssh-alias-help" class="field-help">Advanced/optional. Use only an existing Gateway SSH config alias for extra options such as ProxyJump. Host, port, username, Gateway identity and pinned host identity remain controlled by this Target.</p>
     </div>
 
+    <div>
+      <label for="target-privilege-user" class="field-label">Privileged SSH User (optional)</label>
+      <input id="target-privilege-user" type="text" name="privilege_user" value="{{ target.privilege_user if target and target.privilege_user else '' }}" class="field font-mono" placeholder="root or Administrator" aria-describedby="target-privilege-user-help">
+      <p id="target-privilege-user-help" class="field-help">Optional Linux/Windows backend. MCP-Pi keeps the normal SSH user for standard work and uses this account only after trusted-shell access, an explicit <code>target_admin</code> grant, the Target policy and any required approval all pass. The account must authenticate with the Gateway key to this same pinned host and be observed as root/Administrator.</p>
+    </div>
+
+    <div>
+      <label for="target-privilege-policy" class="field-label">Administrative Privilege Policy</label>
+      {% set privilege_policy = target.privilege_policy if target and target.privilege_policy else 'never' %}
+      <select id="target-privilege-policy" name="privilege_policy" class="field" aria-describedby="target-privilege-policy-help">
+        <option value="never" {% if privilege_policy == 'never' %}selected{% endif %}>Never allow</option>
+        <option value="ask_always" {% if privilege_policy == 'ask_always' %}selected{% endif %}>Ask before every privileged request</option>
+        <option value="ask_once_per_boot" {% if privilege_policy == 'ask_once_per_boot' %}selected{% endif %}>Ask once per Target boot</option>
+        {% if is_edit %}<option value="always_allow" {% if privilege_policy == 'always_allow' %}selected{% endif %}>Always allow — requires separate confirmation</option>{% endif %}
+      </select>
+      <p id="target-privilege-policy-help" class="field-help">Controls use of verified elevated capabilities on this Target. A client still needs both trusted shell access and an explicit <code>target_admin</code> grant; wildcard grants do not silently gain this capability. Enabling <code>always_allow</code> requires a separate re-authenticated confirmation.</p>
+    </div>
+
     <div class="flex items-center gap-2 pt-2">
       <input type="checkbox" id="enabled" name="enabled" class="rounded bg-slate-900 border-slate-800 text-indigo-600 focus:ring-indigo-500" {% if not target or target.enabled %}checked{% endif %}>
       <label for="enabled" class="text-xs text-slate-300">Target Host is Enabled</label>
@@ -70,6 +88,101 @@
   </form>
 
   {% if is_edit %}
+  <section class="card space-y-5 p-4 sm:p-6" aria-labelledby="privilege-heading">
+    <div>
+      <h2 id="privilege-heading" class="text-lg font-semibold text-white">Administrative Privileges</h2>
+      <p class="field-help mt-1">The policy controls when MCP-Pi may use the Target's verified elevated backend. Normal Target shell and client grants remain separate gates.</p>
+    </div>
+
+    {% if privilege_status and privilege_status.ok %}
+      {% set priv = privilege_status.result %}
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <div class="text-xs uppercase tracking-wide text-slate-500">Policy</div>
+          <div class="mt-1 font-mono text-sm text-slate-200">{{ priv.policy }}</div>
+        </div>
+        <div>
+          <div class="text-xs uppercase tracking-wide text-slate-500">Observed level</div>
+          <div class="mt-1 font-mono text-sm text-slate-200">{{ priv.current_level or 'unknown' }} → {{ priv.maximum_level or 'unknown' }}</div>
+        </div>
+        <div>
+          <div class="text-xs uppercase tracking-wide text-slate-500">Backend</div>
+          <div class="mt-1 font-mono text-sm text-slate-200">{{ priv.backend or 'none' }}{% if priv.backend_user %} · {{ priv.backend_user }}{% endif %}{% if priv.backend_ready %} · ready{% else %} · not ready{% endif %}</div>
+        </div>
+        <div>
+          <div class="text-xs uppercase tracking-wide text-slate-500">Approval</div>
+          <div class="mt-1 font-mono text-sm text-slate-200">
+            {% if priv.policy == 'always_allow' %}not required
+            {% elif priv.approval_valid %}active
+            {% elif priv.approval %}stale / invalid
+            {% else %}none{% endif %}
+          </div>
+          {% if priv.approval %}
+            <div class="mt-1 text-xs text-slate-500">{{ priv.approval.client_id }} / {{ priv.approval.project_id }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if priv.policy == 'always_allow' %}
+        <div class="rounded-lg border border-rose-800 bg-rose-950/40 p-4 text-sm text-rose-200">
+          <strong>Always allow is active.</strong> Requests that pass the normal tool gates and an explicit <code>target_admin</code> grant may use the verified privileged backend without another human approval.
+        </div>
+      {% endif %}
+
+      {% if priv.transport_already_elevated and priv.policy != 'always_allow' %}
+        <div class="rounded-lg border border-amber-800 bg-amber-950/40 p-4 text-sm text-amber-200">
+          This SSH transport is already elevated. MCP-Pi will fail closed for shell requests until the selected privilege policy and explicit target_admin grant authorize that effective privilege.
+        </div>
+      {% endif %}
+
+      {% if priv.shell_can_elevate %}
+        <div class="rounded-lg border border-amber-800 bg-amber-950/40 p-4 text-sm text-amber-200">
+          The normal SSH account exposes an independent elevation path{% if priv.independent_elevator %} (<code>{{ priv.independent_elevator }}</code>){% endif %}. Because <code>run_command</code> is an arbitrary trusted shell, even a standard shell request crosses the explicit <code>target_admin</code> and Target-policy gates; MCP-Pi does not rely on command-string filtering.
+        </div>
+      {% endif %}
+
+      {% if not priv.backend_ready and not priv.transport_already_elevated %}
+        <div class="rounded-lg border border-amber-800 bg-amber-950/40 p-4 text-sm text-amber-200">
+          No verified elevated backend is ready. Privileged requests will return <code>PRIVILEGE_SETUP_REQUIRED</code> rather than falling back silently.
+          {% if priv.backend_reason %}<div class="mt-2 text-xs text-amber-300">{{ priv.backend_reason }}</div>{% endif %}
+        </div>
+      {% endif %}
+
+      <div class="flex flex-wrap gap-3 border-t border-slate-800 pt-4">
+        {% if priv.policy in ('ask_always', 'ask_once_per_boot') %}
+          {% if privilege_scopes %}
+          <form method="POST" action="{{ url_for('admin.target_privilege_approve', target_id=target.id) }}" class="flex flex-wrap items-end gap-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div>
+              <label for="privilege-approval-scope" class="field-label">Approval scope</label>
+              <select id="privilege-approval-scope" name="scope" class="field font-mono">
+                {% for scope in privilege_scopes %}
+                  <option value="{{ scope.value|e }}">{{ scope.client_id }} / {{ scope.project_id }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <button type="submit" class="btn-primary">
+              {% if priv.policy == 'ask_always' %}Approve Next Request{% else %}Approve Current Boot{% endif %}
+            </button>
+          </form>
+          {% else %}
+          <div class="text-sm text-amber-300">No enabled client/project scope currently has an explicit <code>target_admin</code> grant for this Target.</div>
+          {% endif %}
+        {% endif %}
+        {% if priv.approval %}
+          <form method="POST" action="{{ url_for('admin.target_privilege_revoke', target_id=target.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn-secondary">Revoke Cached Approval</button>
+          </form>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+        Privilege state is unavailable{% if privilege_status and privilege_status.error %}: {{ privilege_status.error.message }}{% endif %}. Elevated requests remain fail-closed.
+      </div>
+    {% endif %}
+  </section>
+
   <section class="card space-y-5 p-4 sm:p-6" aria-labelledby="ssh-identity-heading">
     <div>
       <h2 id="ssh-identity-heading" class="text-lg font-semibold text-white">SSH Host Identity</h2>

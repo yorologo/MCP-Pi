@@ -9,8 +9,8 @@ _DEFAULT_COMPATIBILITY: Dict[str, Any] = {
     "core_api_version": 1,
 
     "bridge_api_version": 1,
-    "tool_catalog_version": 3,
-    "registry_schema_version": 1,
+    "tool_catalog_version": 4,
+    "registry_schema_version": 4,
     "mcp": {
         "sdk": "go-sdk",
         "version": "1.7.0",
@@ -80,11 +80,11 @@ def get_bridge_api_version() -> int:
 
 
 def get_tool_catalog_version() -> int:
-    return int(get_compatibility().get("tool_catalog_version", 3))
+    return int(get_compatibility().get("tool_catalog_version", 4))
 
 
 def get_registry_schema_version() -> int:
-    return int(get_compatibility().get("registry_schema_version", 1))
+    return int(get_compatibility().get("registry_schema_version", 4))
 
 
 def verify_compatibility(candidate: Dict[str, Any]) -> Tuple[bool, List[str]]:

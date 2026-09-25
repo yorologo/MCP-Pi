@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Confirm Always Allow - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-2xl space-y-6">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Confirm Always Allow</h1>
+      <p class="mt-2 text-sm text-slate-400">Target: <code>{{ target.id }}</code></p>
+    </div>
+    <a href="{{ url_for('admin.target_edit', target_id=target.id) }}" class="btn-secondary">&larr; Cancel</a>
+  </div>
+
+  <section class="rounded-xl border border-rose-800 bg-rose-950/40 p-5 text-sm text-rose-100">
+    <h2 class="text-lg font-semibold text-white">Persistent privileged approval</h2>
+    <p class="mt-3">
+      Enabling <code>always_allow</code> means MCP-Pi will not ask for another human approval for privileged requests on this Target.
+      Normal authorization remains enforced: the client must still pass the tool gates and have an explicit <code>target_admin</code> grant for the selected Target and Project.
+    </p>
+    <p class="mt-3">
+      MCP-Pi will not disable operating-system security controls or invent a privilege backend. If no verified backend is available, privileged execution remains denied.
+    </p>
+    <div class="mt-4 rounded-lg border border-rose-900 bg-slate-950/40 p-3 font-mono text-xs text-slate-300">
+      {{ current_policy }} → always_allow
+    </div>
+  </section>
+
+  <form method="POST" class="card space-y-5 p-4 sm:p-6">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div>
+      <label for="confirm-target-id" class="field-label">Type the Target ID to confirm</label>
+      <input id="confirm-target-id" type="text" name="confirm_target_id" required autocomplete="off" class="field font-mono" placeholder="{{ target.id }}">
+      <p class="field-help">Enter exactly <code>{{ target.id }}</code>.</p>
+    </div>
+
+    <div>
+      <label for="confirm-admin-password" class="field-label">Admin password</label>
+      <input id="confirm-admin-password" type="password" name="password" required autocomplete="current-password" class="field">
+      <p class="field-help">This re-authenticates the current Admin session before the policy change.</p>
+    </div>
+
+    <div class="flex flex-col-reverse gap-3 border-t border-slate-800 pt-5 sm:flex-row sm:justify-end">
+      <a href="{{ url_for('admin.target_edit', target_id=target.id) }}" class="btn-secondary">Cancel</a>
+      <button type="submit" class="btn-primary">Confirm Always Allow</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

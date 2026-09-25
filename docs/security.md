@@ -53,6 +53,32 @@ flowchart TD
 
 The Project supplies authorization scope and default cwd. A shell command may have system effects outside that filesystem root, which is why this capability is higher risk and disabled by default on a fresh Registry.
 
+## Target administrative privileges
+
+Target system privilege is a second gate on top of normal execution authorization. It does not create another shell tool or another ACL system. Explicit elevation is requested through `run_command`; an allowlisted `run_task` also crosses this gate when MCP-Pi observes that its base transport is already root/Administrator.
+
+A privileged `run_command` requires all normal shell gates plus:
+
+- an explicit `target_admin` capability in a matching client grant; a wildcard `*` capability deliberately does **not** imply this newly introduced system privilege;
+- a Target `privilege_policy` of `ask_always`, `ask_once_per_boot` or `always_allow`;
+- any human approval required by that policy;
+- a privilege backend whose real state was successfully probed.
+
+Policies are deny-by-default:
+
+| Policy | Behavior |
+| --- | --- |
+| `never` | privileged Target execution is denied |
+| `ask_always` | one Admin Console approval authorizes exactly the next privileged request for the selected client/project scope and expires after a short window |
+| `ask_once_per_boot` | a client/project-scoped approval remains valid only while the observed Target `boot_id` is unchanged |
+| `always_allow` | no per-request approval is required after a separate risk confirmation and Admin-password re-authentication; grants, shell gates, Target/Project state, audit and backend verification still apply |
+
+The platform backend is deliberately small and native-first. Android/Termux reuses Shizuku/`rish` when available, while an already elevated root/Administrator transport is detected rather than silently treated as standard. Linux and Windows may instead use the Target's optional `privilege_user`: MCP-Pi opens a second SSH login to the **same pinned Target** with the same Gateway key only after authorization succeeds, and accepts it only when a probe observes `root` or `Administrator`. A generic Linux `sudo sh -lc` path and interactive Windows/UAC elevation are deliberately **not** treated as ready backends; they would move or weaken the privilege boundary outside the policy engine. Because Android's `shell` UID cannot traverse Termux private app storage, Shizuku-backed commands execute from `/`; the Project remains authorization scope, not an inherited privileged filesystem cwd.
+
+A transport that is already root/Administrator cannot bypass the policy by requesting `privilege=standard`: observed effective privilege is authoritative and the same target-admin/policy gates are applied. The lightweight pre-execution probe also treats an arbitrary shell as privilege-capable when the normal account exposes a detectable independent elevation path (for example Termux `rish`, Windows `sudo`, or working non-interactive Linux `sudo`). Such a standard shell still starts as the normal account, but it must cross `target_admin` plus the Target policy because the command could invoke that elevator itself.
+
+`target_admin` governs elevation that MCP-Pi requests or can observe on the transport; it is not an operating-system sandbox around `run_command`. MCP-Pi therefore does not attempt brittle command-string filtering. Native least-privilege Target accounts remain preferred, and structured filesystem tools keep their separate bounded Project-path authorization model.
+
 ## Kill switches
 
 | Setting | Effect |

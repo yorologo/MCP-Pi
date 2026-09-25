@@ -361,6 +361,7 @@ def invoke_tool(
             timeout = args.get("timeout")
             stdin = args.get("stdin")
             env = args.get("env")
+            privilege = args.get("privilege", "standard")
 
             if not target or not isinstance(target, str) or not command or not isinstance(command, str):
                 return {
@@ -379,6 +380,7 @@ def invoke_tool(
                 env=env,
                 timeout=timeout,
                 stdin=stdin,
+                privilege=privilege,
             )
 
         elif tool_name == "gateway_status":

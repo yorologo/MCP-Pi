@@ -54,6 +54,40 @@ class TestGatewayConfig(unittest.TestCase):
         self.assertTrue(project["read"])
         self.assertFalse(project["write"])
 
+    def test_privilege_policy_defaults_to_never_and_rejects_unknown_values(self):
+        cfg = GatewayConfig(raw_data=self.valid_data)
+        target = cfg.get_target("test-target")
+        self.assertEqual(target["privilege_policy"], "never")
+        self.assertEqual(target["privilege_user"], "")
+
+        invalid = {
+            **self.valid_data,
+            "targets": {
+                **self.valid_data["targets"],
+                "test-target": {
+                    **self.valid_data["targets"]["test-target"],
+                    "privilege_policy": "magic",
+                },
+            },
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            GatewayConfig(raw_data=invalid)
+        self.assertEqual(ctx.exception.code, "CONFIG_ERROR")
+
+        invalid_user = {
+            **self.valid_data,
+            "targets": {
+                **self.valid_data["targets"],
+                "test-target": {
+                    **self.valid_data["targets"]["test-target"],
+                    "privilege_user": ["root"],
+                },
+            },
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            GatewayConfig(raw_data=invalid_user)
+        self.assertEqual(ctx.exception.code, "CONFIG_ERROR")
+
     def test_unknown_target_raises(self):
         cfg = GatewayConfig(raw_data=self.valid_data)
         with self.assertRaises(ConfigError) as ctx:

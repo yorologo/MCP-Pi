@@ -894,7 +894,7 @@ func registerToolByName(server *mcp.Server, toolName string, bridge *BridgeConfi
 	case "run_command":
 		addGatewayTool(server, &mcp.Tool{
 			Name:        "run_command",
-			Description: "Execute a command on the target system with full shell syntax, preserving environment while scoping file access",
+			Description: "Execute a trusted Target shell command with explicit standard or required privilege intent",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -925,6 +925,11 @@ func registerToolByName(server *mcp.Server, toolName string, bridge *BridgeConfi
 					"env": map[string]any{
 						"type":        "object",
 						"description": "Optional environment variables key-value map",
+					},
+					"privilege": map[string]any{
+						"type":        "string",
+						"enum":        []string{"standard", "required"},
+						"description": "Privilege intent. Defaults to standard; required is governed by an explicit target_admin grant and the Target privilege policy.",
 					},
 				},
 				"required": []string{"target", "command"},

@@ -39,8 +39,8 @@ El wrapper [`bin/mcp-gateway`](../../bin/mcp-gateway) es compatible con POSIX sh
 | `mcp-gateway doctor` | Ejecuta la batería completa de chequeos diagnósticos de salud. |
 | `mcp-gateway repair` | Aplica correcciones no destructivas (permisos de directorios y recarga de servicios). |
 | `mcp-gateway backup` | Genera un respaldo online y consistente de SQLite mediante la API nativa de backup. |
-| `mcp-gateway restore <path>` | Valida la integridad y versión de esquema y restaura la base de datos de forma segura. |
-| `mcp-gateway rollback` | Reversa el release activo al anterior si la compatibilidad de manifiesto lo permite. |
+| `mcp-gateway restore <path>` | Valida integridad/esquema, migra v1/v2/v3→v4 cuando corresponde y limpia aprobaciones temporales de privilegio antes de devolver el Registry al servicio. |
+| `mcp-gateway rollback` | Indica la ruta administrativa soportada para rollback; la reversión real del runtime requiere la operación root correspondiente. |
 | `mcp-gateway uninstall [--purge]` | Detiene y desactiva servicios systemd; opcionalmente elimina los datos con `--purge`. |
 
 ---

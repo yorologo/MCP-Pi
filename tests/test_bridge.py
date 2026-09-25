@@ -80,7 +80,7 @@ class TestBridge(unittest.TestCase):
         self.assertEqual(output["core_api_version"], 1)
 
         self.assertEqual(output["bridge_api_version"], 1)
-        self.assertEqual(output["tool_catalog_version"], 3)
+        self.assertEqual(output["tool_catalog_version"], 4)
 
     def test_cli_tools(self):
         buf = io.StringIO()
@@ -93,7 +93,7 @@ class TestBridge(unittest.TestCase):
         self.assertIsInstance(tools, list)
         self.assertEqual(len(tools), 21)
         self.assertEqual(output["tool_count"], 21)
-        self.assertEqual(output["tool_catalog_version"], 3)
+        self.assertEqual(output["tool_catalog_version"], 4)
         self.assertEqual(len(output["catalog_hash"]), 64)
         # Check alphabetical order
         self.assertEqual(tools, sorted(tools))
@@ -163,6 +163,38 @@ class TestBridge(unittest.TestCase):
                 env=None,
                 timeout=None,
                 stdin=None,
+                privilege="standard",
+            )
+
+    def test_invoke_run_command_bridge_forwards_required_privilege(self):
+        with patch("mcp_gateway.bridge.GatewayTools") as mock_gw_cls:
+            mock_gw = mock_gw_cls.return_value
+            mock_gw.run_command.return_value = {
+                "ok": True,
+                "tool": "run_command",
+                "result": {"stdout": "elevated\n", "exit_code": 0},
+            }
+            res = invoke_tool(
+                "run_command",
+                {
+                    "target": "t1",
+                    "project": "p1",
+                    "command": "id",
+                    "privilege": "required",
+                    "client_id": "admin",
+                },
+                registry=self.mock_registry,
+            )
+            self.assertTrue(res["ok"])
+            mock_gw.run_command.assert_called_once_with(
+                target="t1",
+                command="id",
+                project="p1",
+                cwd=None,
+                env=None,
+                timeout=None,
+                stdin=None,
+                privilege="required",
             )
 
 

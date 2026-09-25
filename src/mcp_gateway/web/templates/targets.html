@@ -19,6 +19,7 @@
           <th class="py-3 px-4">Target ID</th>
           <th class="py-3 px-4">Platform</th>
           <th class="py-3 px-4">Projects</th>
+          <th class="py-3 px-4">Privilege</th>
           <th class="py-3 px-4">Status</th>
           <th class="py-3 px-4 text-right">Actions</th>
         </tr>
@@ -36,6 +37,11 @@
           <td class="py-3 px-4">
             <span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[11px]">
               {{ t.project_count }} projects
+            </span>
+          </td>
+          <td class="py-3 px-4">
+            <span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[11px]">
+              {{ t.privilege_policy or 'never' }}
             </span>
           </td>
           <td class="py-3 px-4">
@@ -76,7 +82,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="5" class="py-6 text-center text-slate-500">No targets configured yet.</td>
+          <td colspan="6" class="py-6 text-center text-slate-500">No targets configured yet.</td>
         </tr>
         {% endfor %}
       </tbody>

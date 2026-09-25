@@ -18,9 +18,13 @@ from typing import Any, Dict, Optional
 from . import __version__
 from .config import ConfigError, GatewayConfig
 from .policy import (
+    PRIVILEGE_APPROVAL_TTL_SECONDS,
     PolicyError,
     authorize_client,
+    authorize_privilege_request,
     check_capability,
+    normalize_privilege_policy,
+    normalize_privilege_request,
     path_module_for_platform,
     validate_canonical_path,
     validate_content_utf8,
@@ -185,6 +189,7 @@ class GatewayTools:
         bytes_transferred: Optional[int] = None,
         detail: Optional[Any] = None,
         required: bool = False,
+        actor: Optional[str] = None,
     ) -> bool:
         """Record audit activity; never fail silently. Critical callers may require a durable sink."""
         duration_ms = int((time.monotonic() - (start_time or time.monotonic())) * 1000)
@@ -196,7 +201,7 @@ class GatewayTools:
         if self.request_id:
             detail_dict["request_id"] = self.request_id
         event = {
-            "actor": self.client_id or "mcp-local",
+            "actor": actor or self.client_id or "mcp-local",
             "action": action,
             "target_id": target_id,
             "project_id": project_id,
@@ -228,6 +233,15 @@ class GatewayTools:
                 tool=tool,
                 code="GATEWAY_DISABLED",
                 message="Gateway operations are disabled by administrator kill switch",
+                target=target,
+                project=project,
+                start_time=start_time,
+            )
+        if tool == "run_command" and not self._is_shell_enabled():
+            return self._error_response(
+                tool=tool,
+                code="TARGET_SHELL_DISABLED",
+                message="Trusted target shell execution is disabled",
                 target=target,
                 project=project,
                 start_time=start_time,
@@ -288,14 +302,107 @@ class GatewayTools:
         except Exception as e:
             return self._error_response("list_targets", "INTERNAL_ERROR", str(e), start_time=start_time)
 
-    def _probe_target_facts(self, target_cfg: Dict[str, Any]) -> Dict[str, Any]:
-        """Collect lightweight target facts without assuming a specific OS or service manager."""
+    def _probe_current_privilege(
+        self, target_cfg: Dict[str, Any], include_boot_id: bool = False
+    ) -> Dict[str, Any]:
+        """Observe only the effective transport privilege needed before execution."""
+        boot_probe = "True" if include_boot_id else "False"
         py_code = (
-            "import json, os, platform, shutil\n"
+            f"include_boot_id = {boot_probe}\n"
+            "import ctypes, getpass, json, os, platform, shutil, subprocess\n"
+            "system = platform.system().lower() or os.name\n"
+            "boot_id = None\n"
+            "if include_boot_id:\n"
+            "    if system == 'windows':\n"
+            "        try:\n"
+            "            cp=subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command','(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToFileTimeUtc()'],capture_output=True,text=True,timeout=4)\n"
+            "            if cp.returncode == 0 and cp.stdout.strip(): boot_id='windows:'+cp.stdout.strip().splitlines()[-1].strip()\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "    else:\n"
+            "        try:\n"
+            "            with open('/proc/sys/kernel/random/boot_id', 'r', encoding='ascii') as fh: boot_id=fh.read().strip() or None\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "identity = {'user': getpass.getuser()}\n"
+            "current_level = 'standard'\n"
+            "try:\n"
+            "    uid=os.getuid(); euid=os.geteuid(); identity.update({'uid':uid,'euid':euid})\n"
+            "    if euid == 0: current_level='root'\n"
+            "except AttributeError:\n"
+            "    if system == 'windows':\n"
+            "        try:\n"
+            "            if bool(ctypes.windll.shell32.IsUserAnAdmin()): current_level='administrator'\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "elevated = current_level in ('root','administrator')\n"
+            "shell_can_elevate = False\n"
+            "independent_elevator = None\n"
+            "if not elevated:\n"
+            "    prefix=os.environ.get('PREFIX','')\n"
+            "    termux=bool(os.environ.get('TERMUX_VERSION')) or 'com.termux' in prefix\n"
+            "    if termux and shutil.which('rish'):\n"
+            "        shell_can_elevate=True; independent_elevator='shizuku'\n"
+            "    elif system == 'windows' and shutil.which('sudo'):\n"
+            "        shell_can_elevate=True; independent_elevator='windows-sudo'\n"
+            "    elif shutil.which('sudo'):\n"
+            "        try:\n"
+            "            cp=subprocess.run(['sudo','-n','true'],capture_output=True,text=True,timeout=2)\n"
+            "            if cp.returncode == 0: shell_can_elevate=True; independent_elevator='sudo-noninteractive'\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "facts={'probe_status':'ok','boot_id':boot_id,'effective_identity':identity,'privilege':{\n"
+            "    'current_level':current_level,\n"
+            "    'maximum_level':current_level,\n"
+            "    'backend':'direct' if elevated else None,\n"
+            "    'backend_ready':elevated,\n"
+            "    'backend_reason':None,\n"
+            "    'transport_already_elevated':elevated,\n"
+            "    'shell_can_elevate':shell_can_elevate,\n"
+            "    'independent_elevator':independent_elevator,\n"
+            "}}\n"
+            "print(json.dumps(facts, separators=(',', ':')))\n"
+        )
+        cmd = build_remote_python_command(py_code)
+        try:
+            res = self.transport.run_command(
+                target_cfg, cmd, timeout=8, request_id=self.request_id
+            )
+            if res.ok and res.stdout.strip():
+                return json.loads(res.stdout.strip().splitlines()[-1])
+            return {
+                "probe_status": "unavailable",
+                "reason": res.stderr.strip() or "privilege probe failed",
+            }
+        except Exception as exc:
+            return {"probe_status": "unavailable", "reason": str(exc)}
+
+    @staticmethod
+    def _privileged_ssh_target(
+        target_cfg: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Return the same pinned Target endpoint with its explicit admin SSH user."""
+        privilege_user = str(target_cfg.get("privilege_user") or "").strip()
+        standard_user = str(target_cfg.get("user") or "").strip()
+        if not privilege_user or privilege_user == standard_user:
+            return None
+        privileged_target = dict(target_cfg)
+        privileged_target["user"] = privilege_user
+        return privileged_target
+
+    def _probe_target_facts(
+        self, target_cfg: Dict[str, Any], include_boot_id: bool = True
+    ) -> Dict[str, Any]:
+        """Collect target facts; callers may skip expensive boot identity probing."""
+        boot_probe = "True" if include_boot_id else "False"
+        py_code = (
+            f"include_boot_id = {boot_probe}\n"
+            "import ctypes, getpass, json, os, platform, shutil, subprocess\n"
             "facts = {'probe_status': 'ok'}\n"
-            "facts['os'] = platform.system().lower() or os.name\n"
+            "system = platform.system().lower() or os.name\n"
+            "facts['os'] = system\n"
             "facts['arch'] = platform.machine()\n"
-            "facts['shell'] = os.environ.get('SHELL') or None\n"
+            "facts['shell'] = os.environ.get('SHELL') or os.environ.get('COMSPEC') or None\n"
             "prefix = os.environ.get('PREFIX', '')\n"
             "termux = bool(os.environ.get('TERMUX_VERSION')) or 'com.termux' in prefix\n"
             "facts['environment'] = 'termux' if termux else ('wsl' if 'microsoft' in platform.release().lower() else 'native')\n"
@@ -305,14 +412,98 @@ class GatewayTools:
             "for name in ('systemctl','rc-service','launchctl'):\n"
             "    if shutil.which(name): sm = {'systemctl':'systemd','rc-service':'openrc','launchctl':'launchd'}[name]; break\n"
             "facts['service_manager'] = sm\n"
-            "ram = 0\n"
-            "try:\n"
-            "    with open('/proc/meminfo', 'r', encoding='utf-8', errors='replace') as fh:\n"
-            "        for line in fh:\n"
-            "            if line.startswith('MemTotal:'): ram = int(line.split()[1]) // 1024; break\n"
-            "except Exception:\n"
-            "    pass\n"
+            "ram = None\n"
+            "boot_id = None\n"
+            "if system == 'windows':\n"
+            "    try:\n"
+            "        class MS(ctypes.Structure):\n"
+            "            _fields_=[('dwLength',ctypes.c_ulong),('dwMemoryLoad',ctypes.c_ulong),('ullTotalPhys',ctypes.c_ulonglong),('ullAvailPhys',ctypes.c_ulonglong),('ullTotalPageFile',ctypes.c_ulonglong),('ullAvailPageFile',ctypes.c_ulonglong),('ullTotalVirtual',ctypes.c_ulonglong),('ullAvailVirtual',ctypes.c_ulonglong),('ullAvailExtendedVirtual',ctypes.c_ulonglong)]\n"
+            "        ms=MS(); ms.dwLength=ctypes.sizeof(MS)\n"
+            "        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms)): ram=int(ms.ullTotalPhys // (1024*1024))\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "    if include_boot_id:\n"
+            "        try:\n"
+            "            cp=subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command','(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToFileTimeUtc()'],capture_output=True,text=True,timeout=4)\n"
+            "            if cp.returncode == 0 and cp.stdout.strip(): boot_id='windows:'+cp.stdout.strip().splitlines()[-1].strip()\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "else:\n"
+            "    try:\n"
+            "        with open('/proc/meminfo', 'r', encoding='utf-8', errors='replace') as fh:\n"
+            "            for line in fh:\n"
+            "                if line.startswith('MemTotal:'): ram = int(line.split()[1]) // 1024; break\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "    if include_boot_id:\n"
+            "        try:\n"
+            "            with open('/proc/sys/kernel/random/boot_id', 'r', encoding='ascii') as fh: boot_id=fh.read().strip() or None\n"
+            "        except Exception:\n"
+            "            pass\n"
             "facts['ram_mb'] = ram\n"
+            "facts['boot_id'] = boot_id\n"
+            "identity = {'user': getpass.getuser()}\n"
+            "uid = None\n"
+            "euid = None\n"
+            "try:\n"
+            "    uid = os.getuid(); euid = os.geteuid(); identity.update({'uid': uid, 'euid': euid})\n"
+            "except AttributeError:\n"
+            "    pass\n"
+            "current_level = 'standard'\n"
+            "maximum_level = 'standard'\n"
+            "backend = None\n"
+            "backend_ready = False\n"
+            "backend_reason = None\n"
+            "shell_can_elevate = False\n"
+            "independent_elevator = None\n"
+            "if system == 'windows':\n"
+            "    is_admin = False\n"
+            "    try: is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())\n"
+            "    except Exception: pass\n"
+            "    if is_admin:\n"
+            "        current_level = maximum_level = 'administrator'; backend = 'direct'; backend_ready = True\n"
+            "    elif shutil.which('sudo'):\n"
+            "        maximum_level = 'administrator'; backend = 'windows-sudo'; backend_reason = 'Windows sudo is present but no verified non-interactive MCP-Pi elevation backend is configured'\n"
+            "        shell_can_elevate = True; independent_elevator = 'windows-sudo'\n"
+            "elif euid == 0:\n"
+            "    current_level = maximum_level = 'root'; backend = 'direct'; backend_ready = True\n"
+            "elif termux and shutil.which('rish'):\n"
+            "    backend = 'shizuku'\n"
+            "    try:\n"
+            "        cp=subprocess.run([shutil.which('rish'),'-c','id -u'],capture_output=True,text=True,timeout=3)\n"
+            "        if cp.returncode == 0:\n"
+            "            uid_tokens=[x for x in (cp.stdout+'\\n'+cp.stderr).split() if x.isdigit()]\n"
+            "            remote_uid=uid_tokens[-1] if uid_tokens else ''\n"
+            "            if remote_uid:\n"
+            "                maximum_level = 'root' if remote_uid == '0' else ('android_shell' if remote_uid == '2000' else 'elevated')\n"
+            "                backend_ready = True\n"
+            "                shell_can_elevate = True; independent_elevator = 'shizuku'\n"
+            "            else:\n"
+            "                backend_reason = 'Shizuku returned no usable UID'\n"
+            "        else:\n"
+            "            backend_reason = (cp.stderr.strip() or cp.stdout.strip() or 'Shizuku probe failed')[:240]\n"
+            "    except subprocess.TimeoutExpired:\n"
+            "        backend_reason = 'Shizuku probe timed out'\n"
+            "    except Exception as exc:\n"
+            "        backend_reason = ('Shizuku probe failed: ' + str(exc))[:240]\n"
+            "elif shutil.which('sudo'):\n"
+            "    maximum_level = 'root'; backend = 'sudo'; backend_ready = False; backend_reason = 'sudo is installed, but arbitrary sudo shell execution is intentionally not accepted as a safe MCP-Pi backend'\n"
+            "    try:\n"
+            "        cp=subprocess.run(['sudo','-n','true'],capture_output=True,text=True,timeout=2)\n"
+            "        if cp.returncode == 0: shell_can_elevate = True; independent_elevator = 'sudo-noninteractive'\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "facts['effective_identity'] = identity\n"
+            "facts['privilege'] = {\n"
+            "    'current_level': current_level,\n"
+            "    'maximum_level': maximum_level,\n"
+            "    'backend': backend,\n"
+            "    'backend_ready': backend_ready,\n"
+            "    'backend_reason': backend_reason,\n"
+            "    'transport_already_elevated': current_level in ('root','administrator'),\n"
+            "    'shell_can_elevate': shell_can_elevate,\n"
+            "    'independent_elevator': independent_elevator,\n"
+            "}\n"
             "facts['features'] = {'sudo': bool(shutil.which('sudo')), 'termux': termux, 'shizuku': bool(shutil.which('rish'))}\n"
             "try:\n"
             "    if os.path.isfile('/etc/os-release'):\n"
@@ -327,12 +518,420 @@ class GatewayTools:
         )
         cmd = build_remote_python_command(py_code)
         try:
-            res = self.transport.run_command(target_cfg, cmd, timeout=10, request_id=self.request_id)
+            res = self.transport.run_command(target_cfg, cmd, timeout=12, request_id=self.request_id)
             if res.ok and res.stdout.strip():
-                return json.loads(res.stdout.strip().splitlines()[-1])
+                data = json.loads(res.stdout.strip().splitlines()[-1])
+                if data.get("ram_mb") == 0:
+                    data["ram_mb"] = None
+
+                privilege = dict(data.get("privilege") or {})
+                privileged_target = self._privileged_ssh_target(target_cfg)
+                if (
+                    privileged_target
+                    and not privilege.get("backend_ready")
+                    and not privilege.get("transport_already_elevated")
+                ):
+                    privilege_user = privileged_target["user"]
+                    expected_level = (
+                        "administrator"
+                        if str(data.get("os") or "").lower() == "windows"
+                        else "root"
+                    )
+                    privileged_probe = self._probe_current_privilege(
+                        privileged_target,
+                        include_boot_id=include_boot_id,
+                    )
+                    privilege.update(
+                        {
+                            "backend": "privileged-ssh",
+                            "backend_user": privilege_user,
+                            "backend_ready": False,
+                            "maximum_level": expected_level,
+                        }
+                    )
+                    if privileged_probe.get("probe_status") != "ok":
+                        privilege["backend_reason"] = (
+                            "Privileged SSH identity is unavailable: "
+                            + str(privileged_probe.get("reason") or "probe failed")
+                        )[:240]
+                    else:
+                        observed = dict(privileged_probe.get("privilege") or {})
+                        if observed.get("current_level") == expected_level:
+                            privilege["backend_ready"] = True
+                            privilege["backend_reason"] = None
+                            if include_boot_id:
+                                privileged_boot = privileged_probe.get("boot_id")
+                                standard_boot = data.get("boot_id")
+                                if (
+                                    standard_boot
+                                    and privileged_boot
+                                    and standard_boot != privileged_boot
+                                ):
+                                    privilege["backend_ready"] = False
+                                    privilege["backend_reason"] = (
+                                        "Privileged SSH identity reported a different boot identity"
+                                    )
+                                elif not standard_boot and privileged_boot:
+                                    data["boot_id"] = privileged_boot
+                        else:
+                            privilege["backend_reason"] = (
+                                f"Configured privileged SSH user '{privilege_user}' "
+                                f"was observed as {observed.get('current_level') or 'standard'}, "
+                                f"not {expected_level}"
+                            )[:240]
+                    data["privilege"] = privilege
+                return data
             return {"probe_status": "unavailable", "reason": res.stderr.strip() or "facts probe failed"}
         except Exception as exc:
             return {"probe_status": "unavailable", "reason": str(exc)}
+
+    def _privilege_status_from_facts(
+        self, target_cfg: Dict[str, Any], facts: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        policy = normalize_privilege_policy(target_cfg.get("privilege_policy", "never"))
+        privilege = dict(facts.get("privilege") or {})
+        approval = (
+            self.config.get_privilege_approval(target_cfg["id"])
+            if hasattr(self.config, "get_privilege_approval")
+            else None
+        )
+        boot_id = facts.get("boot_id")
+        approval_valid = False
+        if approval and approval.get("policy") == policy:
+            if policy == "ask_always":
+                try:
+                    age = time.time() - float(approval.get("approved_at", 0))
+                except (TypeError, ValueError):
+                    age = PRIVILEGE_APPROVAL_TTL_SECONDS + 1
+                approval_valid = 0 <= age <= PRIVILEGE_APPROVAL_TTL_SECONDS
+            elif policy == "ask_once_per_boot":
+                approval_valid = bool(boot_id) and approval.get("boot_id") == boot_id
+
+        privilege.update(
+            {
+                "policy": policy,
+                "boot_id": boot_id,
+                "effective_identity": facts.get("effective_identity"),
+                "approval": approval,
+                "approval_valid": approval_valid,
+            }
+        )
+        return privilege
+
+    def target_privilege_status(self, target: str) -> Dict[str, Any]:
+        """Inspect privilege capability for Admin UI without adding another MCP tool."""
+        start_time = time.monotonic()
+        try:
+            target_cfg = self.config.get_target(target)
+            facts = self._probe_target_facts(target_cfg)
+            if facts.get("probe_status") != "ok":
+                return self._error_response(
+                    "target_privilege_status",
+                    "PRIVILEGE_STATUS_UNAVAILABLE",
+                    facts.get("reason", "Target privilege probe failed"),
+                    target=target,
+                    start_time=start_time,
+                )
+            return self._success_response(
+                "target_privilege_status",
+                self._privilege_status_from_facts(target_cfg, facts),
+                target=target,
+                start_time=start_time,
+            )
+        except (ConfigError, PolicyError) as exc:
+            return self._error_response(
+                "target_privilege_status",
+                getattr(exc, "code", "PRIVILEGE_STATUS_UNAVAILABLE"),
+                str(exc),
+                target=target,
+                start_time=start_time,
+            )
+
+    def approve_target_privilege(
+        self,
+        target: str,
+        client_id: str,
+        project: str,
+        actor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create the minimal scoped approval required by the Target policy."""
+        start_time = time.monotonic()
+        try:
+            target_cfg = self.config.get_target(target)
+            self.config.get_project(target, project)
+            client_id = str(client_id or "").strip()
+            project = str(project or "").strip()
+            if not client_id or not project:
+                raise PolicyError(
+                    "Privilege approval requires an explicit client and project scope",
+                    code="PRIVILEGE_APPROVAL_SCOPE_REQUIRED",
+                )
+
+            allowed, reason = authorize_privilege_request(
+                client_id, target, project, self.config
+            )
+            if not allowed:
+                raise PolicyError(
+                    reason or "Explicit target_admin grant required",
+                    code="PRIVILEGE_GRANT_REQUIRED",
+                )
+
+            policy = normalize_privilege_policy(target_cfg.get("privilege_policy", "never"))
+            if policy == "never":
+                raise PolicyError("Privilege policy is set to Never allow", code="PRIVILEGE_DISABLED")
+            if policy == "always_allow":
+                self.config.clear_privilege_approval(target)
+                return self._success_response(
+                    "approve_target_privilege",
+                    {"policy": policy, "approval_required": False},
+                    target=target,
+                    start_time=start_time,
+                )
+
+            facts = self._probe_target_facts(target_cfg)
+            if facts.get("probe_status") != "ok":
+                raise PolicyError(
+                    facts.get("reason", "Target privilege probe failed"),
+                    code="PRIVILEGE_STATUS_UNAVAILABLE",
+                )
+            privilege = self._privilege_status_from_facts(target_cfg, facts)
+            if not privilege.get("backend_ready") and not privilege.get("transport_already_elevated"):
+                raise PolicyError(
+                    "No verified privileged backend is ready on this Target",
+                    code="PRIVILEGE_SETUP_REQUIRED",
+                )
+
+            approval_detail = {
+                "policy": policy,
+                "client_id": client_id,
+                "project_id": project,
+            }
+            self._record_audit(
+                "PRIVILEGE_APPROVAL_ATTEMPT",
+                target_id=target,
+                project_id=project,
+                start_time=start_time,
+                required=True,
+                detail=approval_detail,
+                actor=actor,
+            )
+
+            if policy == "ask_always":
+                self.config.set_privilege_approval(
+                    target,
+                    policy,
+                    client_id,
+                    project,
+                    boot_id="",
+                )
+                scope = "next_request"
+            else:
+                boot_id = facts.get("boot_id")
+                if not boot_id:
+                    raise PolicyError(
+                        "Target boot identity is unavailable; per-boot approval cannot be made safely",
+                        code="PRIVILEGE_BOOT_ID_UNAVAILABLE",
+                    )
+                self.config.set_privilege_approval(
+                    target,
+                    policy,
+                    client_id,
+                    project,
+                    boot_id=boot_id,
+                )
+                scope = "current_boot"
+
+            try:
+                self._record_audit(
+                    "PRIVILEGE_APPROVED",
+                    target_id=target,
+                    project_id=project,
+                    start_time=start_time,
+                    required=True,
+                    detail={**approval_detail, "scope": scope},
+                    actor=actor,
+                )
+            except PolicyError:
+                # Never leave a usable approval behind when its security audit
+                # record could not be persisted.
+                self.config.clear_privilege_approval(target)
+                raise
+            return self._success_response(
+                "approve_target_privilege",
+                {
+                    "policy": policy,
+                    "scope": scope,
+                    "client_id": client_id,
+                    "project_id": project,
+                },
+                target=target,
+                project=project,
+                start_time=start_time,
+            )
+        except (ConfigError, PolicyError, ValueError) as exc:
+            return self._error_response(
+                "approve_target_privilege",
+                getattr(exc, "code", "PRIVILEGE_APPROVAL_FAILED"),
+                str(exc),
+                target=target,
+                project=project or None,
+                start_time=start_time,
+            )
+
+    def revoke_target_privilege(
+        self, target: str, actor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Revoke cached human approval without altering the Target policy."""
+        start_time = time.monotonic()
+        try:
+            self.config.get_target(target)
+            self.config.clear_privilege_approval(target)
+            self._record_audit(
+                "PRIVILEGE_APPROVAL_REVOKED",
+                target_id=target,
+                start_time=start_time,
+                required=True,
+                actor=actor,
+            )
+            return self._success_response(
+                "revoke_target_privilege",
+                {"revoked": True},
+                target=target,
+                start_time=start_time,
+            )
+        except (ConfigError, PolicyError) as exc:
+            return self._error_response(
+                "revoke_target_privilege",
+                getattr(exc, "code", "PRIVILEGE_REVOKE_FAILED"),
+                str(exc),
+                target=target,
+                start_time=start_time,
+            )
+
+    def _authorize_privileged_command(
+        self,
+        target_cfg: Dict[str, Any],
+        project: str,
+        facts: Dict[str, Any],
+        *,
+        require_backend: bool = True,
+    ) -> Dict[str, Any]:
+        allowed, reason = authorize_privilege_request(
+            self.client_id,
+            target_cfg["id"],
+            project,
+            self.config,
+        )
+        if not allowed:
+            raise PolicyError(reason or "Explicit target_admin grant required", code="PRIVILEGE_GRANT_REQUIRED")
+
+        privilege = self._privilege_status_from_facts(target_cfg, facts)
+        policy = privilege["policy"]
+        if policy == "never":
+            raise PolicyError("Target privilege policy denies elevation", code="PRIVILEGE_DISABLED")
+        if require_backend and not privilege.get("backend_ready") and not privilege.get("transport_already_elevated"):
+            raise PolicyError(
+                "No verified privileged backend is ready on this Target",
+                code="PRIVILEGE_SETUP_REQUIRED",
+            )
+
+        if policy == "always_allow":
+            return privilege
+
+        boot_id = str(facts.get("boot_id") or "")
+        if policy == "ask_once_per_boot" and not boot_id:
+            raise PolicyError(
+                "Target boot identity is unavailable; per-boot approval fails closed",
+                code="PRIVILEGE_BOOT_ID_UNAVAILABLE",
+            )
+        if not hasattr(self.config, "consume_privilege_approval") or not self.config.consume_privilege_approval(
+            target_cfg["id"],
+            policy,
+            self.client_id,
+            project,
+            boot_id=boot_id or "",
+            max_age_seconds=PRIVILEGE_APPROVAL_TTL_SECONDS,
+        ):
+            raise PolicyError(
+                "Human approval is required by the Target privilege policy",
+                code="PRIVILEGE_APPROVAL_REQUIRED",
+            )
+        return privilege
+
+    def _evaluate_execution_privilege(
+        self,
+        target_cfg: Dict[str, Any],
+        project: str,
+        privilege_request: str = "standard",
+    ) -> Optional[Dict[str, Any]]:
+        """Apply one privilege gate for shell and allowlisted task execution."""
+        privilege_request = normalize_privilege_request(privilege_request)
+        policy = normalize_privilege_policy(target_cfg.get("privilege_policy", "never"))
+        include_boot_id = policy == "ask_once_per_boot"
+
+        if privilege_request == "required":
+            facts = self._probe_target_facts(
+                target_cfg, include_boot_id=include_boot_id
+            )
+        else:
+            # Standard requests still observe the effective OS identity. This
+            # catches UID 0 / Administrator even when the configured username
+            # is not literally "root" or "Administrator", without running
+            # the heavier backend-capability probe on every normal command.
+            facts = self._probe_current_privilege(
+                target_cfg, include_boot_id=include_boot_id
+            )
+
+        if facts.get("probe_status") != "ok":
+            raise PolicyError(
+                facts.get("reason", "Target privilege probe failed"),
+                code="PRIVILEGE_STATUS_UNAVAILABLE",
+            )
+
+        observed = self._privilege_status_from_facts(target_cfg, facts)
+        if privilege_request == "required" or observed.get("transport_already_elevated"):
+            return self._authorize_privileged_command(
+                target_cfg, project, facts, require_backend=True
+            )
+        if observed.get("shell_can_elevate"):
+            # An arbitrary trusted shell can invoke this independent elevator
+            # itself. Gate the whole shell request rather than attempting
+            # brittle command-string filtering.
+            return self._authorize_privileged_command(
+                target_cfg, project, facts, require_backend=False
+            )
+        return None
+
+    def _prepare_privileged_command(
+        self,
+        target_cfg: Dict[str, Any],
+        command: str,
+        effective_cwd: str,
+        privilege: Dict[str, Any],
+        env: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        backend = privilege.get("backend")
+        current_level = privilege.get("current_level")
+        if current_level in ("root", "administrator"):
+            return command
+
+        env_exports = []
+        for key, value in (env or {}).items():
+            key = str(key)
+            if key.isidentifier():
+                env_exports.append(f"export {key}={shlex.quote(str(value))};")
+        env_prefix = " ".join(env_exports)
+
+        if backend == "shizuku" and privilege.get("backend_ready"):
+            # Android's shell UID cannot traverse Termux private app storage and
+            # rish starts in /. Keep the elevated execution cwd explicit rather
+            # than pretending the Project cwd survived the privilege boundary.
+            inner = f"{env_prefix} cd / && {command}".strip()
+            return f"rish -c {shlex.quote(inner)}"
+        raise PolicyError(
+            f"Privilege backend '{backend or 'none'}' cannot execute this request safely",
+            code="PRIVILEGE_SETUP_REQUIRED",
+        )
 
     def _target_discovery(self) -> TargetDiscovery:
         discovery = getattr(self.transport, "discovery", None)
@@ -676,6 +1275,8 @@ class GatewayTools:
             project_cfg = self.config.get_project(target, project)
             task_def = validate_task(project_cfg, task)
 
+            platform_name = str(target_cfg.get("platform") or "").lower()
+
             root = project_cfg["root"]
             canonical = self.transport.resolve_canonical_path(target_cfg, root)
             validate_canonical_path(canonical, root, target_cfg.get("platform"))
@@ -689,9 +1290,21 @@ class GatewayTools:
                 quoted_cmd = build_remote_python_command(task_runner, argv)
             else:
                 quoted_cmd = " ".join(shlex.quote(arg) for arg in argv)
+
+            # Consume any one-use privilege approval only after all task/root
+            # preconditions are known-good and immediately before audit/execute.
+            privilege_info = self._evaluate_execution_privilege(
+                target_cfg, project, "standard"
+            )
             self._record_audit(
                 "RUN_TASK_ATTEMPT", target_id=target, project_id=project,
-                start_time=start_time, required=True, detail={"task": task}
+                start_time=start_time,
+                required=True,
+                detail={
+                    "task": task,
+                    "privilege_effective": bool(privilege_info),
+                    "privilege_backend": (privilege_info or {}).get("backend"),
+                },
             )
             res = self.transport.run_command(
                 target_cfg, quoted_cmd, cwd=canonical, timeout=task_def["timeout"], request_id=self.request_id
@@ -699,7 +1312,12 @@ class GatewayTools:
             self._record_audit(
                 "RUN_TASK", target_id=target, project_id=project, start_time=start_time,
                 success=1 if res.exit_code == 0 else 0,
-                detail={"task": task, "exit_code": res.exit_code}
+                detail={
+                    "task": task,
+                    "exit_code": res.exit_code,
+                    "privilege_effective": bool(privilege_info),
+                    "privilege_backend": (privilege_info or {}).get("backend"),
+                }
             )
 
             result = {
@@ -1291,8 +1909,9 @@ class GatewayTools:
         env: Optional[Dict[str, str]] = None,
         timeout: Optional[int] = None,
         stdin: Optional[str] = None,
+        privilege: str = "standard",
     ) -> Dict[str, Any]:
-        """Execute an explicitly trusted target shell command. This is not a project filesystem sandbox."""
+        """Execute a trusted Target shell command with explicit privilege intent."""
         start_time = time.monotonic()
         if not command or not isinstance(command, str) or not command.strip():
             return self._error_response(
@@ -1301,6 +1920,8 @@ class GatewayTools:
             )
 
         try:
+            privilege_request = normalize_privilege_request(privilege)
+
             # Keep a deterministic project for grant/audit scope and a convenient default cwd.
             target_cfg = self.config.get_target(target)
             if not project:
@@ -1312,15 +1933,20 @@ class GatewayTools:
                 elif projects:
                     project = sorted(projects)[0]
             if not project:
-                raise PolicyError("Trusted target shell requires a project scope for authorization and audit", code="PROJECT_NOT_FOUND")
+                raise PolicyError(
+                    "Trusted target shell requires a project scope for authorization and audit",
+                    code="PROJECT_NOT_FOUND",
+                )
 
-            gw_check = self._check_gateway_enabled("run_command", target=target, project=project, start_time=start_time)
+            gw_check = self._check_gateway_enabled(
+                "run_command", target=target, project=project, start_time=start_time
+            )
             if gw_check:
                 return gw_check
 
             project_cfg = self.config.get_project(target, project)
             root = project_cfg["root"]
-            platform_name = target_cfg.get("platform")
+            platform_name = str(target_cfg.get("platform") or "").lower()
             pathmod = path_module_for_platform(platform_name)
             root_canonical = self.transport.resolve_canonical_path(target_cfg, root)
             validate_canonical_path(root_canonical, root, platform_name)
@@ -1335,19 +1961,80 @@ class GatewayTools:
 
             input_bytes = stdin.encode("utf-8") if stdin else None
             effective_timeout = int(timeout) if timeout else None
+            remote_command = command
+            execution_target_cfg = target_cfg
+            execution_cwd = effective_cwd
+            execution_env = env if isinstance(env, dict) else None
+            privilege_info: Optional[Dict[str, Any]] = None
+            privilege_guarded = False
+            privilege_effective = False
+
+            # Explicit elevation and already-elevated transports cross the same
+            # authorization gate. Platform-specific probing remains behind it.
+            privilege_info = self._evaluate_execution_privilege(
+                target_cfg, project, privilege_request
+            )
+            privilege_guarded = bool(privilege_info)
+            privilege_effective = bool(
+                privilege_info
+                and (
+                    privilege_request == "required"
+                    or privilege_info.get("transport_already_elevated")
+                )
+            )
+            if privilege_info and privilege_request == "required":
+                if privilege_info.get("backend") == "privileged-ssh":
+                    privileged_target = self._privileged_ssh_target(target_cfg)
+                    if (
+                        not privileged_target
+                        or privileged_target.get("user")
+                        != privilege_info.get("backend_user")
+                    ):
+                        raise PolicyError(
+                            "Privileged SSH identity changed after authorization",
+                            code="PRIVILEGE_SETUP_REQUIRED",
+                        )
+                    execution_target_cfg = privileged_target
+                else:
+                    remote_command = self._prepare_privileged_command(
+                        target_cfg,
+                        command,
+                        effective_cwd,
+                        privilege_info,
+                        env=execution_env,
+                    )
+                    if privilege_info.get("backend") == "shizuku":
+                        execution_env = None
+                        execution_cwd = "/"
 
             self._record_audit(
-                "RUN_COMMAND_ATTEMPT", target_id=target, project_id=project,
-                start_time=start_time, required=True,
-                detail={"command": command[:100], "cwd": effective_cwd}
+                "RUN_COMMAND_ATTEMPT",
+                target_id=target,
+                project_id=project,
+                start_time=start_time,
+                required=True,
+                detail={
+                    "command": command[:100],
+                    "authorization_cwd": effective_cwd,
+                    "execution_cwd": execution_cwd,
+                    "privilege_request": privilege_request,
+                    "privilege_guarded": privilege_guarded,
+                    "privilege_effective": privilege_effective,
+                    "independent_elevator": (privilege_info or {}).get("independent_elevator"),
+                    "privilege_policy": normalize_privilege_policy(
+                        target_cfg.get("privilege_policy", "never")
+                    ),
+                    "privilege_backend": (privilege_info or {}).get("backend"),
+                    "privilege_backend_user": (privilege_info or {}).get("backend_user"),
+                },
             )
 
             res = self.transport.run_command(
-                target=target_cfg,
-                remote_cmd=command,
+                target=execution_target_cfg,
+                remote_cmd=remote_command,
                 timeout=effective_timeout,
-                cwd=effective_cwd,
-                env=env if isinstance(env, dict) else None,
+                cwd=execution_cwd,
+                env=execution_env,
                 input_data=input_bytes,
                 request_id=self.request_id,
             )
@@ -1359,45 +2046,120 @@ class GatewayTools:
                 "exit_code": res.exit_code,
                 "timed_out": getattr(res, "timed_out", False),
                 "duration": duration_sec,
-                "effective_cwd": effective_cwd,
+                "effective_cwd": execution_cwd,
+                "authorization_cwd": effective_cwd,
+                "privilege": {
+                    "requested": privilege_request,
+                    "guarded": privilege_guarded,
+                    "effective": privilege_effective,
+                    "independent_elevator": (privilege_info or {}).get("independent_elevator"),
+                    "policy": normalize_privilege_policy(
+                        target_cfg.get("privilege_policy", "never")
+                    ),
+                    "backend": (privilege_info or {}).get("backend"),
+                    "backend_user": (privilege_info or {}).get("backend_user"),
+                    "level": (privilege_info or {}).get("maximum_level")
+                    if privilege_effective
+                    else "standard",
+                },
             }
 
             self._record_audit(
-                "RUN_COMMAND", target_id=target, project_id=project, start_time=start_time,
+                "RUN_COMMAND",
+                target_id=target,
+                project_id=project,
+                start_time=start_time,
                 success=1 if res.exit_code == 0 else 0,
-                detail={"command": command[:100], "exit_code": res.exit_code, "cwd": effective_cwd},
+                detail={
+                    "command": command[:100],
+                    "exit_code": res.exit_code,
+                    "authorization_cwd": effective_cwd,
+                    "execution_cwd": execution_cwd,
+                    "privilege_request": privilege_request,
+                    "privilege_guarded": privilege_guarded,
+                    "privilege_effective": privilege_effective,
+                    "independent_elevator": (privilege_info or {}).get("independent_elevator"),
+                    "privilege_backend": (privilege_info or {}).get("backend"),
+                },
             )
-            return self._success_response("run_command", result_data, target, project, start_time)
+            return self._success_response(
+                "run_command", result_data, target, project, start_time
+            )
 
         except PolicyError as e:
             self._record_audit(
-                "DENY", target_id=target, project_id=project, start_time=start_time,
-                success=0, error_code=e.code, detail={"error": str(e), "command": command[:100]},
+                "DENY",
+                target_id=target,
+                project_id=project,
+                start_time=start_time,
+                success=0,
+                error_code=e.code,
+                detail={
+                    "error": str(e),
+                    "command": command[:100],
+                    "privilege_request": str(privilege or "standard"),
+                },
             )
-            return self._error_response("run_command", e.code, str(e), target, project, start_time)
+            return self._error_response(
+                "run_command", e.code, str(e), target, project, start_time
+            )
         except SSHError as e:
             if e.code == "SSH_TIMEOUT":
                 duration_sec = round((time.monotonic() - start_time), 3)
                 result_data = {
-                    "stdout": "", "stderr": str(e), "exit_code": 124, "timed_out": True,
-                    "duration": duration_sec, "effective_cwd": effective_cwd if 'effective_cwd' in locals() else "",
+                    "stdout": "",
+                    "stderr": str(e),
+                    "exit_code": 124,
+                    "timed_out": True,
+                    "duration": duration_sec,
+                    "effective_cwd": execution_cwd if "execution_cwd" in locals() else (effective_cwd if "effective_cwd" in locals() else ""),
+                    "authorization_cwd": effective_cwd if "effective_cwd" in locals() else "",
+                    "privilege": {
+                        "requested": str(privilege or "standard"),
+                        "effective": bool(locals().get("privilege_effective", False)),
+                    },
                 }
                 self._record_audit(
-                    "RUN_COMMAND", target_id=target, project_id=project, start_time=start_time,
-                    success=0, error_code=e.code, detail={"command": command[:100], "timed_out": True}
+                    "RUN_COMMAND",
+                    target_id=target,
+                    project_id=project,
+                    start_time=start_time,
+                    success=0,
+                    error_code=e.code,
+                    detail={
+                        "command": command[:100],
+                        "timed_out": True,
+                        "privilege_request": str(privilege or "standard"),
+                    },
                 )
-                return self._success_response("run_command", result_data, target, project, start_time)
+                return self._success_response(
+                    "run_command", result_data, target, project, start_time
+                )
             self._record_audit(
-                "ERROR", target_id=target, project_id=project, start_time=start_time,
-                success=0, error_code=e.code, detail={"error": str(e)},
+                "ERROR",
+                target_id=target,
+                project_id=project,
+                start_time=start_time,
+                success=0,
+                error_code=e.code,
+                detail={"error": str(e)},
             )
-            return self._error_response("run_command", e.code, str(e), target, project, start_time)
+            return self._error_response(
+                "run_command", e.code, str(e), target, project, start_time
+            )
         except Exception as e:
             self._record_audit(
-                "ERROR", target_id=target, project_id=project, start_time=start_time,
-                success=0, error_code="INTERNAL_ERROR", detail={"error": str(e)}
+                "ERROR",
+                target_id=target,
+                project_id=project,
+                start_time=start_time,
+                success=0,
+                error_code="INTERNAL_ERROR",
+                detail={"error": str(e)},
             )
-            return self._error_response("run_command", "INTERNAL_ERROR", str(e), target, project, start_time)
+            return self._error_response(
+                "run_command", "INTERNAL_ERROR", str(e), target, project, start_time
+            )
 
     def append_file(self, target: str, project: str, path: str, content: str) -> Dict[str, Any]:
         """Append UTF-8 content to an existing file in the project."""

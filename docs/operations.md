@@ -49,7 +49,7 @@ Open the trusted address configured in private `admin.env`. Machine-specific IPs
 
 Use Admin Console for:
 
-- Targets and connectivity tests;
+- Targets, connectivity tests and administrative privilege policy/approvals;
 - Projects and roots;
 - clients/grants;
 - audit activity;
@@ -69,6 +69,12 @@ shell_enabled   -> trusted Target shell
 ```
 
 Do not conflate `writes_enabled` with `run_command`; they are deliberately independent security controls.
+
+## Target privilege operation
+
+Target privilege is configured under **Targets → Edit Target**. Keep `never` unless elevated Target work is intentionally delegated. For interactive policies, use the Admin Console approval action; do not create ad-hoc password files or broaden SSH/sudo configuration merely to avoid the approval step. Enabling `always_allow` is deliberately separate from ordinary Target editing and requires the exact Target ID plus Admin-password re-authentication.
+
+A privileged command still requires `shell_enabled`, trusted shell authorization and an explicit matching `target_admin` grant. Treat `target_shell` as a trusted arbitrary shell: do not give its normal remote OS account unrestricted independent `sudo`, `rish` or equivalent escalation if the `target_admin` gate is intended to remain authoritative. For Linux/Windows, an optional **Privileged SSH User** may be configured instead; it is used only after those gates pass and must be probed as real root/Administrator on the same pinned Target. Do not disable UAC or configure general `NOPASSWD` sudo to make this work. `ask_always` approvals are single-use, short-lived and scoped to the selected client/project; `ask_once_per_boot` approvals are also scoped and become invalid after the Target boot identity changes. Cached approvals are also revoked when their authorization context changes, including operational Target settings (including the privileged SSH identity), the scoped Project, client enabled state or Grants. On Android/Termux, Shizuku-backed commands run from `/` because Android `shell` cannot traverse Termux private storage; use explicit Android-visible paths inside the command when needed.
 
 ## Backup
 

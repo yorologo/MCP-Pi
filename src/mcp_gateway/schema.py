@@ -1,7 +1,7 @@
 import sqlite3
 import os
 
-SCHEMA_V1 = """
+SCHEMA_V4 = """
 -- targets
 CREATE TABLE targets (
     id TEXT PRIMARY KEY,
@@ -11,6 +11,8 @@ CREATE TABLE targets (
     port INTEGER NOT NULL DEFAULT 22,
     user TEXT NOT NULL,
     ssh_alias TEXT,
+    privilege_user TEXT NOT NULL DEFAULT '',
+    privilege_policy TEXT NOT NULL DEFAULT 'never',
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -65,6 +67,16 @@ CREATE TABLE grants (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- privilege_approvals
+CREATE TABLE privilege_approvals (
+    target_id TEXT PRIMARY KEY REFERENCES targets(id),
+    policy TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    boot_id TEXT NOT NULL DEFAULT '',
+    approved_at REAL NOT NULL
+);
+
 -- activity
 CREATE TABLE activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +108,7 @@ CREATE TABLE admin_users (
     last_login TEXT
 );
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 4;
 """
 
 
@@ -105,25 +117,101 @@ def init_db(db_path: str):
     db_dir = os.path.dirname(db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-    
+
     conn = sqlite3.connect(db_path)
     try:
         migrate_db(conn)
     finally:
         conn.close()
 
+
 def get_schema_version(conn: sqlite3.Connection) -> int:
     cursor = conn.cursor()
     cursor.execute("PRAGMA user_version")
     return cursor.fetchone()[0]
 
+
 def migrate_db(conn: sqlite3.Connection):
     current_version = get_schema_version(conn)
-    if current_version == 0:
-        cursor = conn.cursor()
-        cursor.executescript(SCHEMA_V1)
+    cursor = conn.cursor()
 
-    # Insert default settings if missing
+    if current_version == 0:
+        try:
+            conn.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V4 + "\nCOMMIT;")
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        current_version = 4
+
+    if current_version == 1:
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute(
+                "ALTER TABLE targets ADD COLUMN privilege_policy TEXT NOT NULL DEFAULT 'never'"
+            )
+            cursor.execute(
+                """
+                CREATE TABLE privilege_approvals (
+                    target_id TEXT PRIMARY KEY REFERENCES targets(id),
+                    policy TEXT NOT NULL,
+                    client_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    boot_id TEXT NOT NULL DEFAULT '',
+                    approved_at REAL NOT NULL
+                )
+                """
+            )
+            cursor.execute("PRAGMA user_version = 3")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        current_version = 3
+
+    if current_version == 2:
+        # Schema 2 existed only on the privilege-policy feature branch.
+        # Its approvals were temporary and unscoped, so discard rather than
+        # attempt to preserve authorization state during migration.
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute("DROP TABLE IF EXISTS privilege_approvals")
+            cursor.execute(
+                """
+                CREATE TABLE privilege_approvals (
+                    target_id TEXT PRIMARY KEY REFERENCES targets(id),
+                    policy TEXT NOT NULL,
+                    client_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    boot_id TEXT NOT NULL DEFAULT '',
+                    approved_at REAL NOT NULL
+                )
+                """
+            )
+            cursor.execute("PRAGMA user_version = 3")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        current_version = 3
+
+    if current_version == 3:
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute(
+                "ALTER TABLE targets ADD COLUMN privilege_user TEXT NOT NULL DEFAULT ''"
+            )
+            cursor.execute("PRAGMA user_version = 4")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        current_version = 4
+
+    if current_version != 4:
+        raise RuntimeError(f"Unsupported database schema version: {current_version}")
+
+    # Insert default settings if missing.
     defaults = [
         ("gateway_enabled", "true"),
         ("writes_enabled", "false"),
@@ -136,10 +224,8 @@ def migrate_db(conn: sqlite3.Connection):
         ("activity_retention", "5000"),
     ]
 
-    cursor = conn.cursor()
     cursor.executemany(
         "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-        defaults
+        defaults,
     )
     conn.commit()
-

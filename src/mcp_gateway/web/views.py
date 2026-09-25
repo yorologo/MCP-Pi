@@ -21,7 +21,14 @@ from flask import (
 )
 
 from .. import __version__
-from ..policy import TOOL_CAPABILITIES, authorize_client, summarize_grant_capabilities
+from ..policy import (
+    TARGET_PRIVILEGE_CAPABILITY,
+    TOOL_CAPABILITIES,
+    authorize_client,
+    authorize_privilege_request,
+    normalize_privilege_policy,
+    summarize_grant_capabilities,
+)
 from .auth import (
     check_password_hash,
     is_rate_limited,
@@ -43,15 +50,58 @@ def get_tools():
     return current_app.config["TOOLS"]
 
 
+ALWAYS_ALLOW_CONFIRM_TTL_SECONDS = 300
+
+
+def _target_privilege_scopes(target_id: str):
+    """Return concrete client/project scopes that currently have target_admin."""
+    registry = get_registry()
+    scopes = []
+    for client in registry.list_clients():
+        if not client.get("enabled", True):
+            continue
+        client_id = client["id"]
+        for project in registry.list_projects(target_id):
+            if not project.get("enabled", True):
+                continue
+            project_id = project["id"]
+            allowed, _ = authorize_privilege_request(
+                client_id, target_id, project_id, registry
+            )
+            if allowed:
+                scopes.append(
+                    {
+                        "client_id": client_id,
+                        "project_id": project_id,
+                        "value": json.dumps(
+                            [client_id, project_id],
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                    }
+                )
+    return sorted(scopes, key=lambda item: (item["client_id"], item["project_id"]))
+
+
 def _target_ssh_context(target_id: str) -> Dict[str, Any]:
     tools = get_tools()
     return {
         "ssh_identity": tools.target_ssh_identity(target_id),
         "gateway_public_key": tools.gateway_ssh_public_key(),
+        "privilege_status": tools.target_privilege_status(target_id),
+        "privilege_scopes": _target_privilege_scopes(target_id),
     }
 
 
-def record_audit(action: str, target_id: str = None, project_id: str = None, success: bool = True, error_code: str = None, detail: str = ""):
+def record_audit(
+    action: str,
+    target_id: str = None,
+    project_id: str = None,
+    success: bool = True,
+    error_code: str = None,
+    detail: str = "",
+    required: bool = False,
+) -> bool:
     try:
         reg = get_registry()
         reg.record_activity({
@@ -63,8 +113,11 @@ def record_audit(action: str, target_id: str = None, project_id: str = None, suc
             "error_code": error_code,
             "detail": detail,
         })
-    except Exception:
-        pass
+        return True
+    except Exception as exc:
+        if required:
+            raise RuntimeError("AUDIT_UNAVAILABLE: security-sensitive change was not applied") from exc
+        return False
 
 
 # ==========================================
@@ -228,6 +281,8 @@ def target_add():
         "port": int(request.form.get("port", 22)),
         "user": request.form.get("user", "").strip(),
         "ssh_alias": request.form.get("ssh_alias", "").strip(),
+        "privilege_user": request.form.get("privilege_user", "").strip(),
+        "privilege_policy": request.form.get("privilege_policy", "never").strip(),
         "enabled": request.form.get("enabled") == "on",
     }
     if not data["id"] or not data["host"] or not data["user"]:
@@ -235,6 +290,21 @@ def target_add():
         return render_template("target_form.html", target=data, is_edit=False)
 
     try:
+        data["privilege_policy"] = normalize_privilege_policy(data["privilege_policy"])
+        if data["privilege_policy"] == "always_allow":
+            raise ValueError(
+                "Create the Target with a safer privilege policy, then enable Always allow from Edit Target with the required second confirmation."
+            )
+        if data["privilege_policy"] != "never":
+            record_audit(
+                "target_privilege_policy_change_attempt",
+                target_id=data["id"],
+                detail=json.dumps(
+                    {"old_policy": None, "new_policy": data["privilege_policy"]},
+                    sort_keys=True,
+                ),
+                required=True,
+            )
         registry = get_registry()
         registry.add_target(data)
         record_audit("add_target", target_id=data["id"], success=True, detail=f"Added target '{data['id']}'")
@@ -279,11 +349,98 @@ def target_edit(target_id: str):
         "port": int(request.form.get("port", 22)),
         "user": request.form.get("user", "").strip(),
         "ssh_alias": request.form.get("ssh_alias", "").strip(),
+        "privilege_user": request.form.get("privilege_user", "").strip(),
+        "privilege_policy": request.form.get("privilege_policy", "never").strip(),
         "enabled": request.form.get("enabled") == "on",
     }
     try:
+        old_privilege_policy = normalize_privilege_policy(
+            target.get("privilege_policy", "never")
+        )
+        old_privilege_user = str(target.get("privilege_user") or "").strip()
+        update_data["privilege_policy"] = normalize_privilege_policy(
+            update_data["privilege_policy"]
+        )
+        new_privilege_policy = update_data["privilege_policy"]
+        new_privilege_user = update_data["privilege_user"]
+
+        if old_privilege_policy != "always_allow" and new_privilege_policy == "always_allow":
+            # Do not mutate the Target at all until the separate confirmation
+            # completes. Other edits should be saved independently first.
+            session["pending_always_allow"] = {
+                "target_id": target_id,
+                "expected_policy": old_privilege_policy,
+                "requested_at": time.time(),
+            }
+            flash(
+                "Always allow requires a separate risk confirmation and Admin password re-authentication. Other Target edits were not saved; save them separately first if needed.",
+                "warning",
+            )
+            return redirect(
+                url_for("admin.target_privilege_always_allow", target_id=target_id)
+            )
+
+        if old_privilege_user != new_privilege_user:
+            record_audit(
+                "target_privilege_user_change_attempt",
+                target_id=target_id,
+                detail=json.dumps(
+                    {
+                        "old_privilege_user": old_privilege_user,
+                        "new_privilege_user": new_privilege_user,
+                    },
+                    sort_keys=True,
+                ),
+                required=True,
+            )
+        if old_privilege_policy != new_privilege_policy:
+            record_audit(
+                "target_privilege_policy_change_attempt",
+                target_id=target_id,
+                detail=json.dumps(
+                    {
+                        "old_policy": old_privilege_policy,
+                        "new_policy": new_privilege_policy,
+                    },
+                    sort_keys=True,
+                ),
+                required=True,
+            )
         registry.update_target(target_id, update_data)
-        record_audit("update_target", target_id=target_id, success=True, detail=f"Updated target '{target_id}'")
+        record_audit(
+            "update_target",
+            target_id=target_id,
+            success=True,
+            detail=f"Updated target '{target_id}'",
+        )
+        if old_privilege_user != new_privilege_user:
+            record_audit(
+                "target_privilege_user_changed",
+                target_id=target_id,
+                success=True,
+                detail=json.dumps(
+                    {
+                        "old_privilege_user": old_privilege_user,
+                        "new_privilege_user": new_privilege_user,
+                        "cached_approval_revoked": True,
+                    },
+                    sort_keys=True,
+                ),
+            )
+        if old_privilege_policy != new_privilege_policy:
+            record_audit(
+                "target_privilege_policy_changed",
+                target_id=target_id,
+                success=True,
+                detail=json.dumps(
+                    {
+                        "old_policy": old_privilege_policy,
+                        "new_policy": new_privilege_policy,
+                        "cached_approval_revoked": True,
+                    },
+                    sort_keys=True,
+                ),
+            )
         flash(f"Target '{target_id}' updated successfully.", "success")
         return redirect(url_for("admin.targets_list"))
     except Exception as e:
@@ -296,6 +453,134 @@ def target_edit(target_id: str):
             is_edit=True,
             **_target_ssh_context(target_id),
         )
+
+
+@bp.route("/targets/<target_id>/privileges/always-allow", methods=["GET", "POST"])
+@login_required
+def target_privilege_always_allow(target_id: str):
+    registry = get_registry()
+    pending = session.get("pending_always_allow")
+    now = time.time()
+    try:
+        requested_at = (
+            float(pending.get("requested_at", 0))
+            if isinstance(pending, dict)
+            else 0.0
+        )
+    except (TypeError, ValueError):
+        requested_at = 0.0
+    pending_age = now - requested_at
+    if (
+        not isinstance(pending, dict)
+        or pending.get("target_id") != target_id
+        or pending_age < 0
+        or pending_age > ALWAYS_ALLOW_CONFIRM_TTL_SECONDS
+    ):
+        session.pop("pending_always_allow", None)
+        flash("Always allow confirmation is missing or expired. Start again from Edit Target.", "danger")
+        return redirect(url_for("admin.target_edit", target_id=target_id))
+
+    try:
+        target = registry.get_target(target_id)
+    except Exception:
+        session.pop("pending_always_allow", None)
+        abort(404, description="Target not found")
+
+    current_policy = normalize_privilege_policy(target.get("privilege_policy", "never"))
+    expected_policy = normalize_privilege_policy(pending.get("expected_policy", "never"))
+    if current_policy != expected_policy or current_policy == "always_allow":
+        session.pop("pending_always_allow", None)
+        flash("Target privilege policy changed while confirmation was pending. Start again.", "danger")
+        return redirect(url_for("admin.target_edit", target_id=target_id))
+
+    if request.method == "GET":
+        return render_template(
+            "target_always_allow_confirm.html",
+            target=target,
+            current_policy=current_policy,
+        )
+
+    confirm_target_id = request.form.get("confirm_target_id", "").strip()
+    password = request.form.get("password", "")
+    username = str(session.get("user") or "").strip()
+    rate_key = f"reauth:{username}:{request.remote_addr or 'unknown'}"
+
+    if is_rate_limited(rate_key):
+        flash("Too many failed re-authentication attempts. Try again after the lockout.", "danger")
+        return render_template(
+            "target_always_allow_confirm.html",
+            target=target,
+            current_policy=current_policy,
+        )
+
+    if confirm_target_id != target_id:
+        flash("Target ID confirmation does not match.", "danger")
+        return render_template(
+            "target_always_allow_confirm.html",
+            target=target,
+            current_policy=current_policy,
+        )
+
+    user_record = registry.get_admin_user(username) if username else None
+    if (
+        not user_record
+        or not user_record.get("enabled", True)
+        or not check_password_hash(user_record["password_hash"], password)
+    ):
+        record_login_failure(rate_key)
+        flash("Admin password confirmation failed.", "danger")
+        return render_template(
+            "target_always_allow_confirm.html",
+            target=target,
+            current_policy=current_policy,
+        )
+
+    reset_login_failures(rate_key)
+    try:
+        record_audit(
+            "target_privilege_policy_change_attempt",
+            target_id=target_id,
+            detail=json.dumps(
+                {
+                    "old_policy": current_policy,
+                    "new_policy": "always_allow",
+                    "second_confirmation": True,
+                    "reauthenticated_user": username,
+                },
+                sort_keys=True,
+            ),
+            required=True,
+        )
+        registry.update_target(target_id, {"privilege_policy": "always_allow"})
+        record_audit(
+            "target_privilege_policy_changed",
+            target_id=target_id,
+            success=True,
+            detail=json.dumps(
+                {
+                    "old_policy": current_policy,
+                    "new_policy": "always_allow",
+                    "cached_approval_revoked": True,
+                    "second_confirmation": True,
+                    "reauthenticated_user": username,
+                },
+                sort_keys=True,
+            ),
+        )
+    except Exception as exc:
+        flash(f"Always allow was not enabled: {exc}", "danger")
+        return render_template(
+            "target_always_allow_confirm.html",
+            target=target,
+            current_policy=current_policy,
+        )
+
+    session.pop("pending_always_allow", None)
+    flash(
+        f"Always allow enabled for '{target_id}'. Authorized target_admin requests will no longer require per-request approval.",
+        "warning",
+    )
+    return redirect(url_for("admin.target_edit", target_id=target_id))
 
 
 @bp.route("/targets/<target_id>/toggle", methods=["POST"])
@@ -358,6 +643,62 @@ def target_ssh_untrust(target_id: str):
     else:
         err = res.get("error", {})
         flash(f"SSH trust removal failed [{err.get('code')}]: {err.get('message')}", "danger")
+    return redirect(url_for("admin.target_edit", target_id=target_id))
+
+
+@bp.route("/targets/<target_id>/privileges/approve", methods=["POST"])
+@login_required
+def target_privilege_approve(target_id: str):
+    tools = get_tools()
+    scopes = _target_privilege_scopes(target_id)
+    try:
+        requested_scope = json.loads(request.form.get("scope", ""))
+        if (
+            not isinstance(requested_scope, list)
+            or len(requested_scope) != 2
+            or not all(isinstance(value, str) for value in requested_scope)
+        ):
+            raise ValueError("invalid scope")
+        requested_pair = tuple(requested_scope)
+        current_pairs = {
+            (scope["client_id"], scope["project_id"]) for scope in scopes
+        }
+        if requested_pair not in current_pairs:
+            raise ValueError("stale or unauthorized scope")
+        client_id, project_id = requested_pair
+    except (TypeError, ValueError):
+        flash("Select a valid client/project scope with an explicit target_admin grant.", "danger")
+        return redirect(url_for("admin.target_edit", target_id=target_id))
+
+    res = tools.approve_target_privilege(
+        target_id,
+        client_id,
+        project_id,
+        actor=f"admin:{session.get('user', 'unknown')}",
+    )
+    if res.get("ok"):
+        result = res.get("result", {})
+        scope = result.get("scope", "not required")
+        flash(f"Privilege approval recorded for '{target_id}' ({scope}).", "success")
+    else:
+        err = res.get("error", {})
+        flash(f"Privilege approval failed [{err.get('code')}]: {err.get('message')}", "danger")
+    return redirect(url_for("admin.target_edit", target_id=target_id))
+
+
+@bp.route("/targets/<target_id>/privileges/revoke", methods=["POST"])
+@login_required
+def target_privilege_revoke(target_id: str):
+    tools = get_tools()
+    res = tools.revoke_target_privilege(
+        target_id,
+        actor=f"admin:{session.get('user', 'unknown')}",
+    )
+    if res.get("ok"):
+        flash(f"Cached privilege approval revoked for '{target_id}'.", "success")
+    else:
+        err = res.get("error", {})
+        flash(f"Privilege revocation failed [{err.get('code')}]: {err.get('message')}", "danger")
     return redirect(url_for("admin.target_edit", target_id=target_id))
 
 
@@ -490,13 +831,14 @@ GRANT_COMMON_CAPABILITIES = (
     ("write", "Write"),
     ("execute", "Tasks / Execute"),
     ("target_shell", "Target shell"),
-    ("admin", "Gateway admin"),
-    ("*", "All capabilities (*)"),
+    (TARGET_PRIVILEGE_CAPABILITY, "Target administrative privilege"),
+    ("admin", "Gateway appliance admin"),
+    ("*", "All compatible tool capabilities (*)"),
 )
 
 
 def _known_grant_capabilities():
-    caps = {"*"}
+    caps = {"*", TARGET_PRIVILEGE_CAPABILITY}
     for allowed in TOOL_CAPABILITIES.values():
         caps.update(allowed)
     return caps
@@ -536,9 +878,16 @@ def _grant_form_data(registry, client_id: str):
         if not any(p["target_id"] == target_id and p["id"] == project_id for p in projects):
             raise ValueError(f"Project '{project_id}' is not configured under Target '{target_id}'.")
 
-    if target_id == "*" and project_id == "*" and capability == "*":
+    capability_tokens = {token.strip() for token in capability.split(",") if token.strip()}
+    if (
+        target_id == "*"
+        and project_id == "*"
+        and ("*" in capability_tokens or TARGET_PRIVILEGE_CAPABILITY in capability_tokens)
+    ):
         if request.form.get("confirm_global") != "on":
-            raise ValueError("Global */*/* grant requires explicit confirmation.")
+            raise ValueError(
+                "Global wildcard or target_admin grant requires explicit confirmation."
+            )
 
     return {
         "client_id": client_id,

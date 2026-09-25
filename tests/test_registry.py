@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -198,6 +199,207 @@ class TestSQLiteRegistry(unittest.TestCase):
             self.registry.get_target(tid)
         self.assertEqual(ctx.exception.code, "TARGET_DISABLED")
 
+    def test_target_privilege_policy_and_approvals(self):
+        tid = self.registry.add_target({
+            "id": "priv-target",
+            "host": "127.0.0.1",
+            "user": "worker",
+            "privilege_user": "root",
+            "privilege_policy": "ask_always",
+        })
+        target = self.registry.get_target(tid)
+        self.assertEqual(target["privilege_policy"], "ask_always")
+        self.assertEqual(target["privilege_user"], "root")
+
+        self.registry.set_privilege_approval(
+            tid,
+            "ask_always",
+            "c1",
+            "p1",
+        )
+        approval = self.registry.get_privilege_approval(tid)
+        self.assertIsNotNone(approval)
+        self.assertEqual(approval["client_id"], "c1")
+        self.assertEqual(approval["project_id"], "p1")
+
+        # Cached approval is scoped; another client or project cannot consume it.
+        self.assertFalse(
+            self.registry.consume_privilege_approval(
+                tid, "ask_always", "c2", "p1"
+            )
+        )
+        self.assertFalse(
+            self.registry.consume_privilege_approval(
+                tid, "ask_always", "c1", "p2"
+            )
+        )
+        self.assertIsNotNone(self.registry.get_privilege_approval(tid))
+
+        self.assertTrue(
+            self.registry.consume_privilege_approval(
+                tid, "ask_always", "c1", "p1"
+            )
+        )
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+        self.assertFalse(
+            self.registry.consume_privilege_approval(
+                tid, "ask_always", "c1", "p1"
+            )
+        )
+
+        # ask_always approvals expire rather than becoming indefinite capabilities.
+        self.registry.set_privilege_approval(
+            tid,
+            "ask_always",
+            "c1",
+            "p1",
+        )
+        with self.registry._get_conn() as conn:
+            conn.execute(
+                "UPDATE privilege_approvals SET approved_at = ? WHERE target_id = ?",
+                (time.time() - 3600, tid),
+            )
+            conn.commit()
+        self.assertFalse(
+            self.registry.consume_privilege_approval(
+                tid, "ask_always", "c1", "p1", max_age_seconds=300
+            )
+        )
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+
+        self.registry.update_target(tid, {"privilege_policy": "ask_once_per_boot"})
+        self.registry.set_privilege_approval(
+            tid,
+            "ask_once_per_boot",
+            "c1",
+            "p1",
+            boot_id="boot-a",
+        )
+        self.assertTrue(
+            self.registry.consume_privilege_approval(
+                tid, "ask_once_per_boot", "c1", "p1", boot_id="boot-a"
+            )
+        )
+        self.assertFalse(
+            self.registry.consume_privilege_approval(
+                tid, "ask_once_per_boot", "c1", "p1", boot_id="boot-b"
+            )
+        )
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+
+        self.registry.set_privilege_approval(
+            tid,
+            "ask_once_per_boot",
+            "c1",
+            "p1",
+            boot_id="boot-a",
+        )
+        # Cosmetic Target edits preserve approval.
+        self.registry.update_target(tid, {"display_name": "Renamed only"})
+        self.assertIsNotNone(self.registry.get_privilege_approval(tid))
+
+        # Operational Target identity changes revoke cached approval.
+        self.registry.update_target(tid, {"host": "localhost"})
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+
+        self.registry.set_privilege_approval(
+            tid,
+            "ask_once_per_boot",
+            "c1",
+            "p1",
+            boot_id="boot-a",
+        )
+        # Changing the privileged SSH identity also revokes cached approval.
+        self.registry.update_target(tid, {"host": "127.0.0.1"})
+        self.registry.set_privilege_approval(
+            tid,
+            "ask_once_per_boot",
+            "c1",
+            "p1",
+            boot_id="boot-a",
+        )
+        self.registry.update_target(tid, {"privilege_user": "admin-root"})
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+        self.assertEqual(self.registry.get_target(tid)["privilege_user"], "admin-root")
+
+        self.registry.set_privilege_approval(
+            tid,
+            "ask_once_per_boot",
+            "c1",
+            "p1",
+            boot_id="boot-a",
+        )
+        # Changing policy also revokes cached approval.
+        self.registry.update_target(tid, {"privilege_policy": "never"})
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+        self.assertEqual(self.registry.get_target(tid)["privilege_policy"], "never")
+
+    def test_privilege_approval_revoked_when_authorization_context_changes(self):
+        tid = self.registry.add_target({
+            "id": "ctx-target",
+            "host": "127.0.0.1",
+            "user": "worker",
+            "privilege_policy": "ask_once_per_boot",
+        })
+        pid = self.registry.add_project(tid, {
+            "id": "ctx-project",
+            "root": "/tmp",
+            "enabled": True,
+        })
+        cid = self.registry.add_client({
+            "id": "ctx-client",
+            "display_name": "Context Client",
+            "enabled": True,
+        })
+        gid = self.registry.add_grant({
+            "client_id": cid,
+            "target_id": tid,
+            "project_id": pid,
+            "capability": "target_admin",
+            "enabled": True,
+        })
+
+        def approve():
+            self.registry.set_privilege_approval(
+                tid,
+                "ask_once_per_boot",
+                cid,
+                pid,
+                boot_id="boot-a",
+            )
+            self.assertIsNotNone(self.registry.get_privilege_approval(tid))
+
+        approve()
+        self.registry.update_project(tid, pid, {"display_name": "Cosmetic"})
+        self.assertIsNotNone(self.registry.get_privilege_approval(tid))
+        self.registry.update_project(tid, pid, {"root": "/var/tmp"})
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+
+        approve()
+        self.registry.update_client(cid, {"display_name": "Cosmetic Client"})
+        self.assertIsNotNone(self.registry.get_privilege_approval(tid))
+        self.registry.update_client(cid, {"enabled": False})
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+
+        self.registry.update_client(cid, {"enabled": True})
+        approve()
+        self.registry.update_grant(gid, {"capability": "target_admin,read"})
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+
+        approve()
+        self.registry.add_grant({
+            "client_id": cid,
+            "target_id": tid,
+            "project_id": pid,
+            "capability": "read",
+            "enabled": True,
+        })
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+
+        approve()
+        self.registry.delete_grant(gid)
+        self.assertIsNone(self.registry.get_privilege_approval(tid))
+
     def test_crud_projects(self):
         tid = self.registry.add_target({"host": "local", "user": "test"})
         pid = self.registry.add_project(tid, {
@@ -275,6 +477,7 @@ class TestRegistryParityAndImport(unittest.TestCase):
                     "port": 8022,
                     "user": "u0_a435",
                     "ssh_alias": "termux-local",
+                    "privilege_user": "root",
                     "enabled": True,
                     "projects": {
                         "MCP_Local": {
@@ -333,6 +536,7 @@ class TestRegistryParityAndImport(unittest.TestCase):
         self.assertEqual(j_target["user"], s_target["user"])
         self.assertEqual(j_target["platform"], s_target["platform"])
         self.assertEqual(j_target["ssh_alias"], s_target["ssh_alias"])
+        self.assertEqual(j_target.get("privilege_user", ""), s_target["privilege_user"])
         self.assertEqual(j_target["enabled"], s_target["enabled"])
 
         # 2. Same project lookup by (target_id, project_id)

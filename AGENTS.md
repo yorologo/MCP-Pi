@@ -12,8 +12,8 @@ Current software contract:
 Gateway: 1.3.6
 Core API: 1
 Bridge API: 1
-Tool catalog: v3 / 21 tools
-Registry schema: 1
+Tool catalog: v4 / 21 tools
+Registry schema: 4
 MCP: 2026-07-28
 ```
 
@@ -76,6 +76,12 @@ There is **no unrestricted or anonymous MCP shell**. `run_command` is a trusted 
 - audit.
 
 The Project supplies authorization scope and initial cwd. **It is not a filesystem sandbox for shell effects.** Do not document it as one.
+
+### Target administrative privilege
+
+Target OS elevation is a second gate on the existing `run_command`, not a separate shell tool. Explicit MCP-Pi elevation requires normal trusted-shell authorization plus an explicit matching `target_admin` grant, a non-`never` Target `privilege_policy`, any required human approval or per-boot lease, and a verified backend. Wildcard `*` grants do not imply `target_admin`. Because `run_command` is an arbitrary trusted shell, the lightweight pre-execution probe also treats a standard shell as privilege-capable when the normal account exposes a detectable independent elevator such as Termux `rish`, Windows `sudo`, or working non-interactive Linux `sudo`; that shell must cross the same `target_admin` and Target-policy gates even though the command initially runs as the normal user. Do not replace this boundary with command-string filtering.
+
+Observed OS privilege is authoritative. If an SSH transport is already root/Administrator, the same Target privilege gates apply even when the caller requests `privilege=standard`. Linux/Windows may use an optional separate `privilege_user` over the same pinned SSH Target/key, but it is a usable managed backend only after a probe verifies actual root/Administrator identity; the normal Target account remains unchanged. Missing backend for explicit elevation, required approval, or boot identity must fail closed; one-use approvals stay short-lived and client/project-scoped. `always_allow` requires separate Admin re-authentication when enabled from the Web UI. Native least-privilege Target accounts remain preferred. Do not disable UAC globally or grant unrestricted sudo merely to satisfy a request.
 
 Fresh Registry defaults are:
 

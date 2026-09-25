@@ -19,8 +19,8 @@ flowchart LR
 | Gateway | **1.3.6** |
 | Core API | 1 |
 | Bridge API | 1 |
-| Tool catalog | v3 / 21 tools |
-| Registry schema | 1 |
+| Tool catalog | v4 / 21 tools |
+| Registry schema | 4 |
 | MCP protocol | `2026-07-28` |
 | Python | 3.9+ |
 
@@ -40,6 +40,7 @@ Core rules:
 - SSH host-key pinning (`StrictHostKeyChecking=yes`);
 - structured tools before shell;
 - trusted Target shell only with explicit authorization and its own kill switch;
+- Target OS privilege is a separate, explicit `target_admin` capability plus per-Target consent policy;
 - secrets and persistent Registry data stay outside Git;
 - no Docker, proxy or monitoring stack is required for the normal appliance.
 

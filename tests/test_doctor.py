@@ -1,5 +1,7 @@
 import os
 import sys
+import sqlite3
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
@@ -19,6 +21,19 @@ class TestDoctor(unittest.TestCase):
         overall, checks = doctor.run_doctor(verbose=False)
         self.assertIn(overall, ("HEALTHY", "DEGRADED", "UNHEALTHY"))
         self.assertTrue(len(checks) > 5)
+
+    def test_registry_schema_must_match_runtime_exactly(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "future.db")
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA user_version = 999")
+            conn.commit()
+            conn.close()
+
+            checks = doctor.check_registry_integrity(path)
+            schema_check = next(c for c in checks if c.name == "Schema Version")
+            self.assertFalse(schema_check.passed)
+            self.assertIn("newer than runtime schema", schema_check.message)
 
     def test_run_repair_safe(self):
         repairs = doctor.run_repair()

@@ -15,6 +15,116 @@ class PolicyError(Exception):
         self.code = code
 
 
+PRIVILEGE_POLICIES = (
+    "never",
+    "ask_always",
+    "ask_once_per_boot",
+    "always_allow",
+)
+
+PRIVILEGE_REQUEST_MODES = ("standard", "required")
+TARGET_PRIVILEGE_CAPABILITY = "target_admin"
+PRIVILEGE_APPROVAL_TTL_SECONDS = 300
+
+
+def normalize_privilege_policy(value: Any) -> str:
+    """Return a canonical Target privilege policy or fail closed."""
+    policy = str(value or "never").strip().lower()
+    if policy not in PRIVILEGE_POLICIES:
+        raise PolicyError(
+            f"Unsupported privilege policy: {value!r}",
+            code="INVALID_PRIVILEGE_POLICY",
+        )
+    return policy
+
+
+def normalize_privilege_request(value: Any) -> str:
+    """Validate the privilege intent carried by run_command."""
+    mode = str(value or "standard").strip().lower()
+    if mode not in PRIVILEGE_REQUEST_MODES:
+        raise PolicyError(
+            f"Unsupported privilege request: {value!r}",
+            code="INVALID_PRIVILEGE_REQUEST",
+        )
+    return mode
+
+
+def _grant_matches(
+    grant: Dict[str, Any],
+    target_id: Optional[str],
+    project_id: Optional[str],
+    allowed_capabilities: Any,
+    *,
+    allow_capability_wildcard: bool = True,
+) -> bool:
+    """Match one grant consistently across ordinary and privileged authorization."""
+    if not grant.get("enabled", True):
+        return False
+
+    grant_caps = {
+        item.strip()
+        for item in str(grant.get("capability", "")).split(",")
+        if item.strip()
+    }
+    allowed_caps = set(allowed_capabilities)
+    if not grant_caps.intersection(allowed_caps):
+        if not (allow_capability_wildcard and "*" in grant_caps):
+            return False
+
+    if target_id and grant.get("target_id", "*") not in ("*", target_id):
+        return False
+    if project_id and grant.get("project_id", "*") not in ("*", project_id):
+        return False
+    return True
+
+
+def authorize_privilege_request(
+    client_id: Optional[str],
+    target_id: str,
+    project_id: str,
+    registry: Any,
+) -> Tuple[bool, Optional[str]]:
+    """Require an explicit target_admin capability for Target privilege elevation.
+
+    The same Target/Project grant matcher is used by ordinary authorization,
+    but capability wildcard is intentionally disabled here so an existing "*"
+    grant cannot silently gain operating-system privilege after an upgrade.
+    """
+    if not client_id:
+        return False, "PRIVILEGE_GRANT_REQUIRED: Explicit target_admin capability is required"
+
+    client_id = str(client_id).strip()
+    if hasattr(registry, "get_client"):
+        try:
+            client = registry.get_client(client_id)
+        except Exception:
+            return False, f"PRIVILEGE_GRANT_REQUIRED: Client '{client_id}' is not registered"
+        if not client.get("enabled", True):
+            return False, f"PRIVILEGE_GRANT_REQUIRED: Client '{client_id}' is disabled"
+
+    try:
+        grants = registry.get_client_grants(client_id)
+    except Exception:
+        grants = []
+
+    if any(
+        _grant_matches(
+            grant,
+            target_id,
+            project_id,
+            {TARGET_PRIVILEGE_CAPABILITY},
+            allow_capability_wildcard=False,
+        )
+        for grant in grants
+    ):
+        return True, None
+
+    return (
+        False,
+        f"PRIVILEGE_GRANT_REQUIRED: Client '{client_id}' requires an explicit {TARGET_PRIVILEGE_CAPABILITY} grant for {target_id}/{project_id}",
+    )
+
+
 def validate_relative_path(relative_path: str) -> str:
     r"""Validate that the provided path is strictly relative and safe syntactically.
 
@@ -233,7 +343,7 @@ def authorize_client(
     if hasattr(registry, "get_client"):
         try:
             client = registry.get_client(client_id)
-        except (KeyError, Exception):
+        except Exception:
             return False, f"CLIENT_NOT_FOUND: Client '{client_id}' is not registered"
 
         if not client.get("enabled", True):
@@ -246,26 +356,10 @@ def authorize_client(
             return False, f"TOOL_NOT_ALLOWED: Client '{client_id}' has no active grants"
 
         allowed_caps = TOOL_CAPABILITIES[tool_name]
-        grant_matched = False
-        for g in grants:
-            if not g.get("enabled", True):
-                continue
-
-            cap = str(g.get("capability", "read")).strip()
-            g_caps = set(c.strip() for c in cap.split(","))
-            if not (g_caps & allowed_caps) and "*" not in g_caps:
-                continue
-
-            g_target = g.get("target_id", "*")
-            if target_id and g_target not in ("*", target_id):
-                continue
-
-            g_project = g.get("project_id", "*")
-            if project_id and g_project not in ("*", project_id):
-                continue
-
-            grant_matched = True
-            break
+        grant_matched = any(
+            _grant_matches(g, target_id, project_id, allowed_caps)
+            for g in grants
+        )
 
         if not grant_matched:
             return False, f"TOOL_NOT_ALLOWED: Client '{client_id}' lacks grant capability for tool '{tool_name}'"
@@ -344,6 +438,7 @@ def summarize_grant_capabilities(grants: Any) -> Dict[str, bool]:
         "tasks": any_cap("execute", "run_task", "tasks"),
         "target_shell": any_cap("target_shell", "run_command", "environment_management", "system_package_management"),
         "gateway_admin": any_cap("admin", "status", "doctor", "backup", "maintenance", "reboot"),
+        "target_admin": TARGET_PRIVILEGE_CAPABILITY in caps,
         "all": all_access,
     }
 

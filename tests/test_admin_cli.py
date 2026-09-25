@@ -86,6 +86,7 @@ class TestAdminCLI(unittest.TestCase):
         self.assertEqual(data["ai_clients"][0]["id"], "c1")
         self.assertIn("settings", data)
         self.assertEqual(data["settings"]["gateway_enabled"], "true")
+        self.assertEqual(data["targets"]["t1"]["privilege_policy"], "never")
 
         # Sanity check: NO passwords, NO hashes, NO admin_users
         with open(export_path, "r", encoding="utf-8") as f:
@@ -93,6 +94,7 @@ class TestAdminCLI(unittest.TestCase):
         self.assertNotIn("SecretPassword", export_raw)
         self.assertNotIn("password_hash", export_raw)
         self.assertNotIn("admin_users", export_raw)
+        self.assertNotIn("privilege_approvals", export_raw)
 
     def test_import_json(self):
         json_path = os.path.join(self.temp_dir.name, "targets_import.json")
@@ -105,6 +107,7 @@ class TestAdminCLI(unittest.TestCase):
                     "port": 2222,
                     "user": "imported_user",
                     "ssh_alias": "imported_alias",
+                    "privilege_policy": "ask_once_per_boot",
                     "enabled": True,
                     "projects": {
                         "import_proj": {
@@ -125,6 +128,7 @@ class TestAdminCLI(unittest.TestCase):
 
         t = self.registry.get_target("import_target")
         self.assertEqual(t["host"], "10.0.0.1")
+        self.assertEqual(t["privilege_policy"], "ask_once_per_boot")
         self.assertIn("import_proj", t["projects"])
 
 

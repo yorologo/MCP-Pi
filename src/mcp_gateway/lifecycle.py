@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import compatibility
 from .doctor import run_doctor
+from .schema import init_db
 
 
 def get_paths() -> Dict[str, str]:
@@ -39,8 +40,8 @@ def create_manifest(version: Optional[str] = None, output_path: Optional[str] = 
         "architectures": ["armv6l", "aarch64", "x86_64"],
         "core_api": compat.get("core_api_version", 1),
         "bridge_api": compat.get("bridge_api_version", 1),
-        "tool_catalog": compat.get("tool_catalog_version", 3),
-        "registry_schema_range": f">={compat.get('registry_schema_version', 1)}",
+        "tool_catalog": compat.get("tool_catalog_version", 4),
+        "registry_schema_range": f"1..{compat.get('registry_schema_version', 4)}",
         "mcp_sdk": compat.get("mcp", {}).get("sdk", "go-sdk"),
         "mcp_sdk_version": compat.get("mcp", {}).get("version", "1.7.0"),
         "mcp_protocol": compat.get("mcp", {}).get("protocol", "2026-07-28"),
@@ -121,9 +122,13 @@ def restore_database(backup_path: str) -> bool:
     cur.execute("PRAGMA user_version;")
     ver = cur.fetchone()[0]
     expected_ver = compatibility.get_registry_schema_version()
-    if ver < expected_ver:
+    # Schema v1 is the oldest supported migration source. Newer-than-runtime
+    # backups fail closed; older supported backups are migrated after restore.
+    if ver < 1 or ver > expected_ver:
         conn.close()
-        raise ValueError(f"Backup schema version {ver} is incompatible with expected {expected_ver}")
+        raise ValueError(
+            f"Backup schema version {ver} is incompatible with supported range 1..{expected_ver}"
+        )
     conn.close()
 
     paths = get_paths()
@@ -137,6 +142,19 @@ def restore_database(backup_path: str) -> bool:
         src_conn.backup(dst_conn)
     dst_conn.close()
     src_conn.close()
+
+    # Bring supported legacy backups to the current schema immediately, so a
+    # successful restore never leaves persistent state below the runtime contract.
+    init_db(target_db)
+
+    # Human privilege approvals are temporary runtime authorization, not
+    # configuration. Never resurrect an old one from a backup restore.
+    restored = sqlite3.connect(target_db)
+    try:
+        restored.execute("DELETE FROM privilege_approvals")
+        restored.commit()
+    finally:
+        restored.close()
     return True
 
 

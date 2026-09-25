@@ -7,6 +7,8 @@
       "port": 8022,
       "user": "u0_a435",
       "ssh_alias": "termux-local",
+      "privilege_user": "",
+      "privilege_policy": "never",
       "enabled": true,
       "projects": {
         "MCP_Local": {
@@ -29,6 +31,8 @@
       "port": 22,
       "user": "mcp-agent",
       "ssh_alias": "linux-local",
+      "privilege_user": "root",
+      "privilege_policy": "never",
       "enabled": false,
       "projects": {
         "example-project": {

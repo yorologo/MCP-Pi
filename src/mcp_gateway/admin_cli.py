@@ -105,6 +105,8 @@ def export_json_cmd(db_path: str, output_file: Optional[str] = None) -> int:
                 "port": t_row["port"],
                 "user": t_row["user"],
                 "ssh_alias": t_row["ssh_alias"],
+                "privilege_user": t_row["privilege_user"],
+                "privilege_policy": t_row["privilege_policy"],
                 "enabled": bool(t_row["enabled"]),
                 "projects": {},
             }

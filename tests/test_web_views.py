@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -142,10 +143,13 @@ class TestWebViews(unittest.TestCase):
         res = self.client.get("/targets")
         self.assertEqual(res.status_code, 200)
         self.assertIn(b"t1", res.data)
+        self.assertIn(b"Privilege", res.data)
+        self.assertIn(b"never", res.data)
 
         # 2. Add target form
         res_form = self.client.get("/targets/add")
         self.assertEqual(res_form.status_code, 200)
+        self.assertIn(b"Privileged SSH User", res_form.data)
 
         # 3. Add target POST
         res_add = self.client.post(
@@ -157,6 +161,7 @@ class TestWebViews(unittest.TestCase):
                 "host": "192.168.1.51",
                 "port": "22",
                 "user": "worker2",
+                "privilege_user": "root",
                 "enabled": "on",
                 "csrf_token": "valid-token",
             },
@@ -174,6 +179,7 @@ class TestWebViews(unittest.TestCase):
                 "host": "192.168.1.52",
                 "port": "2222",
                 "user": "worker2_new",
+                "privilege_user": "root",
                 "enabled": "on",
                 "csrf_token": "valid-token",
             },
@@ -182,6 +188,7 @@ class TestWebViews(unittest.TestCase):
         self.assertEqual(res_edit.status_code, 200)
         t2 = self.registry.get_target("t2")
         self.assertEqual(t2["host"], "192.168.1.52")
+        self.assertEqual(t2["privilege_user"], "root")
 
         # 5. Toggle target
         res_toggle = self.client.post(
@@ -200,6 +207,291 @@ class TestWebViews(unittest.TestCase):
         )
         self.assertEqual(res_test.status_code, 200)
         self.assertIn(b"reachable", res_test.data)
+
+    def test_target_privilege_policy_and_approval_controls(self):
+        self._login()
+
+        page = self.client.get("/targets/t1/edit")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Administrative Privilege Policy", page.data)
+        self.assertIn(b"Never allow", page.data)
+
+        updated = self.client.post(
+            "/targets/t1/edit",
+            data={
+                "display_name": "Target 1",
+                "platform": "linux",
+                "host": "192.168.1.50",
+                "port": "22",
+                "user": "worker",
+                "privilege_policy": "ask_always",
+                "enabled": "on",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            self.registry.get_target("t1")["privilege_policy"], "ask_always"
+        )
+
+        self.registry.add_client({
+            "id": "c1",
+            "display_name": "Client 1",
+            "enabled": True,
+        })
+        self.registry.add_grant({
+            "client_id": "c1",
+            "target_id": "t1",
+            "project_id": "p1",
+            "capability": "target_admin",
+            "enabled": True,
+        })
+
+        self.tools._probe_target_facts = lambda target_cfg, **kwargs: {
+            "probe_status": "ok",
+            "boot_id": "boot-test",
+            "effective_identity": {"user": "worker", "uid": 1000, "euid": 1000},
+            "privilege": {
+                "current_level": "root",
+                "maximum_level": "root",
+                "backend": "direct",
+                "backend_ready": True,
+                "transport_already_elevated": True,
+            },
+        }
+
+        stale = self.client.post(
+            "/targets/t1/privileges/approve",
+            data={
+                "csrf_token": "valid-token",
+                "scope": json.dumps(["c1", "stale-project"]),
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(stale.status_code, 200)
+        self.assertIn(b"Select a valid client/project scope", stale.data)
+        self.assertIsNone(self.registry.get_privilege_approval("t1"))
+
+        approved = self.client.post(
+            "/targets/t1/privileges/approve",
+            data={
+                "csrf_token": "valid-token",
+                "scope": json.dumps(["c1", "p1"]),
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(approved.status_code, 200)
+        self.assertIn(b"Privilege approval recorded", approved.data)
+        approval = self.registry.get_privilege_approval("t1")
+        self.assertIsNotNone(approval)
+        self.assertEqual(approval["client_id"], "c1")
+        self.assertEqual(approval["project_id"], "p1")
+
+        revoked = self.client.post(
+            "/targets/t1/privileges/revoke",
+            data={"csrf_token": "valid-token"},
+            follow_redirects=True,
+        )
+        self.assertEqual(revoked.status_code, 200)
+        self.assertIn(b"Cached privilege approval revoked", revoked.data)
+        self.assertIsNone(self.registry.get_privilege_approval("t1"))
+
+    def test_always_allow_requires_separate_reauthentication(self):
+        self._login()
+
+        first_step = self.client.post(
+            "/targets/t1/edit",
+            data={
+                "display_name": "Should Not Persist Yet",
+                "platform": "linux",
+                "host": "192.168.1.99",
+                "port": "22",
+                "user": "worker",
+                "privilege_policy": "always_allow",
+                "enabled": "on",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(first_step.status_code, 200)
+        self.assertIn(b"Confirm Always Allow", first_step.data)
+        first_state = self.registry.get_target("t1")
+        self.assertEqual(first_state["privilege_policy"], "never")
+        self.assertEqual(first_state["host"], "192.168.1.50")
+
+        wrong_target = self.client.post(
+            "/targets/t1/privileges/always-allow",
+            data={
+                "confirm_target_id": "wrong",
+                "password": "Password123!",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"Target ID confirmation does not match", wrong_target.data)
+        self.assertEqual(
+            self.registry.get_target("t1")["privilege_policy"], "never"
+        )
+
+        wrong_password = self.client.post(
+            "/targets/t1/privileges/always-allow",
+            data={
+                "confirm_target_id": "t1",
+                "password": "not-the-password",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"Admin password confirmation failed", wrong_password.data)
+        self.assertEqual(
+            self.registry.get_target("t1")["privilege_policy"], "never"
+        )
+
+        confirmed = self.client.post(
+            "/targets/t1/privileges/always-allow",
+            data={
+                "confirm_target_id": "t1",
+                "password": "Password123!",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertIn(b"Always allow enabled", confirmed.data)
+        self.assertEqual(
+            self.registry.get_target("t1")["privilege_policy"], "always_allow"
+        )
+
+    def test_always_allow_confirmation_expires_and_malformed_state_fails_closed(self):
+        self._login()
+
+        start = self.client.post(
+            "/targets/t1/edit",
+            data={
+                "display_name": "Target 1",
+                "platform": "linux",
+                "host": "192.168.1.50",
+                "port": "22",
+                "user": "worker",
+                "privilege_policy": "always_allow",
+                "enabled": "on",
+                "csrf_token": "valid-token",
+            },
+        )
+        self.assertEqual(start.status_code, 302)
+        self.assertEqual(
+            self.registry.get_target("t1")["privilege_policy"], "never"
+        )
+
+        with self.client.session_transaction() as sess:
+            pending = dict(sess["pending_always_allow"])
+            pending["requested_at"] = time.time() - 301
+            sess["pending_always_allow"] = pending
+
+        expired = self.client.get(
+            "/targets/t1/privileges/always-allow",
+            follow_redirects=True,
+        )
+        self.assertIn(b"confirmation is missing or expired", expired.data)
+        self.assertEqual(
+            self.registry.get_target("t1")["privilege_policy"], "never"
+        )
+
+        with self.client.session_transaction() as sess:
+            sess["pending_always_allow"] = {
+                "target_id": "t1",
+                "expected_policy": "never",
+                "requested_at": "not-a-timestamp",
+            }
+
+        malformed = self.client.get(
+            "/targets/t1/privileges/always-allow",
+            follow_redirects=True,
+        )
+        self.assertEqual(malformed.status_code, 200)
+        self.assertIn(b"confirmation is missing or expired", malformed.data)
+        self.assertEqual(
+            self.registry.get_target("t1")["privilege_policy"], "never"
+        )
+
+    def test_privilege_policy_change_fails_closed_when_audit_unavailable(self):
+        self._login()
+
+        first_step = self.client.post(
+            "/targets/t1/edit",
+            data={
+                "display_name": "Target 1",
+                "platform": "linux",
+                "host": "192.168.1.50",
+                "port": "22",
+                "user": "worker",
+                "privilege_policy": "always_allow",
+                "enabled": "on",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"Confirm Always Allow", first_step.data)
+        self.assertEqual(
+            self.registry.get_target("t1")["privilege_policy"], "never"
+        )
+
+        original_record_activity = self.registry.record_activity
+
+        def broken_audit(event):
+            raise OSError("audit unavailable")
+
+        self.registry.record_activity = broken_audit
+        try:
+            response = self.client.post(
+                "/targets/t1/privileges/always-allow",
+                data={
+                    "confirm_target_id": "t1",
+                    "password": "Password123!",
+                    "csrf_token": "valid-token",
+                },
+                follow_redirects=True,
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b"AUDIT_UNAVAILABLE", response.data)
+            self.assertEqual(
+                self.registry.get_target("t1")["privilege_policy"], "never"
+            )
+        finally:
+            self.registry.record_activity = original_record_activity
+
+    def test_privilege_user_change_fails_closed_when_audit_unavailable(self):
+        self._login()
+        self.assertEqual(self.registry.get_target("t1")["privilege_user"], "")
+
+        original_record_activity = self.registry.record_activity
+
+        def broken_audit(event):
+            raise OSError("audit unavailable")
+
+        self.registry.record_activity = broken_audit
+        try:
+            response = self.client.post(
+                "/targets/t1/edit",
+                data={
+                    "display_name": "Target 1",
+                    "platform": "linux",
+                    "host": "192.168.1.50",
+                    "port": "22",
+                    "user": "worker",
+                    "privilege_user": "root",
+                    "privilege_policy": "never",
+                    "enabled": "on",
+                    "csrf_token": "valid-token",
+                },
+                follow_redirects=True,
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b"AUDIT_UNAVAILABLE", response.data)
+            self.assertEqual(self.registry.get_target("t1")["privilege_user"], "")
+        finally:
+            self.registry.record_activity = original_record_activity
 
     def test_edit_target_manages_ssh_host_trust_fail_closed(self):
         self._login()
@@ -498,6 +790,24 @@ class TestWebViews(unittest.TestCase):
             follow_redirects=True,
         )
         self.assertIn(b"requires explicit confirmation", res_global_denied.data)
+        self.assertEqual(self.registry.list_grants(client_id="client-a"), [])
+
+        # Global Target privilege is high impact and also requires acknowledgement.
+        res_target_admin_denied = self.client.post(
+            "/clients/client-a/grants/add",
+            data={
+                "target_id": "*",
+                "project_id": "*",
+                "capability": "target_admin",
+                "enabled": "on",
+                "csrf_token": "valid-token",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(
+            b"Global wildcard or target_admin grant requires explicit confirmation",
+            res_target_admin_denied.data,
+        )
         self.assertEqual(self.registry.list_grants(client_id="client-a"), [])
 
         self.client.post(

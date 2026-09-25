@@ -25,8 +25,8 @@ The Admin Console and MCP adapter **must use the same Gateway Core**. There is n
 | --- | --- |
 | Go MCP adapter | MCP protocol, HTTP/stdin transport, client identity handoff, tool annotations |
 | Gateway Core | canonical tool behavior, limits, audit and orchestration |
-| Policy | client/grant/Target/Project/capability authorization |
-| Registry | Targets, Projects, clients, grants, settings and activity |
+| Policy | client/grant/Target/Project/capability authorization plus Target privilege consent |
+| Registry | Targets, Projects, clients, grants, privilege approvals, settings and activity |
 | SSH transport | pinned Target connection and bounded remote operations |
 | Admin Console | human configuration using the same Registry/Core |
 | Target | performs project work; not trusted merely because its IP matches |
@@ -71,6 +71,24 @@ The catalog currently contains 21 deterministic tools. They fall into four pract
 - appliance administration plus trusted Target shell.
 
 Structured filesystem mutations enforce Project-root canonical paths. `run_command` is different: it is a **trusted Target shell** for explicitly authorized clients. Its Project identifies authorization scope and initial working directory; it is not a filesystem sandbox.
+
+### Privileged Target execution
+
+Privilege elevation extends the existing execution path; MCP-Pi does not expose a second administrative shell. `run_command` carries `privilege=standard|required`. Normal authorization is evaluated first. A required command, an already-elevated `run_command`, or an allowlisted `run_task` whose base transport is observed root/Administrator then crosses a second gate consisting of an explicit `target_admin` grant, Target privilege policy, optional approval/boot lease, and a verified platform backend.
+
+```text
+run_command
+  -> normal target_shell authorization
+  -> requested/observed privilege?
+       no  -> normal transport
+       yes -> explicit target_admin grant
+           -> Target privilege_policy
+           -> required approval/boot_id
+           -> verified native backend
+           -> execute + audit
+```
+
+Platform details remain behind this boundary: Shizuku/`rish`, a transport already proven root/Administrator, or an optional `privilege_user` SSH identity on Linux/Windows that is independently probed as root/Administrator on the same pinned Target. Merely finding `sudo` or Windows elevation support is not enough to mark a backend ready, because delegating arbitrary escalation would create a second privilege path outside the policy engine. A missing verified backend is a denial, not a reason to weaken the host's global security policy.
 
 ## Identity versus endpoint
 

@@ -45,6 +45,7 @@
               {% if c.grant_summary.structured_write %}<span class="rounded border border-amber-800 px-1.5 py-0.5 text-amber-300">Write</span>{% endif %}
               {% if c.grant_summary.tasks %}<span class="rounded border border-indigo-800 px-1.5 py-0.5 text-indigo-300">Tasks</span>{% endif %}
               {% if c.grant_summary.target_shell %}<span class="rounded border border-rose-800 px-1.5 py-0.5 text-rose-300">Target shell</span>{% endif %}
+              {% if c.grant_summary.target_admin %}<span class="rounded border border-amber-800 px-1.5 py-0.5 text-amber-300">Target admin</span>{% endif %}
               {% if c.grant_summary.gateway_admin %}<span class="rounded border border-fuchsia-800 px-1.5 py-0.5 text-fuchsia-300">Gateway admin</span>{% endif %}
               {% if c.grant_count == 0 %}<span class="text-slate-500">No active grants</span>{% endif %}
             </div>

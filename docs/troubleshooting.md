@@ -83,6 +83,21 @@ Structured filesystem mutations are intentionally disabled when `writes_enabled=
 
 `run_command` is controlled separately by `shell_enabled`. Enabling structured writes does not enable trusted Target shell and vice versa.
 
+## Privileged Target command denied
+
+Privilege errors are deliberately specific:
+
+- `PRIVILEGE_GRANT_REQUIRED`: add an explicit matching `target_admin` capability; `*` is intentionally insufficient for Target system privilege.
+- `PRIVILEGE_DISABLED`: the Target policy is `never`. After the Registry privilege-policy migration this is the intentional default, including for transports already observed as root/Administrator.
+- `PRIVILEGE_APPROVAL_REQUIRED`: approve the next request/current boot from **Targets → Edit Target** according to the configured policy.
+- `PRIVILEGE_BOOT_ID_UNAVAILABLE`: `ask_once_per_boot` cannot establish a safe boot identity and therefore denies.
+- `PRIVILEGE_SETUP_REQUIRED`: MCP-Pi did not verify a safe elevated backend. Do not solve this by disabling UAC globally or granting unrestricted `NOPASSWD: ALL`.
+- `PRIVILEGE_STATUS_UNAVAILABLE`: Target privilege facts could not be verified; restore connectivity/probe functionality before retrying.
+
+If a Windows OpenSSH session is already Administrator/root-equivalent, MCP-Pi treats that observed state as elevated even when the caller asks for standard execution. Configure the Target policy and explicit target_admin grant rather than relying on the request label to reduce real OS privilege.
+
+For a Target whose backend is not ready, this implementation does not weaken host security or collect administrator passwords to bootstrap elevation through a headless SSH session. Windows can use an already-elevated Administrator OpenSSH session and Android/Termux can use an active Shizuku/`rish` session. On non-root Linux, finding `sudo` only reports potential elevation; MCP-Pi intentionally does not convert it into an arbitrary `sudo sh -lc` backend. Keep the policy configured as desired and resolve a narrowly scoped native helper separately; the UI remains `PRIVILEGE_SETUP_REQUIRED` until a safe backend is actually verified.
+
 ## Fewer tools than expected
 
 The Core catalog for 1.3.6 contains 21 tools. A client may see fewer because `tools/list` is filtered by its grants. Compare:

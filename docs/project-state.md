@@ -22,6 +22,8 @@ deployment provenance: REQUIRED / VERIFIED after acceptance
 
 The deployed Git SHA is intentionally **not duplicated in tracked prose**. Its authoritative sources are the runtime `.deployed-git-sha` and `.deployment.json`; this avoids self-referential documentation drift every time the state document itself changes.
 
+The current privilege-policy feature branch advances the **source Registry schema to 4** with supported v1→v4, v2→v4 and v3→v4 migrations and the **source tool catalog contract to v4** while keeping the same 21 tool names. Schema 3 introduced client/project-scoped temporary privilege approvals; schema 4 adds the optional `privilege_user` used only by the verified privileged-SSH backend. The v2→v3 migration intentionally discards older unscoped temporary approvals, and v3→v4 preserves Target policy while adding `privilege_user` with an empty, fail-closed default. Production remains schema 1 / catalog v3 until that exact candidate passes validation and is deployed; this document does not treat source work as production state.
+
 ## Reference production appliance
 
 ```text

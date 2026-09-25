@@ -17,7 +17,7 @@ El adaptador MCP actúa como una capa de serialización y transporte agnóstica 
 │ MCP Gateway Adapter (Go SDK v1.7.0, ARMv6)             │
 │ - Protocolo MCP 2026-07-28 (fallback 2025-11-25)       │
 │ - Transports: Stdio & Streamable HTTP (127.0.0.1:8090) │
-│ - Schemas estrictos de 8 herramientas                  │
+│ - Schemas estrictos del catálogo determinista                  │
 └───────────────────────────┬────────────────────────────┘
                             │
                             │ Subprocess invocations (CLI Bridge)
@@ -60,16 +60,14 @@ El adaptador MCP actúa como una capa de serialización y transporte agnóstica 
 
 ## 4. Catálogo de Herramientas Expuestas (Tool Schemas)
 
-El adaptador expone exactamente 8 herramientas con esquemas reducidos al mínimo privilegio:
+El adaptador expone el catálogo Core actual de **21 herramientas**, filtrado por grants para cada cliente:
 
-1. **`health`**: Metadatos de salud, hostname, versión y conteo de targets configurados.
-2. **`list_targets`**: Lista saneada de targets y proyectos disponibles (sin secretos de red).
-3. **`target_status`**: Comprobación de alcanzabilidad y latencia SSH de un target (`target`: string requerido).
-4. **`list_directory`**: Listado seguro de directorios dentro de un proyecto (`target`, `project` requeridos, `relative_path` opcional).
-5. **`file_stat`**: Metadatos de un archivo o carpeta dentro del root permitido (`target`, `project`, `relative_path` requeridos).
-6. **`read_file`**: Lectura segura de archivos de texto con límite de 1 MiB (`target`, `project`, `relative_path` requeridos).
-7. **`git_status`**: Ejecución de `git status --short` en la raíz del repositorio autorizado (`target`, `project` requeridos).
-8. **`run_task`**: Ejecución de una tarea preconfigurada en la lista blanca (`target`, `project`, `task` requeridos).
+- **Lectura/introspección:** `health`, `list_targets`, `target_status`, `list_directory`, `file_stat`, `read_file`, `git_status`, `search`.
+- **Tareas/ejecución:** `run_task`, `run_command`.
+- **Mutaciones estructuradas:** `write_file`, `append_file`, `delete_file`, `copy_file`, `move_file`, `mkdir`.
+- **Administración del appliance:** `gateway_status`, `gateway_doctor`, `gateway_backup`, `gateway_maintenance`, `gateway_reboot`.
+
+`run_command` conserva un único schema y admite `privilege=standard|required`. `required` no crea un bypass: el Core exige el acceso ordinario a trusted shell, un grant explícito `target_admin`, la `privilege_policy` del Target, cualquier aprobación necesaria y un backend elevado verificado. El adaptador Go sólo transporta esa intención; toda la decisión permanece en el Core Python.
 
 ---
 
@@ -86,7 +84,7 @@ El adaptador expone exactamente 8 herramientas con esquemas reducidos al mínimo
 - **Cabeceras Obligatorias del Cliente**:
   - `Content-Type: application/json`
   - `Accept: application/json, text/event-stream`
-- **Endpoint de Monitoreo**: `GET http://127.0.0.1:8090/health` retorna `{"status":"ok","adapter":"mcp-gateway-adapter","version":"0.2.0"}`.
+- **Endpoint de Monitoreo**: `GET http://127.0.0.1:8090/health` retorna un estado estructurado con `gateway`, `ready`, `adapter_status`, metadatos MCP, `version_info` y la salud observada del Core.
 - **Servicio del Sistema**: Administrado por systemd bajo el servicio `mcp-gateway-mcp.service` ejecutado como usuario `mcp-gateway` (UID 1001, sin sudo).
 
 ---

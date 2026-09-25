@@ -250,6 +250,21 @@ class TestPolicy(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("TARGET_SHELL_DISABLED", err)
 
+    def test_grant_summary_keeps_target_admin_explicit(self):
+        from mcp_gateway.policy import summarize_grant_capabilities
+
+        wildcard = summarize_grant_capabilities([
+            {"capability": "*", "enabled": True}
+        ])
+        self.assertTrue(wildcard["all"])
+        self.assertFalse(wildcard["target_admin"])
+
+        explicit = summarize_grant_capabilities([
+            {"capability": "target_admin", "enabled": True}
+        ])
+        self.assertTrue(explicit["target_admin"])
+        self.assertFalse(explicit["gateway_admin"])
+
     def test_validate_task_rejects_invalid_argv_and_timeout(self):
         from mcp_gateway.policy import validate_task
         for task in [
@@ -261,6 +276,73 @@ class TestPolicy(unittest.TestCase):
             with self.assertRaises(PolicyError) as ctx:
                 validate_task({"tasks": {"bad": task}}, "bad")
             self.assertEqual(ctx.exception.code, "TASK_INVALID")
+
+
+
+    def test_privilege_policy_validation_and_explicit_target_admin_grant(self):
+        from unittest.mock import MagicMock
+        from mcp_gateway.policy import (
+            authorize_privilege_request,
+            normalize_privilege_policy,
+            normalize_privilege_request,
+        )
+
+        self.assertEqual(normalize_privilege_policy("always_allow"), "always_allow")
+        self.assertEqual(normalize_privilege_request(None), "standard")
+
+        with self.assertRaises(PolicyError) as ctx:
+            normalize_privilege_policy("magic")
+        self.assertEqual(ctx.exception.code, "INVALID_PRIVILEGE_POLICY")
+
+        with self.assertRaises(PolicyError) as ctx:
+            normalize_privilege_request("auto")
+        self.assertEqual(ctx.exception.code, "INVALID_PRIVILEGE_REQUEST")
+
+        reg = MagicMock()
+        reg.get_client_grants.return_value = []
+        ok, err = authorize_privilege_request("local", "t1", "p1", reg)
+        self.assertFalse(ok)
+        self.assertIn("PRIVILEGE_GRANT_REQUIRED", err)
+
+        reg.get_client_grants.return_value = [
+            {
+                "client_id": "c1",
+                "target_id": "t1",
+                "project_id": "p1",
+                "capability": "*",
+                "enabled": True,
+            }
+        ]
+        ok, err = authorize_privilege_request("c1", "t1", "p1", reg)
+        self.assertFalse(ok)
+        self.assertIn("PRIVILEGE_GRANT_REQUIRED", err)
+
+        # Gateway-appliance admin remains a separate capability.
+        reg.get_client_grants.return_value = [
+            {
+                "client_id": "c1",
+                "target_id": "t1",
+                "project_id": "p1",
+                "capability": "target_shell,admin",
+                "enabled": True,
+            }
+        ]
+        ok, err = authorize_privilege_request("c1", "t1", "p1", reg)
+        self.assertFalse(ok)
+        self.assertIn("PRIVILEGE_GRANT_REQUIRED", err)
+
+        reg.get_client_grants.return_value = [
+            {
+                "client_id": "c1",
+                "target_id": "t1",
+                "project_id": "p1",
+                "capability": "target_shell,target_admin",
+                "enabled": True,
+            }
+        ]
+        ok, err = authorize_privilege_request("c1", "t1", "p1", reg)
+        self.assertTrue(ok)
+        self.assertIsNone(err)
 
 
 

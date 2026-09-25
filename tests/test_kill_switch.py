@@ -109,6 +109,12 @@ class TestKillSwitchAndDisable(unittest.TestCase):
         res_re = self.tools.target_status("t1")
         self.assertTrue(res_re["ok"])
 
+    def test_shell_kill_switch_applies_to_local_internal_caller(self):
+        self.registry.set_setting("shell_enabled", "false")
+        res = self.tools.run_command("t1", "p1", "echo blocked")
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error"]["code"], "TARGET_SHELL_DISABLED")
+
     def test_target_disable_enforced(self):
         res = self.tools.target_status("t_disabled")
         self.assertFalse(res["ok"])

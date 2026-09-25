@@ -69,7 +69,7 @@ This path requires:
 - deterministic `git archive` package;
 - ARMv6 adapter built from that archive;
 - candidate validation on the real appliance;
-- runtime + unit rollback set;
+- runtime + unit + pre-deploy Registry rollback set;
 - control-plane-safe restart order;
 - lightweight production acceptance;
 - `.deployment.json` provenance with `verified=true` only after acceptance.
@@ -98,15 +98,18 @@ scripts/run-resumable.sh start "$JOB" -- \
   env MCP_DEPLOY_INJECT_FAILURE=after-activation scripts/deploy-pi.sh "$SHA"
 ```
 
-The test is successful only when the command fails by design **and** the previous runtime is independently verified healthy afterward.
+The test is successful only when the command fails by design **and** the previous runtime plus the matching pre-deploy Registry are independently verified healthy afterward.
 
 ## Database backup versus application rollback
 
-These are separate concerns:
+These are separate concerns, but a schema-changing deployment must keep them compatible:
 
 ```text
-Application rollback -> previous runtime + units
-Registry restore      -> SQLite backup
+Normal application rollback          -> previous runtime + units
+Schema-changing maintainer rollback  -> previous runtime + units + matching pre-deploy Registry snapshot
+Manual Registry recovery             -> explicitly selected trusted SQLite backup
 ```
 
-An application rollback must not silently replace or destroy persistent user data. See [recovery.md](recovery.md).
+`deploy-pi.sh` therefore creates and validates an online Registry backup before candidate activation. If automatic rollback is triggered, it restores that exact snapshot with the previous runtime **before** restarting services; this prevents an older runtime from opening a newer, unsupported schema. A successful deployment preserves the rollback runtime, unit set and `rollback_registry` path until external acceptance.
+
+Outside that deployment transaction, application rollback must not casually replace persistent user data. Manual Registry restore remains an explicit recovery operation; see [recovery.md](recovery.md).

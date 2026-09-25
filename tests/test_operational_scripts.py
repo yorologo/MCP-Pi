@@ -79,6 +79,10 @@ class TestOperationalScripts(unittest.TestCase):
             'CONTROL_PLANE_RESTORED',
             'ROLLBACK_REMOTE_FAILED',
             'ROLLBACK_VERIFIED',
+            "REMOTE_REGISTRY_BACKUP",
+            'backup "$registry_backup"',
+            "restore_database",
+            "rollback_registry=",
             '.deployment.json',
             "'verified': True",
         ):
@@ -86,6 +90,13 @@ class TestOperationalScripts(unittest.TestCase):
         verified_index = text.index("'verified': True")
         acceptance_index = text.index('[7/10] Running lightweight production acceptance')
         self.assertGreater(verified_index, acceptance_index)
+        self.assertIn('"$candidate/manifest.json"', text)
+        self.assertIn("manifest['tool_catalog']", text)
+        self.assertIn("m['tool_count'] == len(ALLOWED_TOOLS)", text)
+        self.assertNotIn("m['tool_catalog_version'] == 3", text)
+        restore_index = text.index("if restore_database(sys.argv[1]) is not True")
+        rollback_restart_index = text.index("sudo systemctl restart mcp-gateway-admin")
+        self.assertLess(restore_index, rollback_restart_index)
 
     def test_deploy_refuses_direct_execution_without_break_glass(self):
         env = os.environ.copy()

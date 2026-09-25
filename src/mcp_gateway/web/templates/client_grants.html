@@ -11,7 +11,7 @@
   </div>
 
   <div class="card p-4 text-sm text-slate-300">
-    Grants answer <strong>which client may do what and where</strong>. Project read/write flags and global kill switches remain independent gates.
+    Grants answer <strong>which client may do what and where</strong>. Project read/write flags, Target privilege policy, and global kill switches remain independent gates.
     Use <strong>Check Effective Access</strong> to evaluate the real Policy Engine before relying on a permission.
   </div>
 
@@ -50,7 +50,7 @@
           {% for value, label in common_capabilities %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
           {% for value in specific_capabilities %}<option value="{{ value }}">Specific tool capability</option>{% endfor %}
         </datalist>
-        <p class="mt-1 text-xs text-slate-500">Known capabilities only; comma-separated values are supported for compatibility. Use separate grants when practical.</p>
+        <p class="mt-1 text-xs text-slate-500">Known capabilities only; comma-separated values are supported for compatibility. Privileged Target execution requires an explicit <code>target_admin</code> grant; <code>*</code> does not imply that new privilege.</p>
       </div>
     </div>
 
@@ -59,7 +59,7 @@
         <input type="checkbox" name="enabled" class="rounded" {% if not editing_grant or editing_grant.enabled %}checked{% endif %}> Enabled
       </label>
       <label class="inline-flex items-center gap-2 text-xs text-amber-300">
-        <input type="checkbox" name="confirm_global" class="rounded"> I understand that <code>* / * / *</code> grants every compatible capability globally.
+        <input type="checkbox" name="confirm_global" class="rounded"> I understand that a global wildcard or global <code>target_admin</code> grant is high impact and applies across all configured Targets/Projects.
       </label>
     </div>
 
@@ -104,7 +104,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div>
       <h2 class="text-lg font-semibold text-white">Check Effective Access</h2>
-      <p class="text-xs text-slate-400">Calls the same <code>authorize_client()</code> policy used by MCP tool discovery and execution.</p>
+      <p class="text-xs text-slate-400">Checks ordinary tool access through <code>authorize_client()</code>. A privileged <code>run_command</code> additionally requires explicit <code>target_admin</code> plus the Target privilege policy/approval.</p>
     </div>
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <div><label for="check-target" class="field-label">Target</label><select id="check-target" name="target_id" class="field font-mono"><option value="*">* (no Target constraint)</option>{% for target in targets %}<option value="{{ target.id }}">{{ target.id }}</option>{% endfor %}</select></div>
