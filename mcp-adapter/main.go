@@ -26,11 +26,6 @@ func main() {
 	)
 	flag.Parse()
 
-	if *versionFlag {
-		fmt.Println("mcp-gateway-adapter v1.3.3 (MCP Protocol 2026-07-28)")
-		os.Exit(0)
-	}
-
 	bridgeConfig := DefaultBridgeConfig()
 	if *pythonFlag != "" {
 		bridgeConfig.PythonBin = *pythonFlag
@@ -40,6 +35,15 @@ func main() {
 	}
 	if *dbFlag != "" {
 		bridgeConfig.DBPath = *dbFlag
+	}
+
+	if *versionFlag {
+		info, err := bridgeConfig.CheckBridgeCompatibility(context.Background())
+		if err != nil || info == nil || strings.TrimSpace(info.GatewayVersion) == "" {
+			log.Fatalf("Unable to resolve adapter version from Gateway Core: %v", err)
+		}
+		fmt.Printf("mcp-gateway-adapter v%s (MCP Protocol %s)\n", info.GatewayVersion, info.MCPProtocol)
+		return
 	}
 
 	// Resolve shared auth token from file, flag, or environment

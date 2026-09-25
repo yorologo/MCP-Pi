@@ -262,6 +262,17 @@ func TestFailClosedWhenNotReady(t *testing.T) {
 	}
 }
 
+func TestAdapterVersionUsesBridgeState(t *testing.T) {
+	state := NewAdapterState()
+	if got := adapterVersion(state); got != "unknown" {
+		t.Fatalf("expected unknown before compatibility is known, got %q", got)
+	}
+	state.SetReady(true, "ready", &BridgeVersionInfo{GatewayVersion: "9.8.7"})
+	if got := adapterVersion(state); got != "9.8.7" {
+		t.Fatalf("expected bridge Gateway version, got %q", got)
+	}
+}
+
 func TestHealthEndpoints(t *testing.T) {
 	bridge := getTestBridgeConfig()
 	state := NewAdapterState()

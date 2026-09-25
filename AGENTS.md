@@ -9,7 +9,7 @@ MCP-Pi is a small security gateway between authorized AI/MCP clients and private
 Current software contract:
 
 ```text
-Gateway: 1.3.6
+Gateway: 1.4.0
 Core API: 1
 Bridge API: 1
 Tool catalog: v4 / 21 tools

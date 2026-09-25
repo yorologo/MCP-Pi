@@ -34,7 +34,7 @@ def get_paths() -> Dict[str, str]:
 def create_manifest(version: Optional[str] = None, output_path: Optional[str] = None) -> Dict[str, Any]:
     compat = compatibility.get_compatibility()
     manifest = {
-        "version": version or compat.get("gateway_version", "1.3.6"),
+        "version": version or compat.get("gateway_version", "1.4.0"),
         "architecture": "armv6l",
 
         "architectures": ["armv6l", "aarch64", "x86_64"],

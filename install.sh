@@ -130,7 +130,9 @@ copy_adapter() {
 validate_adapter() {
     adapter=$1
     [ -x "$adapter" ] || fail "adapter is not executable: $adapter"
-    "$adapter" -version >/dev/null 2>&1 || fail "adapter cannot execute on this architecture"
+    "$adapter" -help >/dev/null 2>&1 || fail "adapter cannot execute on this architecture"
+    "$adapter" -python "$(command -v python3)" -pythonpath "${SOURCE_DIR}/src" -version >/dev/null 2>&1 ||
+        fail "adapter/Core version contract validation failed"
 }
 
 validate_source() {

@@ -2,6 +2,26 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
+## 1.4.0 — 2026-09-24
+
+### Added
+- Target administrative privilege management in the Admin Console with explicit `target_admin` Grants, per-Target `never` / `ask_always` / `ask_once_per_boot` / `always_allow` policies, approval/revocation controls and hardened confirmation for `always_allow`.
+- Verified Android/Termux Shizuku (`rish`) elevation and optional Linux/Windows `privilege_user` support using a second SSH identity on the same pinned Target and Gateway key.
+- Privilege status in Target administration, including observed effective identity, backend readiness and independent-elevator warnings.
+
+### Security
+- `target_admin` is independent from Gateway `admin` and is never inherited by wildcard `*` Grants. Missing Grant, policy, approval, backend or boot identity fails closed.
+- Already elevated root/Administrator transports cannot bypass Target privilege policy with `privilege=standard`. Arbitrary shells that expose a detectable independent elevator such as `rish`, Windows `sudo` or non-interactive Linux `sudo` also cross `target_admin` + Target policy before execution; commands are not secured by brittle string filtering.
+- Temporary approvals are scoped to client + Target + Project, one-use approvals are short-lived, and authorization-context changes revoke affected approvals.
+
+### Compatibility
+- Tool Catalog advances from v3 to v4 while retaining the same 21 tool names; `run_command` adds the explicit `privilege=standard|required` input.
+- Registry schema advances from v1 in production to v4 with supported v1/v2/v3 migrations. Existing Targets migrate to `privilege_policy=never`, and `privilege_user` defaults empty.
+- The Go adapter now reports the Gateway version obtained from the Core compatibility contract instead of carrying a separate hard-coded adapter release number.
+
+### Verification
+- Promotion requires the full Python/Go/frontend/Tailwind/documentation gates, native transport E2E, ARMv6 adapter build, deterministic release packaging, CI, exact-commit deployment and live Admin/MCP/Doctor/Target/provenance acceptance.
+
 ## 1.3.6 — 2026-09-23
 
 ### Fixed

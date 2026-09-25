@@ -100,7 +100,7 @@ For a Target whose backend is not ready, this implementation does not weaken hos
 
 ## Fewer tools than expected
 
-The Core catalog for 1.3.6 contains 21 tools. A client may see fewer because `tools/list` is filtered by its grants. Compare:
+The Core catalog for the 1.4.0 source candidate contains 21 tools. A client may see fewer because `tools/list` is filtered by its grants. Compare:
 
 - Core catalog metadata;
 - registered client identity;

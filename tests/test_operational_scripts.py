@@ -37,6 +37,9 @@ class TestOperationalScripts(unittest.TestCase):
             "mcp-gateway-tunnel-check.absent",
             'restore_system_files',
             'as_service "$INSTALL_DIR/bin/mcp-gateway" doctor',
+            '"$adapter" -help',
+            '-pythonpath "${SOURCE_DIR}/src" -version',
+            'adapter/Core version contract validation failed',
         ):
             self.assertIn(required, text)
         self.assertNotIn("trap rollback_on_error ERR", text)

@@ -4,7 +4,7 @@ The documentation is deliberately split into **CURRENT**, **REFERENCE** and **AR
 
 ## CURRENT — authoritative operational guidance
 
-Use these documents for the current 1.3.6 codebase:
+Use these documents for the current 1.4.0 source candidate:
 
 - [`../README.md`](../README.md) — project landing and quick start.
 - [`getting-started.md`](getting-started.md) — shortest path for a new user.
