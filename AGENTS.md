@@ -17,7 +17,7 @@ Registry schema: 4
 MCP: 2026-07-28
 ```
 
-The current immutable release tag is `v1.3.6`. `main` is the stable release branch and `develop` remains the integration branch.
+The current immutable release tag is `v1.4.0`. `main` is the stable release branch and `develop` remains the integration branch.
 
 ## Non-negotiable principles
 

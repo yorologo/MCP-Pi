@@ -2,10 +2,10 @@
 
 This document is intentionally short and dynamic. Detailed historical evidence belongs in `docs/releases/`, `docs/archive/` and Git history.
 
-**Software baseline:** MCP-Pi Gateway 1.4.0 source candidate
+**Software baseline:** MCP-Pi Gateway 1.4.0
 **Development branch:** `develop`
-**Latest immutable tag:** `v1.3.6`
-**Current work:** 1.4.0 Target administrative-privilege candidate; published/production state remains represented separately by the immutable tag and runtime provenance
+**Latest immutable tag:** `v1.4.0`
+**Current work:** v1.4.0 release prepared and validated; production remains on v1.3.6 until exact-commit deployment and acceptance complete
 
 ## Current production baseline
 

@@ -24,7 +24,7 @@ flowchart LR
 | MCP protocol | `2026-07-28` |
 | Python | 3.9+ |
 
-`main` is the stable release branch and `develop` remains the integration branch. The current published release is `v1.3.6`.
+`main` is the stable release branch and `develop` remains the integration branch. The current published release is `v1.4.0`.
 
 ## Why this exists
 

@@ -2,7 +2,7 @@
 
 `compatibility.json` is the machine-readable source for versioned software contracts. Documentation must match it; historical release notes must not be rewritten to look current.
 
-## Current 1.4.0 source contracts
+## Current 1.4.0 release contracts
 
 | Contract | Value |
 | --- | --- |
