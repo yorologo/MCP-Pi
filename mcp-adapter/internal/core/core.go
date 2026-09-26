@@ -10,6 +10,7 @@ import (
 
 	"mcp-gateway-adapter/internal/policy"
 	"mcp-gateway-adapter/internal/registry"
+	"mcp-gateway-adapter/internal/remote"
 )
 
 type Config struct {
@@ -47,10 +48,15 @@ type VersionInfo struct {
 type Core struct {
 	store  *registry.Store
 	config Config
+	remote remote.Transport
 }
 
 func New(store *registry.Store, config Config) *Core {
 	return &Core{store: store, config: config}
+}
+
+func NewWithRemote(store *registry.Store, config Config, remoteTransport remote.Transport) *Core {
+	return &Core{store: store, config: config, remote: remoteTransport}
 }
 
 func (c *Core) Version() VersionInfo {

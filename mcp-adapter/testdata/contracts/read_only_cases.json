@@ -1,0 +1,142 @@
+{
+  "errors": {
+    "file_stat_missing": {
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "File not found: missing"
+      },
+      "ok": false,
+      "project": "p",
+      "target": "t",
+      "tool": "file_stat"
+    },
+    "list_directory_missing": {
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "Directory not found: missing"
+      },
+      "ok": false,
+      "project": "p",
+      "target": "t",
+      "tool": "list_directory"
+    },
+    "list_directory_not_dir": {
+      "error": {
+        "code": "INVALID_PATH",
+        "message": "Path is not a directory: a.txt"
+      },
+      "ok": false,
+      "project": "p",
+      "target": "t",
+      "tool": "list_directory"
+    },
+    "read_escape": {
+      "error": {
+        "code": "PATH_OUTSIDE_ALLOWED_ROOT",
+        "message": "Path '/outside/escape' resolves outside allowed root '/srv/project'"
+      },
+      "ok": false,
+      "project": "p",
+      "target": "t",
+      "tool": "read_file"
+    },
+    "search_empty": {
+      "error": {
+        "code": "INVALID_ARGUMENTS",
+        "message": "Pattern must not be empty"
+      },
+      "ok": false,
+      "project": "p",
+      "target": "t",
+      "tool": "search"
+    }
+  },
+  "file_stat": {
+    "ok": true,
+    "project": "p",
+    "result": {
+      "canonical_path": "/srv/project/a.txt",
+      "exists": true,
+      "mtime": 1700000000,
+      "relative_path": "a.txt",
+      "size": 5,
+      "type": "file"
+    },
+    "target": "t",
+    "tool": "file_stat"
+  },
+  "git_status": {
+    "ok": true,
+    "project": "p",
+    "result": {
+      "status_output": "M README.md\n?? new.txt"
+    },
+    "target": "t",
+    "tool": "git_status"
+  },
+  "list_directory": {
+    "ok": true,
+    "project": "p",
+    "result": {
+      "canonical_path": "/srv/project/sub",
+      "count": 3,
+      "entries": [
+        {
+          "name": "a.txt",
+          "size": 5,
+          "type": "file"
+        },
+        {
+          "name": "dir",
+          "size": null,
+          "type": "directory"
+        },
+        {
+          "name": "link",
+          "size": null,
+          "type": "symlink"
+        }
+      ],
+      "relative_path": "sub"
+    },
+    "target": "t",
+    "tool": "list_directory"
+  },
+  "read_file": {
+    "ok": true,
+    "project": "p",
+    "result": {
+      "canonical_path": "/srv/project/a.txt",
+      "content": "Hello \u00e1\n",
+      "relative_path": "a.txt",
+      "sha256": "742beb48c551b839fb12e4d176a73d7703b26da3e0236c985a84abd61794a14d",
+      "size_bytes": 9
+    },
+    "target": "t",
+    "tool": "read_file"
+  },
+  "schema": 1,
+  "search": {
+    "ok": true,
+    "project": "p",
+    "result": {
+      "count": 2,
+      "matches": [
+        {
+          "file": "a.txt",
+          "line": 2,
+          "text": "needle here"
+        },
+        {
+          "file": "dir/b.txt",
+          "line": 7,
+          "text": "another needle"
+        }
+      ],
+      "path": "sub",
+      "pattern": "needle"
+    },
+    "target": "t",
+    "tool": "search"
+  }
+}
