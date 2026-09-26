@@ -7,7 +7,6 @@ Type=oneshot
 User=mcp-gateway
 Group=mcp-gateway
 WorkingDirectory=/home/mcp-gateway/mcp-gateway
-Environment=PYTHONPATH=/home/mcp-gateway/mcp-gateway/src
 Environment=MCP_GATEWAY_REGISTRY=sqlite
 Environment=MCP_GATEWAY_DB=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db
 ExecStart=/bin/sh -c 'mkdir -p /home/mcp-gateway/.local/share/mcp-gateway/logs && /home/mcp-gateway/mcp-gateway/bin/mcp-gateway maintenance >> /home/mcp-gateway/.local/share/mcp-gateway/logs/maintenance.log 2>&1'

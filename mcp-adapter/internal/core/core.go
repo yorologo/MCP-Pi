@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ type Config struct {
 	CoreAPIVersion     int
 	ToolCatalogVersion int
 	MCPProtocol        string
+	DBPath             string
+	BackupDir          string
 }
 
 type ErrorBody struct {
@@ -72,6 +75,16 @@ func (c *Core) Version() VersionInfo {
 
 func (c *Core) Catalog(ctx context.Context, clientID string, tools []string) ([]string, error) {
 	return policy.CatalogForClient(ctx, c.store, clientID, tools)
+}
+
+// CatalogTools returns the full list of tool names supported by the gateway in alphabetical order.
+func CatalogTools() []string {
+	tools := make([]string, 0, len(policy.ToolCapabilities))
+	for t := range policy.ToolCapabilities {
+		tools = append(tools, t)
+	}
+	sort.Strings(tools)
+	return tools
 }
 
 func (c *Core) Health(ctx context.Context, requestID string) Response {

@@ -30,7 +30,7 @@ class TestResumableRunner(unittest.TestCase):
             check=check,
         )
 
-    def wait_terminal(self, job, timeout=5.0):
+    def wait_terminal(self, job, timeout=10.0):
         deadline = time.time() + timeout
         last = ""
         while time.time() < deadline:

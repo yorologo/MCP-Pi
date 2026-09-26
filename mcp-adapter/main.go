@@ -7,24 +7,78 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
+
+	"mcp-gateway-adapter/internal/core"
+	"mcp-gateway-adapter/internal/registry"
+	"mcp-gateway-adapter/internal/remote"
 )
 
 func main() {
 	log.SetOutput(os.Stderr)
-	var (
-		transportFlag     = flag.String("transport", "stdio", "Transport mode: stdio or http")
-		bindFlag          = flag.String("bind", "127.0.0.1:8090", "Bind address for Streamable HTTP mode (default: 127.0.0.1:8090)")
-		pythonFlag        = flag.String("python", "", "Path to python3 binary")
-		pythonPathFlag    = flag.String("pythonpath", "", "Path to Python source directory containing mcp_gateway")
-		dbFlag            = flag.String("db", "", "Path to SQLite database file")
-		clientIDFlag      = flag.String("client-id", "", "Authenticated AI client identifier")
-		authTokenFlag     = flag.String("auth-token", "", "Shared secret Bearer auth token for authenticating HTTP clients")
-		authTokenFileFlag = flag.String("auth-token-file", "", "Path to file containing shared Bearer auth token")
-		versionFlag       = flag.Bool("version", false, "Print version information")
-	)
-	flag.Parse()
+
+	if len(os.Args) > 1 {
+		subcmd := os.Args[1]
+		switch subcmd {
+		case "status":
+			os.Exit(cmdStatus(os.Args[2:]))
+		case "doctor":
+			os.Exit(cmdDoctor(os.Args[2:]))
+		case "maintenance":
+			os.Exit(cmdMaintenance(os.Args[2:]))
+		case "backup":
+			os.Exit(cmdBackup(os.Args[2:]))
+		case "restore":
+			os.Exit(cmdRestore(os.Args[2:]))
+		case "repair":
+			os.Exit(cmdRepair(os.Args[2:]))
+		case "setup":
+			os.Exit(cmdSetup(os.Args[2:]))
+		case "benchmark":
+			os.Exit(cmdBenchmark(os.Args[2:]))
+		case "serve-admin":
+			os.Exit(cmdServeAdmin(os.Args[2:]))
+		case "serve-mcp":
+			runMCPServer(os.Args[2:])
+			return
+		case "version":
+			fmt.Println("mcp-gateway v1.4.0 (Core API v1, MCP Protocol 2026-07-28, Registry Schema v5)")
+			return
+		case "help", "-help", "--help":
+			printHelp()
+			return
+		default:
+			// If first arg starts with '-', run default MCP server with those flags (backwards compatibility)
+			if strings.HasPrefix(subcmd, "-") {
+				runMCPServer(os.Args[1:])
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Unknown command: %s\nRun 'mcp-gateway help' for usage.\n", subcmd)
+			os.Exit(2)
+		}
+	}
+
+	// No arguments: default to MCP server (stdio mode)
+	runMCPServer(os.Args[1:])
+}
+
+func runMCPServer(args []string) {
+	fs := flag.NewFlagSet("serve-mcp", flag.ContinueOnError)
+	transportFlag := fs.String("transport", "stdio", "Transport mode: stdio or http")
+	bindFlag := fs.String("bind", "127.0.0.1:8090", "Bind address for Streamable HTTP mode (default: 127.0.0.1:8090)")
+	pythonFlag := fs.String("python", "", "Path to python3 binary (legacy, unused in Go-only)")
+	pythonPathFlag := fs.String("pythonpath", "", "Path to Python source directory (legacy, unused in Go-only)")
+	dbFlag := fs.String("db", "", "Path to SQLite database file")
+	clientIDFlag := fs.String("client-id", "", "Authenticated AI client identifier")
+	authTokenFlag := fs.String("auth-token", "", "Shared secret Bearer auth token for authenticating HTTP clients")
+	authTokenFileFlag := fs.String("auth-token-file", "", "Path to file containing shared Bearer auth token")
+	versionFlag := fs.Bool("version", false, "Print version information")
+
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
 
 	bridgeConfig := DefaultBridgeConfig()
 	if *pythonFlag != "" {
@@ -37,12 +91,24 @@ func main() {
 		bridgeConfig.DBPath = *dbFlag
 	}
 
+	dbPath := resolveDBPath(bridgeConfig.DBPath)
+	bridgeConfig.DBPath = dbPath
+
+	if store, err := registry.OpenStore(context.Background(), dbPath); err == nil {
+		sshTransport := remote.NewSSHTransport()
+		coreInstance := core.NewWithRemote(store, core.Config{
+			GatewayVersion:     "1.4.0",
+			CoreAPIVersion:     1,
+			ToolCatalogVersion: 4,
+			MCPProtocol:        "2026-07-28",
+			DBPath:             dbPath,
+			BackupDir:          filepath.Join(filepath.Dir(dbPath), "backups"),
+		}, sshTransport)
+		bridgeConfig.Core = coreInstance
+	}
+
 	if *versionFlag {
-		info, err := bridgeConfig.CheckBridgeCompatibility(context.Background())
-		if err != nil || info == nil || strings.TrimSpace(info.GatewayVersion) == "" {
-			log.Fatalf("Unable to resolve adapter version from Gateway Core: %v", err)
-		}
-		fmt.Printf("mcp-gateway-adapter v%s (MCP Protocol %s)\n", info.GatewayVersion, info.MCPProtocol)
+		fmt.Println("mcp-gateway-adapter v1.4.0 (MCP Protocol 2026-07-28)")
 		return
 	}
 

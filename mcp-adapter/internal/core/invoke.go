@@ -200,6 +200,68 @@ func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName strin
 		}
 		return responseMap(response)
 
+	case "run_command":
+		target, okTarget := requiredString(args, "target")
+		command, okCmd := requiredString(args, "command")
+		if !okTarget || !okCmd {
+			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target' and 'command' are required")
+		}
+		project, _ := args["project"].(string)
+		cwd, _ := args["cwd"].(string)
+		stdin, _ := args["stdin"].(string)
+		privilege, _ := args["privilege"].(string)
+		envMap := map[string]string{}
+		if envRaw, ok := args["env"].(map[string]any); ok {
+			for k, v := range envRaw {
+				envMap[k] = fmt.Sprintf("%v", v)
+			}
+		}
+		timeout := 0
+		if tVal, ok := args["timeout"].(float64); ok {
+			timeout = int(tVal)
+		} else if tVal, ok := args["timeout"].(int); ok {
+			timeout = tVal
+		}
+		return responseMap(c.RunCommand(ctx, invocation.RequestID, clientID, target, project, command, CommandRequest{
+			CWD:       cwd,
+			Env:       envMap,
+			Timeout:   timeout,
+			Stdin:     stdin,
+			Privilege: privilege,
+		}))
+
+	case "run_task":
+		target, okTarget := requiredString(args, "target")
+		project, okProject := requiredString(args, "project")
+		task, okTask := requiredString(args, "task")
+		if !okTarget || !okProject || !okTask {
+			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target', 'project', and 'task' are required")
+		}
+		return responseMap(c.RunTask(ctx, invocation.RequestID, clientID, target, project, task))
+
+	case "gateway_status":
+		return responseMap(c.GatewayStatus(ctx, invocation.RequestID))
+
+	case "gateway_doctor":
+		return responseMap(c.GatewayDoctor(ctx, invocation.RequestID))
+
+	case "gateway_backup":
+		destPath, _ := args["dest_path"].(string)
+		if destPath == "" {
+			destPath, _ = args["destination"].(string)
+		}
+		if destPath == "" {
+			destPath, _ = args["path"].(string)
+		}
+		return responseMap(c.GatewayBackup(ctx, invocation.RequestID, clientID, destPath))
+
+	case "gateway_maintenance":
+		return responseMap(c.GatewayMaintenance(ctx, invocation.RequestID, clientID))
+
+	case "gateway_reboot":
+		confirm := pythonTruthy(args["confirm"])
+		return responseMap(c.GatewayReboot(ctx, invocation.RequestID, clientID, confirm))
+
 	default:
 		return directError(toolName, "TOOL_NOT_IMPLEMENTED", fmt.Sprintf("Tool '%s' has not been ported to Go core yet", toolName))
 	}

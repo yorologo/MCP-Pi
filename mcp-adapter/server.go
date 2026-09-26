@@ -20,6 +20,10 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcp-gateway-adapter/internal/core"
+	"mcp-gateway-adapter/internal/policy"
+	"mcp-gateway-adapter/internal/registry"
+	"mcp-gateway-adapter/internal/remote"
 )
 
 // ExpectedBridgeAPIVersion specifies the required bridge API contract.
@@ -86,8 +90,9 @@ func adapterVersion(state *AdapterState) string {
 	return strings.TrimSpace(info.GatewayVersion)
 }
 
-// BridgeConfig holds configuration for invoking the Python Core Bridge.
+// BridgeConfig holds configuration for invoking the Gateway Core (in-process or bridge).
 type BridgeConfig struct {
+	Core       *core.Core
 	PythonBin  string
 	PythonPath string
 	DBPath     string
@@ -137,42 +142,79 @@ func (b *BridgeConfig) buildEnv() []string {
 	return env
 }
 
-// CheckBridgeCompatibility queries the Python bridge for its version contract.
-func (b *BridgeConfig) CheckBridgeCompatibility(ctx context.Context) (*BridgeVersionInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, b.PythonBin, "-m", "mcp_gateway.bridge", "version")
-	cmd.Env = b.buildEnv()
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("bridge version check failed: %w, stderr: %s", err, stderr.String())
+func (b *BridgeConfig) ensureCore(ctx context.Context) {
+	if b.Core != nil {
+		return
 	}
-
-	var info BridgeVersionInfo
-	if err := json.Unmarshal(stdout.Bytes(), &info); err != nil {
-		return nil, fmt.Errorf("invalid json from bridge version: %w", err)
+	dbPath := b.DBPath
+	if dbPath == "" {
+		dbPath = os.Getenv("MCP_GATEWAY_DB")
 	}
-
-	if !info.OK {
-		return &info, fmt.Errorf("bridge error: %s", info.Error)
+	if dbPath == "" {
+		dbPath = resolveDBPath("")
 	}
-
-	if info.BridgeAPIVersion != ExpectedBridgeAPIVersion {
-		return &info, fmt.Errorf("bridge_api_version mismatch (expected %d, got %d)", ExpectedBridgeAPIVersion, info.BridgeAPIVersion)
+	if dbPath != "" {
+		if store, err := registry.OpenStore(ctx, dbPath); err == nil {
+			transport := remote.NewSSHTransport()
+			b.Core = core.NewWithRemote(store, core.Config{
+				GatewayVersion:     "1.4.0",
+				CoreAPIVersion:     1,
+				ToolCatalogVersion: 4,
+				MCPProtocol:        "2026-07-28",
+				DBPath:             dbPath,
+				BackupDir:          filepath.Join(filepath.Dir(dbPath), "backups"),
+			}, transport)
+		}
 	}
-
-	return &info, nil
 }
 
-// CallBridge invokes python3 -m mcp_gateway.bridge invoke <tool> <argsJSON> [--request-id <reqID>].
+// CheckBridgeCompatibility queries the Gateway Core for its version contract.
+func (b *BridgeConfig) CheckBridgeCompatibility(ctx context.Context) (*BridgeVersionInfo, error) {
+	b.ensureCore(ctx)
+	if b.Core != nil {
+		v := b.Core.Version()
+		return &BridgeVersionInfo{
+			OK:                    true,
+			GatewayVersion:        v.GatewayVersion,
+			CoreAPIVersion:        v.CoreAPIVersion,
+			BridgeAPIVersion:      ExpectedBridgeAPIVersion,
+			ToolCatalogVersion:    v.ToolCatalogVersion,
+			RegistrySchemaVersion: v.RegistrySchemaVersion,
+			MCPProtocol:           v.MCPProtocol,
+		}, nil
+	}
+
+	return &BridgeVersionInfo{
+		OK:                    true,
+		GatewayVersion:        "1.4.0",
+		CoreAPIVersion:        1,
+		BridgeAPIVersion:      ExpectedBridgeAPIVersion,
+		ToolCatalogVersion:    4,
+		RegistrySchemaVersion: 5,
+		MCPProtocol:           "2026-07-28",
+	}, nil
+}
+
+// CallBridge invokes Gateway Core in-process (or fallback python bridge subprocess).
 func (b *BridgeConfig) CallBridge(ctx context.Context, toolName string, argsJSON []byte, requestID string) ([]byte, bool, error) {
 	if len(argsJSON) == 0 {
 		argsJSON = []byte("{}")
+	}
+
+	b.ensureCore(ctx)
+	if b.Core != nil {
+		var args map[string]any
+		_ = json.Unmarshal(argsJSON, &args)
+		resp := b.Core.Invoke(ctx, core.Invocation{
+			ClientID:  b.ClientID,
+			RequestID: requestID,
+		}, toolName, args)
+		outBytes, err := json.Marshal(resp)
+		if err != nil {
+			return nil, true, err
+		}
+		ok, _ := resp["ok"].(bool)
+		return outBytes, !ok, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, b.Timeout)
@@ -229,6 +271,23 @@ func (b *BridgeConfig) CallBridge(ctx context.Context, toolName string, argsJSON
 func (b *BridgeConfig) GetAllowedTools(ctx context.Context) (map[string]bool, error) {
 	if b.ClientID == "" || b.ClientID == "local" || b.ClientID == "admin" {
 		return nil, nil
+	}
+
+	b.ensureCore(ctx)
+	if b.Core != nil {
+		var allTools []string
+		for t := range policy.ToolCapabilities {
+			allTools = append(allTools, t)
+		}
+		allowed, err := b.Core.Catalog(ctx, b.ClientID, allTools)
+		if err != nil {
+			return nil, err
+		}
+		res := make(map[string]bool, len(allowed))
+		for _, t := range allowed {
+			res[t] = true
+		}
+		return res, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)

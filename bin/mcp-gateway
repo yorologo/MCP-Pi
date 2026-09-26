@@ -6,6 +6,12 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 
+if [ -x "${SCRIPT_DIR}/mcp-gateway-adapter" ]; then
+    exec "${SCRIPT_DIR}/mcp-gateway-adapter" "$@"
+elif [ -x "${ROOT_DIR}/bin/mcp-gateway-adapter" ]; then
+    exec "${ROOT_DIR}/bin/mcp-gateway-adapter" "$@"
+fi
+
 if [ -d "${ROOT_DIR}/src" ]; then
     export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 elif [ -d "/home/mcp-gateway/mcp-gateway/src" ]; then

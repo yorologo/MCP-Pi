@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}System Info - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">System & Diagnostics</h1>
+      <p class="page-description">Read-only hardware metrics, operating system, and database status</p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <!-- Gateway & Runtime -->
+    <div class="card space-y-4 p-4 sm:p-5">
+      <h2 class="text-sm font-semibold text-white uppercase tracking-wider text-slate-400">Gateway Runtime</h2>
+      <div class="divide-y divide-slate-900 text-xs">
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Gateway Version</span>
+          <span class="font-mono text-white font-semibold">v{{ gateway_version }}</span>
+        </div>
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Registry Backend</span>
+          <span class="font-mono text-indigo-400">{{ backend_type }}</span>
+        </div>
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Database Path</span>
+          <span class="max-w-xs break-all font-mono text-slate-300 sm:text-right">{{ db_path }}</span>
+        </div>
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Database File Size</span>
+          <span class="font-mono text-slate-200">{{ db_size_kb }} KB</span>
+        </div>
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Go Runtime</span>
+          <span class="font-mono text-slate-300">{{ go_ver }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Host Hardware -->
+    <div class="card space-y-4 p-4 sm:p-5">
+      <h2 class="text-sm font-semibold text-white uppercase tracking-wider text-slate-400">Host Environment</h2>
+      <div class="divide-y divide-slate-900 text-xs">
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Hostname</span>
+          <span class="font-mono text-white">{{ hostname }}</span>
+        </div>
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Hardware Model</span>
+          <span class="text-slate-200">{{ model }}</span>
+        </div>
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Architecture</span>
+          <span class="font-mono text-slate-200">{{ arch }}</span>
+        </div>
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Kernel Release</span>
+          <span class="font-mono text-slate-300">{{ kernel }}</span>
+        </div>
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Memory (RAM)</span>
+          <span class="font-mono text-slate-200">{{ mem_available }} MB free / {{ mem_total }} MB total</span>
+        </div>
+        <div class="flex flex-col gap-1 py-2.5 sm:flex-row sm:justify-between">
+          <span class="text-slate-400">Root Disk Space</span>
+          <span class="font-mono text-slate-200">{{ free_disk }} MB free / {{ total_disk }} MB total ({{ used_disk }} MB used)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

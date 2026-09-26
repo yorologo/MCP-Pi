@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{% if is_edit %}Edit Client{% else %}Add Client{% endif %} - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+  <div class="page-header">
+    <h1 class="page-title">
+      {% if is_edit %}Edit AI Client: {{ client.id }}{% else %}Register AI Client{% endif %}
+    </h1>
+    <a href="{{ url_for('admin.clients_list') }}" class="btn-secondary w-full sm:w-auto">
+      &larr; Back to Clients
+    </a>
+  </div>
+
+  <form method="POST" class="card space-y-5 p-4 sm:p-6">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    {% if not is_edit %}
+    <div>
+      <label for="client-id" class="field-label">Client ID</label>
+      <input id="client-id" type="text" name="id" value="{% if client %}{{ client.id }}{% endif %}" required class="field font-mono" placeholder="e.g. chatgpt-principal">
+    </div>
+    {% endif %}
+
+    <div>
+      <label for="client-display-name" class="field-label">Display Name</label>
+      <input id="client-display-name" type="text" name="display_name" value="{% if client %}{{ client.display_name }}{% endif %}" required class="field" placeholder="e.g. ChatGPT Principal Assistant">
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <label for="client-provider" class="field-label">Provider</label>
+        <input id="client-provider" type="text" name="provider" value="{% if client %}{{ client.provider }}{% endif %}" class="field" placeholder="OpenAI">
+      </div>
+      <div>
+        <label for="client-protocol" class="field-label">Protocol</label>
+        <input id="client-protocol" type="text" name="protocol" value="{% if client %}{{ client.protocol }}{% else %}mcp{% endif %}" class="field font-mono" placeholder="mcp">
+      </div>
+    </div>
+
+    <div>
+      <label for="client-notes" class="field-label">Notes / Description</label>
+      <textarea id="client-notes" name="notes" rows="4" class="field resize-y" placeholder="Operational notes or purpose...">{% if client %}{{ client.notes }}{% endif %}</textarea>
+    </div>
+
+    <div class="flex items-center gap-2 pt-2">
+      <input type="checkbox" id="enabled" name="enabled" class="rounded bg-slate-900 border-slate-800 text-indigo-600 focus:ring-indigo-500" {% if not client or client.enabled %}checked{% endif %}>
+      <label for="enabled" class="text-xs text-slate-300">Client is Enabled</label>
+    </div>
+
+    <div class="flex flex-col-reverse gap-3 border-t border-slate-800 pt-5 sm:flex-row sm:justify-end">
+      <a href="{{ url_for('admin.clients_list') }}" class="btn-secondary">
+        Cancel
+      </a>
+      <button type="submit" class="btn-primary">
+        Save Client
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Settings - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-8">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Security & Settings</h1>
+      <p class="page-description">Operational limits, retention, and emergency kill switch</p>
+    </div>
+  </div>
+
+  <!-- Emergency Kill Switch Card -->
+  <div class="bg-slate-950 border {% if settings.gateway_enabled %}border-rose-900/60 bg-rose-950/10{% else %}border-emerald-900/60 bg-emerald-950/10{% endif %} rounded-xl p-6 shadow-sm space-y-4">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-lg">🛡️</span>
+          <h2 class="text-base font-bold text-white">Emergency Kill Switch</h2>
+        </div>
+        <p class="text-xs text-slate-400 mt-1 max-w-lg">
+          Instantly block all AI client tool calls and target executions across the entire gateway. The Admin Console remains online and accessible.
+        </p>
+      </div>
+
+      <form method="POST" action="{{ url_for('admin.toggle_kill_switch') }}" class="shrink-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if settings.gateway_enabled %}
+          <button type="submit" class="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg text-xs transition shadow-lg flex items-center gap-2" data-confirm="Activate the emergency kill switch? This will immediately deny all MCP tool calls.">
+            <span>🛑</span> Disable Gateway (Kill Switch)
+          </button>
+        {% else %}
+          <button type="submit" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs transition shadow-lg flex items-center gap-2">
+            <span>▶️</span> Re-Enable Gateway
+          </button>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="text-[11px] font-mono {% if settings.gateway_enabled %}text-emerald-400{% else %}text-rose-400 font-bold{% endif %} pt-2 border-t border-slate-800/60">
+      Status: {% if settings.gateway_enabled %}OPERATIONAL &bull; Client requests permitted{% else %}DISABLED &bull; Client requests blocked with GATEWAY_DISABLED{% endif %}
+    </div>
+  </div>
+
+  <!-- Controlled Writes Card (Phase 5) -->
+  <div class="bg-slate-950 border {% if settings.writes_enabled %}border-amber-900/60 bg-amber-950/10{% else %}border-slate-800 bg-slate-900/20{% endif %} rounded-xl p-6 shadow-sm space-y-4">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-lg">✍️</span>
+          <h2 class="text-base font-bold text-white">Controlled Writes (Phase 5)</h2>
+        </div>
+        <p class="text-xs text-slate-400 mt-1 max-w-lg">
+          Controls structured filesystem mutations globally (<code class="text-indigo-400">write_file</code>, append, delete, copy, move, and mkdir). A project must also have <code class="text-amber-400">project.write = true</code>. <code class="text-indigo-400">run_command</code> is governed separately by execute/run_command grants and project scope.
+        </p>
+      </div>
+
+      <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+        <form method="POST" action="{{ url_for('admin.toggle_writes_switch') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          {% if settings.writes_enabled %}
+            <button type="submit" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-lg text-xs transition border border-slate-700 flex items-center gap-1.5">
+              <span>🔒</span> Turn Off Writes
+            </button>
+          {% else %}
+            <button type="submit" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-lg text-xs transition shadow-lg flex items-center gap-1.5" data-confirm="Enable structured filesystem writes for authorized projects?">
+              <span>✍️</span> Enable Controlled Writes
+            </button>
+          {% endif %}
+        </form>
+
+        {% if settings.writes_enabled %}
+        <form method="POST" action="{{ url_for('admin.disable_writes') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="px-3 py-2 bg-rose-900/80 hover:bg-rose-800 text-rose-200 font-bold rounded-lg text-xs transition border border-rose-700" title="Emergency panic button: disable structured filesystem writes">
+            Panic: Stop Writes
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-1 border-t border-slate-800/60 pt-2 font-mono text-[11px] {% if settings.writes_enabled %}font-bold text-amber-400{% else %}text-slate-400{% endif %} sm:flex-row sm:items-center sm:justify-between">
+      <span>Status: {% if settings.writes_enabled %}⚠️ STRUCTURED WRITES ACTIVE &bull; Authorized file mutations permitted{% else %}LOCKED &bull; Structured writes blocked with WRITES_DISABLED{% endif %}</span>
+      <span class="text-slate-500 text-[10px]">Read tools and separately granted run_command remain independent</span>
+    </div>
+  </div>
+
+  <!-- Trusted Target Shell Card -->
+  <div class="bg-slate-950 border {% if settings.shell_enabled %}border-rose-900/60 bg-rose-950/10{% else %}border-slate-800 bg-slate-900/20{% endif %} rounded-xl p-6 shadow-sm space-y-4">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2"><span class="text-lg">⌨️</span><h2 class="text-base font-bold text-white">Trusted Target Shell</h2></div>
+        <p class="text-xs text-slate-400 mt-1 max-w-lg">Controls <code class="text-indigo-400">run_command</code> globally. This is an explicitly trusted target shell, not a project filesystem sandbox. Target/project grants still scope authorization and audit.</p>
+      </div>
+      <form method="POST" action="{{ url_for('admin.toggle_shell_switch') }}" class="shrink-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if settings.shell_enabled %}
+          <button type="submit" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-lg text-xs transition border border-slate-700" data-confirm="Disable trusted target shell execution globally?">Disable Target Shell</button>
+        {% else %}
+          <button type="submit" class="px-4 py-2 bg-rose-700 hover:bg-rose-600 text-white font-bold rounded-lg text-xs transition" data-confirm="Enable high-risk trusted target shell execution for explicitly granted clients?">Enable Target Shell</button>
+        {% endif %}
+      </form>
+    </div>
+    <div class="text-[11px] font-mono {% if settings.shell_enabled %}text-rose-300{% else %}text-slate-400{% endif %} pt-2 border-t border-slate-800/60">Status: {% if settings.shell_enabled %}ENABLED &bull; requires target_shell/run_command grant{% else %}DISABLED &bull; blocked with TARGET_SHELL_DISABLED{% endif %}</div>
+  </div>
+
+  <!-- Configuration Limits Form -->
+  <form method="POST" action="{{ url_for('admin.settings_view') }}" class="card space-y-5 p-4 sm:p-6">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h2 class="text-sm font-semibold text-white uppercase tracking-wider text-slate-400">System Parameters</h2>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <label for="default-timeout" class="field-label">Default Timeout (seconds)</label>
+        <input id="default-timeout" type="number" name="default_timeout" value="{{ settings.default_timeout }}" min="5" max="300" required class="field font-mono">
+        <p class="text-[11px] text-slate-500 mt-1">Range: 5 - 300 seconds</p>
+      </div>
+
+      <div>
+        <label for="activity-retention" class="field-label">Activity Audit Retention (rows)</label>
+        <input id="activity-retention" type="number" name="activity_retention" value="{{ settings.activity_retention }}" min="100" max="50000" required class="field font-mono">
+        <p class="text-[11px] text-slate-500 mt-1">Pruned automatically on insert</p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div>
+        <label for="max-output-bytes" class="field-label">Max Output Bytes</label>
+        <input id="max-output-bytes" type="number" name="max_output_bytes" value="{{ settings.max_output_bytes }}" min="1024" max="10485760" required class="field font-mono">
+        <p class="text-[11px] text-slate-500 mt-1">Default 262144 (256 KB)</p>
+      </div>
+
+      <div>
+        <label for="max-file-read-bytes" class="field-label">Max File Read Bytes</label>
+        <input id="max-file-read-bytes" type="number" name="max_file_read_bytes" value="{{ settings.max_file_read_bytes }}" min="1024" max="10485760" required class="field font-mono">
+        <p class="text-[11px] text-slate-500 mt-1">Default 1048576 (1 MB)</p>
+      </div>
+
+      <div>
+        <label for="max-write-bytes" class="field-label">Max Write Bytes</label>
+        <input id="max-write-bytes" type="number" name="max_write_bytes" value="{{ settings.max_write_bytes }}" min="1024" max="10485760" required class="field font-mono">
+        <p class="text-[11px] text-slate-500 mt-1">Default 262144 (256 KB)</p>
+      </div>
+    </div>
+
+    <div class="flex border-t border-slate-800 pt-4 sm:justify-end">
+      <button type="submit" class="btn-primary w-full sm:w-auto">
+        Save Parameters
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

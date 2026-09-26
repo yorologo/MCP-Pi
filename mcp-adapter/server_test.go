@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcp-gateway-adapter/internal/core"
+	"mcp-gateway-adapter/internal/registry"
 )
 
 func getTestBridgeConfig() *BridgeConfig {
@@ -816,5 +818,61 @@ func TestToolSetEquality(t *testing.T) {
 	b["run_command"] = true
 	if toolSetsEqual(a, b) {
 		t.Fatal("changed tool set should compare different")
+	}
+}
+
+func TestInProcessCoreExecution(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	db, err := registry.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := registry.NewStore(db)
+	coreInstance := core.New(store, core.Config{
+		GatewayVersion:     "1.4.0",
+		CoreAPIVersion:     1,
+		ToolCatalogVersion: 4,
+		MCPProtocol:        "2026-07-28",
+		DBPath:             dbPath,
+	})
+
+	bridge := &BridgeConfig{
+		Core:      coreInstance,
+		DBPath:    dbPath,
+		ClientID:  "local",
+		Timeout:   5 * time.Second,
+		PythonBin: "/invalid/nonexistent/python", // Proves python is NOT invoked!
+	}
+
+	state := NewAdapterState()
+	info, err := bridge.CheckBridgeCompatibility(ctx)
+	if err != nil {
+		t.Fatalf("in-process compatibility check failed: %v", err)
+	}
+	if info.GatewayVersion != "1.4.0" || !info.OK {
+		t.Fatalf("unexpected version info: %+v", info)
+	}
+	state.SetReady(true, "ready", info)
+
+	server := NewGatewayServer(bridge, state)
+	if server == nil {
+		t.Fatal("failed to initialize gateway server")
+	}
+
+	// Invoke health through CallBridge in-process
+	outBytes, isErr, err := bridge.CallBridge(ctx, "health", []byte("{}"), "req-health-test")
+	if err != nil || isErr {
+		t.Fatalf("in-process health call failed: err=%v, isErr=%v, out=%s", err, isErr, string(outBytes))
+	}
+
+	var res map[string]any
+	if err := json.Unmarshal(outBytes, &res); err != nil {
+		t.Fatalf("failed to parse result json: %v", err)
+	}
+	if res["ok"] != true || res["tool"] != "health" {
+		t.Fatalf("unexpected health response: %+v", res)
 	}
 }

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Projects - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Scoped Projects</h1>
+      <p class="page-description">Directory root boundaries and permission capabilities</p>
+    </div>
+    <a href="{{ url_for('admin.project_add') }}" class="btn-primary w-full sm:w-auto">
+      + Add Project
+    </a>
+  </div>
+
+  {% if target_filter %}
+  <div class="flex items-center justify-between rounded border border-indigo-900/60 bg-indigo-950/20 px-4 py-3 text-sm text-indigo-200">
+    <span>Showing projects for Target <code>{{ target_filter }}</code></span>
+    <a href="{{ url_for('admin.projects_list') }}" class="btn-secondary">Clear Target filter</a>
+  </div>
+  {% endif %}
+
+  <div class="table-region" role="region" aria-label="Scoped projects" tabindex="0">
+    <table class="data-table w-full" data-admin-table data-search-label="Filter projects...">
+      <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
+        <tr>
+          <th class="py-3 px-4" data-sort-key="project">Target / Project ID</th>
+          <th class="py-3 px-4" data-sort-key="root">Root Path</th>
+          <th class="py-3 px-4" data-sort-key="permissions">Permissions</th>
+          <th class="py-3 px-4" data-sort-key="status">Status</th>
+          <th class="py-3 px-4 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800 text-slate-300">
+        {% for p in projects %}
+        <tr class="hover:bg-slate-900/40">
+          <td class="py-3 px-4">
+            <div class="font-mono font-medium text-white">{{ p.id }}</div>
+            <div class="text-[11px] text-slate-500 font-mono">Target: {{ p.target_id }}</div>
+          </td>
+          <td class="max-w-xs break-all py-3 px-4 font-mono text-slate-300">{{ p.root }}</td>
+          <td class="py-3 px-4">
+            <div class="flex items-center gap-1.5">
+              {% if p.read %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">READ ✓</span>
+              {% else %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-900 text-slate-500 border border-slate-800">READ ✕</span>
+              {% endif %}
+              {% if p.write %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-950 text-amber-300 border border-amber-800">WRITE ✓</span>
+              {% else %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-900 text-slate-500 border border-slate-800">WRITE ✕</span>
+              {% endif %}
+            </div>
+          </td>
+          <td class="py-3 px-4">
+            {% if p.enabled %}
+              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">ENABLED</span>
+            {% else %}
+              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950 text-rose-300 border border-rose-800">DISABLED</span>
+            {% endif %}
+          </td>
+          <td class="py-3 px-4 text-right space-x-2">
+            <!-- Toggle write capability -->
+            <form method="POST" action="{{ url_for('admin.project_toggle_write', p.target_id, p.id) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              {% if p.write %}
+                <button type="submit" class="px-2 py-1 bg-amber-950/60 hover:bg-amber-900 text-amber-300 rounded border border-amber-800 transition" title="Revoke write capability">
+                  Revoke Write
+                </button>
+              {% else %}
+                <button type="submit" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition" title="Allow write capability">
+                  Allow Write
+                </button>
+              {% endif %}
+            </form>
+
+            <!-- Toggle enabled -->
+            <form method="POST" action="{{ url_for('admin.project_toggle', p.target_id, p.id) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              {% if p.enabled %}
+                <button type="submit" class="px-2 py-1 bg-rose-950/60 hover:bg-rose-900 text-rose-300 rounded border border-rose-800 transition" data-confirm="Disable project {{ p.id }}?">
+                  Disable
+                </button>
+              {% else %}
+                <button type="submit" class="px-2 py-1 bg-emerald-950/60 hover:bg-emerald-900 text-emerald-300 rounded border border-emerald-800 transition">
+                  Enable
+                </button>
+              {% endif %}
+            </form>
+
+            <!-- Edit link -->
+            <a href="{{ url_for('admin.project_edit', p.target_id, p.id) }}" class="inline-flex min-h-11 items-center rounded border border-indigo-800 bg-indigo-950/60 px-3 py-2 text-indigo-300 transition hover:bg-indigo-900">
+              Edit
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="5" class="py-6 text-center text-slate-500">No projects configured yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type LookupError struct {
@@ -25,65 +26,74 @@ func ErrorCode(err error) string {
 }
 
 type Task struct {
-	Enabled bool
-	Argv    []string
-	Timeout int
+	Enabled bool     `json:"enabled"`
+	Argv    []string `json:"argv"`
+	Timeout int      `json:"timeout"`
 }
 
 type Project struct {
-	ID          string
-	TargetID    string
-	DisplayName string
-	Root        string
-	Read        bool
-	Write       bool
-	Enabled     bool
-	Tasks       map[string]Task
+	ID          string          `json:"id"`
+	TargetID    string          `json:"target_id"`
+	DisplayName string          `json:"display_name"`
+	Root        string          `json:"root"`
+	Read        bool            `json:"read_enabled"`
+	Write       bool            `json:"write_enabled"`
+	Enabled     bool            `json:"enabled"`
+	Tasks       map[string]Task `json:"tasks"`
 }
 
 type Target struct {
-	ID              string
-	DisplayName     string
-	Platform        string
-	Host            string
-	Port            int
-	User            string
-	SSHAlias        string
-	PrivilegeUser   string
-	PrivilegePolicy string
-	Enabled         bool
-	Projects        map[string]Project
+	ID              string             `json:"id"`
+	DisplayName     string             `json:"display_name"`
+	Platform        string             `json:"platform"`
+	Host            string             `json:"host"`
+	Port            int                `json:"port"`
+	User            string             `json:"user"`
+	SSHAlias        string             `json:"ssh_alias"`
+	PrivilegeUser   string             `json:"privilege_user"`
+	PrivilegePolicy string             `json:"privilege_policy"`
+	Enabled         bool               `json:"enabled"`
+	Projects        map[string]Project `json:"projects"`
 }
 
 type TargetSummary struct {
-	ID              string
-	DisplayName     string
-	Platform        string
-	PrivilegePolicy string
-	Enabled         bool
-	ProjectCount    int
-	Projects        []string
+	ID              string   `json:"id"`
+	DisplayName     string   `json:"display_name"`
+	Platform        string   `json:"platform"`
+	PrivilegePolicy string   `json:"privilege_policy"`
+	Enabled         bool     `json:"enabled"`
+	ProjectCount    int      `json:"project_count"`
+	Projects        []string `json:"projects"`
 }
 
 type Client struct {
-	ID          string
-	DisplayName string
-	Provider    string
-	Protocol    string
-	Enabled     bool
-	Notes       string
-	CreatedAt   string
-	UpdatedAt   string
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Provider    string `json:"provider"`
+	Protocol    string `json:"protocol"`
+	Enabled     bool   `json:"enabled"`
+	Notes       string `json:"notes"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type PrivilegeApproval struct {
+	TargetID   string  `json:"target_id"`
+	Policy     string  `json:"policy"`
+	ClientID   string  `json:"client_id"`
+	ProjectID  string  `json:"project_id"`
+	BootID     string  `json:"boot_id"`
+	ApprovedAt float64 `json:"approved_at"`
 }
 
 type Grant struct {
-	ID         int64
-	ClientID   string
-	TargetID   string
-	ProjectID  string
-	Capability string
-	Enabled    bool
-	CreatedAt  string
+	ID         int64  `json:"id"`
+	ClientID   string `json:"client_id"`
+	TargetID   string `json:"target_id"`
+	ProjectID  string `json:"project_id"`
+	Capability string `json:"capability"`
+	Enabled    bool   `json:"enabled"`
+	CreatedAt  string `json:"created_at"`
 }
 
 type Activity struct {
@@ -99,7 +109,8 @@ type Activity struct {
 }
 
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 func NewStore(db *sql.DB) *Store {
@@ -111,7 +122,7 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewStore(db), nil
+	return &Store{db: db, path: path}, nil
 }
 
 func (s *Store) Close() error {
@@ -119,6 +130,20 @@ func (s *Store) Close() error {
 		return nil
 	}
 	return s.db.Close()
+}
+
+func (s *Store) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
+func (s *Store) Path() string {
+	if s == nil {
+		return ""
+	}
+	return s.path
 }
 
 func (s *Store) ListTargets(ctx context.Context) ([]TargetSummary, error) {
@@ -576,4 +601,135 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func (s *Store) GetPrivilegeApproval(ctx context.Context, targetID string) (*PrivilegeApproval, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT target_id, policy, client_id, project_id, boot_id, approved_at
+FROM privilege_approvals
+WHERE target_id = ?
+`, targetID)
+	var a PrivilegeApproval
+	if err := row.Scan(&a.TargetID, &a.Policy, &a.ClientID, &a.ProjectID, &a.BootID, &a.ApprovedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get privilege approval: %w", err)
+	}
+	return &a, nil
+}
+
+func (s *Store) SetPrivilegeApproval(ctx context.Context, targetID, policy, clientID, projectID, bootID string) error {
+	policy = strings.ToLower(strings.TrimSpace(policy))
+	clientID = strings.TrimSpace(clientID)
+	projectID = strings.TrimSpace(projectID)
+	if policy != "ask_always" && policy != "ask_once_per_boot" {
+		return fmt.Errorf("policy '%s' does not use cached approval", policy)
+	}
+	if clientID == "" || projectID == "" {
+		return fmt.Errorf("privilege approval requires client and project scope")
+	}
+	now := float64(time.Now().UnixNano()) / 1e9
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO privilege_approvals (target_id, policy, client_id, project_id, boot_id, approved_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(target_id) DO UPDATE SET
+    policy = excluded.policy,
+    client_id = excluded.client_id,
+    project_id = excluded.project_id,
+    boot_id = excluded.boot_id,
+    approved_at = excluded.approved_at
+`, targetID, policy, clientID, projectID, bootID, now)
+	if err != nil {
+		return fmt.Errorf("set privilege approval: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ClearPrivilegeApproval(ctx context.Context, targetID string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM privilege_approvals WHERE target_id = ?", targetID)
+	if err != nil {
+		return fmt.Errorf("clear privilege approval: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ClearPrivilegeApprovalsScoped(ctx context.Context, targetID, clientID, projectID string) error {
+	var conditions []string
+	var args []any
+	if targetID != "" {
+		conditions = append(conditions, "target_id = ?")
+		args = append(args, targetID)
+	}
+	if clientID != "" {
+		conditions = append(conditions, "client_id = ?")
+		args = append(args, clientID)
+	}
+	if projectID != "" {
+		conditions = append(conditions, "project_id = ?")
+		args = append(args, projectID)
+	}
+	if len(conditions) == 0 {
+		_, err := s.db.ExecContext(ctx, "DELETE FROM privilege_approvals")
+		return err
+	}
+	query := "DELETE FROM privilege_approvals WHERE " + strings.Join(conditions, " AND ")
+	_, err := s.db.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (s *Store) ConsumePrivilegeApproval(
+	ctx context.Context,
+	targetID, policy, clientID, projectID, bootID string,
+	maxAgeSeconds int,
+) (bool, error) {
+	policy = strings.ToLower(strings.TrimSpace(policy))
+	clientID = strings.TrimSpace(clientID)
+	projectID = strings.TrimSpace(projectID)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var rowPolicy, rowClient, rowProject, rowBoot string
+	var approvedAt float64
+	err = tx.QueryRowContext(ctx, `
+SELECT policy, client_id, project_id, boot_id, approved_at
+FROM privilege_approvals
+WHERE target_id = ?
+`, targetID).Scan(&rowPolicy, &rowClient, &rowProject, &rowBoot, &approvedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if rowPolicy != policy || rowClient != clientID || rowProject != projectID {
+		return false, nil
+	}
+
+	if policy == "ask_once_per_boot" {
+		if bootID != "" && rowBoot == bootID {
+			return true, tx.Commit()
+		}
+		_, _ = tx.ExecContext(ctx, "DELETE FROM privilege_approvals WHERE target_id = ?", targetID)
+		_ = tx.Commit()
+		return false, nil
+	}
+
+	if policy == "ask_always" {
+		now := float64(time.Now().UnixNano()) / 1e9
+		age := now - approvedAt
+		_, _ = tx.ExecContext(ctx, "DELETE FROM privilege_approvals WHERE target_id = ?", targetID)
+		if age < 0 || age > float64(maxAgeSeconds) {
+			_ = tx.Commit()
+			return false, nil
+		}
+		return true, tx.Commit()
+	}
+
+	return false, nil
 }

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Targets - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">SSH Target Hosts</h1>
+      <p class="page-description">Worker targets accessible via audited OpenSSH channel</p>
+    </div>
+    <a href="{{ url_for('admin.target_add') }}" class="btn-primary w-full sm:w-auto">
+      + Add Target
+    </a>
+  </div>
+
+  <div class="table-region" role="region" aria-label="Configured SSH targets" tabindex="0">
+    <table class="data-table w-full" data-admin-table data-search-label="Filter targets...">
+      <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
+        <tr>
+          <th class="py-3 px-4" data-sort-key="target">Target ID</th>
+          <th class="py-3 px-4" data-sort-key="platform">Platform</th>
+          <th class="py-3 px-4" data-sort-key="projects" data-sort-type="number">Projects</th>
+          <th class="py-3 px-4" data-sort-key="privilege">Privilege</th>
+          <th class="py-3 px-4" data-sort-key="status">Status</th>
+          <th class="py-3 px-4 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800 text-slate-300">
+        {% for t in targets %}
+        <tr class="hover:bg-slate-900/40">
+          <td class="py-3 px-4">
+            <div class="font-mono font-medium text-white">{{ t.id }}</div>
+            {% if t.display_name and t.display_name != t.id %}
+              <div class="text-[11px] text-slate-400">{{ t.display_name }}</div>
+            {% endif %}
+          </td>
+          <td class="py-3 px-4">{{ t.platform }}</td>
+          <td class="py-3 px-4" data-sort-value="{{ t.project_count }}">
+            <a href="{{ url_for('admin.projects_list', t.id) }}" class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[11px] hover:bg-slate-700">
+              {{ t.project_count }} {% if t.project_count == 1 %}project{% else %}projects{% endif %}
+            </a>
+          </td>
+          <td class="py-3 px-4">
+            <span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[11px]">
+              {{ t.privilege_policy or 'never' }}
+            </span>
+          </td>
+          <td class="py-3 px-4">
+            {% if t.enabled %}
+              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">ENABLED</span>
+            {% else %}
+              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950 text-rose-300 border border-rose-800">DISABLED</span>
+            {% endif %}
+          </td>
+          <td class="py-3 px-4 text-right space-x-2">
+            <!-- Test reachability via Core -->
+            <form method="POST" action="{{ url_for('admin.target_test', t.id) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 transition">
+                Test
+              </button>
+            </form>
+
+            <!-- Toggle enabled -->
+            <form method="POST" action="{{ url_for('admin.target_toggle', t.id) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              {% if t.enabled %}
+                <button type="submit" class="px-2 py-1 bg-amber-950/60 hover:bg-amber-900 text-amber-300 rounded border border-amber-800 transition" data-confirm="Disable target {{ t.id }}?">
+                  Disable
+                </button>
+              {% else %}
+                <button type="submit" class="px-2 py-1 bg-emerald-950/60 hover:bg-emerald-900 text-emerald-300 rounded border border-emerald-800 transition">
+                  Enable
+                </button>
+              {% endif %}
+            </form>
+
+            <!-- Edit link -->
+            <a href="{{ url_for('admin.target_edit', t.id) }}" class="inline-flex min-h-11 items-center rounded border border-indigo-800 bg-indigo-950/60 px-3 py-2 text-indigo-300 transition hover:bg-indigo-900">
+              Edit
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="py-6 text-center text-slate-500">No targets configured yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -45,7 +45,8 @@ func loadCoreFixture(t *testing.T) frozenCoreBasic {
 func seededCore(t *testing.T) (*Core, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := registry.Open(ctx, filepath.Join(t.TempDir(), "core.db"))
+	dbPath := filepath.Join(t.TempDir(), "core.db")
+	db, err := registry.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +73,8 @@ func seededCore(t *testing.T) (*Core, *sql.DB) {
 		CoreAPIVersion:     1,
 		ToolCatalogVersion: 4,
 		MCPProtocol:        "2026-07-28",
+		DBPath:             dbPath,
+		BackupDir:          filepath.Join(filepath.Dir(dbPath), "backups"),
 	}), db
 }
 

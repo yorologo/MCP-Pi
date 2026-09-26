@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}AI Clients - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">AI Client Consumers</h1>
+      <p class="page-description">Authorized external AI callers consuming MCP tools</p>
+    </div>
+    <a href="{{ url_for('admin.client_add') }}" class="btn-primary w-full sm:w-auto">
+      + Add Client
+    </a>
+  </div>
+
+  <div class="table-region" role="region" aria-label="Registered AI clients" tabindex="0">
+    <table class="data-table w-full" data-admin-table data-search-label="Filter AI clients...">
+      <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
+        <tr>
+          <th class="py-3 px-4" data-sort-key="client">Client ID</th>
+          <th class="py-3 px-4" data-sort-key="name">Display Name</th>
+          <th class="py-3 px-4" data-sort-key="provider">Provider</th>
+          <th class="py-3 px-4" data-sort-key="protocol">Protocol</th>
+          <th class="py-3 px-4" data-sort-key="status">Status</th>
+          <th class="py-3 px-4" data-sort-key="capabilities">Effective Capabilities</th>
+          <th class="py-3 px-4 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800 text-slate-300">
+        {% for c in clients %}
+        <tr class="hover:bg-slate-900/40">
+          <td class="py-3 px-4 font-mono font-medium text-white">{{ c.id }}</td>
+          <td class="py-3 px-4">{{ c.display_name }}</td>
+          <td class="py-3 px-4">{{ c.provider or '—' }}</td>
+          <td class="max-w-xs break-words py-3 px-4 font-mono text-indigo-300">{{ c.protocol }}</td>
+          <td class="py-3 px-4">
+            {% if c.enabled %}
+              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">ENABLED</span>
+            {% else %}
+              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950 text-rose-300 border border-rose-800">DISABLED</span>
+            {% endif %}
+          </td>
+          <td class="py-3 px-4">
+            <div class="flex max-w-sm flex-wrap gap-1 text-[10px]">
+              {% if c.grant_summary.structured_read %}<span class="rounded border border-slate-700 px-1.5 py-0.5">Read</span>{% endif %}
+              {% if c.grant_summary.structured_write %}<span class="rounded border border-amber-800 px-1.5 py-0.5 text-amber-300">Write</span>{% endif %}
+              {% if c.grant_summary.tasks %}<span class="rounded border border-indigo-800 px-1.5 py-0.5 text-indigo-300">Tasks</span>{% endif %}
+              {% if c.grant_summary.target_shell %}<span class="rounded border border-rose-800 px-1.5 py-0.5 text-rose-300">Target shell</span>{% endif %}
+              {% if c.grant_summary.target_admin %}<span class="rounded border border-amber-800 px-1.5 py-0.5 text-amber-300">Target admin</span>{% endif %}
+              {% if c.grant_summary.gateway_admin %}<span class="rounded border border-fuchsia-800 px-1.5 py-0.5 text-fuchsia-300">Gateway admin</span>{% endif %}
+              {% if c.grant_count == 0 %}<span class="text-slate-500">No active grants</span>{% endif %}
+            </div>
+          </td>
+          <td class="py-3 px-4 text-right space-x-2">
+            <!-- Toggle enabled -->
+            <form method="POST" action="{{ url_for('admin.client_toggle', c.id) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              {% if c.enabled %}
+                <button type="submit" class="px-2 py-1 bg-amber-950/60 hover:bg-amber-900 text-amber-300 rounded border border-amber-800 transition" data-confirm="Disable client {{ c.id }}?">
+                  Disable
+                </button>
+              {% else %}
+                <button type="submit" class="px-2 py-1 bg-emerald-950/60 hover:bg-emerald-900 text-emerald-300 rounded border border-emerald-800 transition">
+                  Enable
+                </button>
+              {% endif %}
+            </form>
+
+            <a href="{{ url_for('admin.client_grants', c.id) }}" class="inline-flex min-h-11 items-center rounded border border-fuchsia-800 bg-fuchsia-950/60 px-3 py-2 text-fuchsia-300 transition hover:bg-fuchsia-900">
+              Grants
+            </a>
+            <a href="{{ url_for('admin.client_edit', c.id) }}" class="inline-flex min-h-11 items-center rounded border border-indigo-800 bg-indigo-950/60 px-3 py-2 text-indigo-300 transition hover:bg-indigo-900">
+              Edit
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="py-6 text-center text-slate-500">No AI clients registered yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

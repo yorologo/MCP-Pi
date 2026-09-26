@@ -3,8 +3,11 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"mcp-gateway-adapter/internal/policy"
 )
 
 func invokeError(t *testing.T, response map[string]any) (string, string) {
@@ -164,11 +167,32 @@ func TestInvokeSearchRecordsBestEffortAudit(t *testing.T) {
 	}
 }
 
-func TestInvokeUnportedToolFailsClosed(t *testing.T) {
+func TestInvokeAll21ToolsCatalogHandled(t *testing.T) {
 	c, _, _ := seededRemoteCore(t)
-	response := c.Invoke(context.Background(), Invocation{ClientID: "local"}, "run_task", map[string]any{
-		"target": "t", "project": "p", "task": "status",
-	})
+	ctx := context.Background()
+	tmpDest := filepath.Join(t.TempDir(), "dest.txt")
+
+	// Every single tool in the 21-tool catalog must be recognized and dispatched by Invoke (never TOOL_NOT_IMPLEMENTED)
+	for toolName := range policy.ToolCapabilities {
+		resp := c.Invoke(ctx, Invocation{ClientID: "local"}, toolName, map[string]any{
+			"target": "t", "project": "p", "relative_path": "a.txt", "path": "a.txt",
+			"content": "test", "command": "echo 1", "task": "check", "pattern": "x",
+			"source_path": "a.txt", "dest_path": tmpDest, "confirm": true,
+		})
+		if rawErr, ok := resp["error"].(map[string]any); ok {
+			if code, _ := rawErr["code"].(string); code == "TOOL_NOT_IMPLEMENTED" {
+				t.Fatalf("tool %s returned TOOL_NOT_IMPLEMENTED: %#v", toolName, resp)
+			}
+		}
+	}
+}
+
+func TestInvokeUnimplementedToolFailsClosed(t *testing.T) {
+	c, _, _ := seededRemoteCore(t)
+	policy.ToolCapabilities["dummy_unimplemented_tool"] = []string{"*"}
+	defer delete(policy.ToolCapabilities, "dummy_unimplemented_tool")
+
+	response := c.Invoke(context.Background(), Invocation{ClientID: "local"}, "dummy_unimplemented_tool", map[string]any{})
 	code, _ := invokeError(t, response)
 	if code != "TOOL_NOT_IMPLEMENTED" {
 		t.Fatalf("unported tool=%#v", response)

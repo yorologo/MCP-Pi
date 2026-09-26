@@ -29,6 +29,7 @@ func ErrorCode(err error) string {
 
 type CommandOptions struct {
 	CWD     string
+	Env     map[string]string
 	Stdin   []byte
 	Timeout time.Duration
 }

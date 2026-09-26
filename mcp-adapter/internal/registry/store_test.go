@@ -180,3 +180,159 @@ func TestStoreDisabledAndMissingLookupCodes(t *testing.T) {
 		t.Fatalf("disabled project error=%v code=%q", err, ErrorCode(err))
 	}
 }
+
+func TestStorePrivilegeApproval(t *testing.T) {
+	store, ctx := seededStore(t)
+
+	// Set approval for ask_always
+	err := store.SetPrivilegeApproval(ctx, "t", "ask_always", "client", "p", "")
+	if err != nil {
+		t.Fatalf("SetPrivilegeApproval failed: %v", err)
+	}
+
+	app, err := store.GetPrivilegeApproval(ctx, "t")
+	if err != nil || app == nil {
+		t.Fatalf("GetPrivilegeApproval failed: %v, app: %v", err, app)
+	}
+	if app.ClientID != "client" || app.ProjectID != "p" || app.Policy != "ask_always" {
+		t.Fatalf("unexpected approval: %+v", app)
+	}
+
+	// Consume approval with matching client and project
+	ok, err := store.ConsumePrivilegeApproval(ctx, "t", "ask_always", "client", "p", "", 300)
+	if err != nil || !ok {
+		t.Fatalf("ConsumePrivilegeApproval failed: %v, ok=%v", err, ok)
+	}
+
+	// Second consume should fail (consumed/one-use)
+	ok, err = store.ConsumePrivilegeApproval(ctx, "t", "ask_always", "client", "p", "", 300)
+	if err != nil || ok {
+		t.Fatalf("ConsumePrivilegeApproval should fail second time: %v, ok=%v", err, ok)
+	}
+
+	// Test ask_once_per_boot
+	err = store.SetPrivilegeApproval(ctx, "t", "ask_once_per_boot", "client", "p", "boot-123")
+	if err != nil {
+		t.Fatalf("SetPrivilegeApproval failed: %v", err)
+	}
+
+	// Wrong boot ID fails and clears approval
+	ok, err = store.ConsumePrivilegeApproval(ctx, "t", "ask_once_per_boot", "client", "p", "boot-wrong", 300)
+	if err != nil || ok {
+		t.Fatalf("ConsumePrivilegeApproval should fail with wrong boot ID: ok=%v", ok)
+	}
+
+	// Now set again with correct boot ID
+	_ = store.SetPrivilegeApproval(ctx, "t", "ask_once_per_boot", "client", "p", "boot-123")
+	ok, err = store.ConsumePrivilegeApproval(ctx, "t", "ask_once_per_boot", "client", "p", "boot-123", 300)
+	if err != nil || !ok {
+		t.Fatalf("ConsumePrivilegeApproval should succeed with correct boot ID: ok=%v", ok)
+	}
+	// ask_once_per_boot remains valid across multiple commands during that boot!
+	ok, err = store.ConsumePrivilegeApproval(ctx, "t", "ask_once_per_boot", "client", "p", "boot-123", 300)
+	if err != nil || !ok {
+		t.Fatalf("ConsumePrivilegeApproval should still be valid for same boot: ok=%v", ok)
+	}
+}
+
+func TestStoreCRUD(t *testing.T) {
+	store, ctx := seededStore(t)
+
+	// Target CRUD
+	target := Target{
+		ID:              "target-2",
+		DisplayName:     "Target 2",
+		Platform:        "linux",
+		Host:            "192.168.1.10",
+		Port:            22,
+		User:            "admin",
+		PrivilegePolicy: "ask_always",
+		Enabled:         true,
+	}
+	if err := store.AddTarget(ctx, target); err != nil {
+		t.Fatalf("AddTarget: %v", err)
+	}
+	tGot, err := store.GetTarget(ctx, "target-2", false)
+	if err != nil || tGot.ID != "target-2" {
+		t.Fatalf("GetTarget: %v, got: %+v", err, tGot)
+	}
+
+	target.DisplayName = "Target 2 Updated"
+	if err := store.UpdateTarget(ctx, target); err != nil {
+		t.Fatalf("UpdateTarget: %v", err)
+	}
+
+	// Project CRUD
+	project := Project{
+		ID:          "proj-2",
+		TargetID:    "target-2",
+		DisplayName: "Project 2",
+		Root:        "/srv/proj2",
+		Read:        true,
+		Write:       true,
+		Enabled:     true,
+	}
+	if err := store.AddProject(ctx, project); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	pGot, err := store.GetProject(ctx, "target-2", "proj-2", false)
+	if err != nil || pGot.ID != "proj-2" {
+		t.Fatalf("GetProject: %v, got: %+v", err, pGot)
+	}
+
+	// Client CRUD
+	client := Client{
+		ID:          "client-2",
+		DisplayName: "Client 2",
+		Provider:    "test",
+		Protocol:    "mcp",
+		Enabled:     true,
+	}
+	if err := store.AddClient(ctx, client); err != nil {
+		t.Fatalf("AddClient: %v", err)
+	}
+	cGot, err := store.GetClient(ctx, "client-2")
+	if err != nil || cGot.ID != "client-2" {
+		t.Fatalf("GetClient: %v, got: %+v", err, cGot)
+	}
+
+	// Grant CRUD
+	gid, err := store.AddGrant(ctx, Grant{
+		ClientID:   "client-2",
+		TargetID:   "target-2",
+		ProjectID:  "proj-2",
+		Capability: "target_shell",
+		Enabled:    true,
+	})
+	if err != nil || gid <= 0 {
+		t.Fatalf("AddGrant: %v, id=%d", err, gid)
+	}
+	gGot, err := store.GetGrant(ctx, gid)
+	if err != nil || gGot.Capability != "target_shell" {
+		t.Fatalf("GetGrant: %v, got: %+v", err, gGot)
+	}
+
+	// Admin User CRUD
+	if err := store.SetAdminPassword(ctx, "admin", "hash123"); err != nil {
+		t.Fatalf("SetAdminPassword: %v", err)
+	}
+	uGot, err := store.GetAdminUser(ctx, "admin")
+	if err != nil || uGot == nil || uGot.PasswordHash != "hash123" {
+		t.Fatalf("GetAdminUser: %v, got: %+v", err, uGot)
+	}
+	if err := store.UpdateAdminLogin(ctx, "admin"); err != nil {
+		t.Fatalf("UpdateAdminLogin: %v", err)
+	}
+
+	// Activity count and prune
+	count, err := store.GetActivityCount(ctx)
+	if err != nil {
+		t.Fatalf("GetActivityCount: %v", err)
+	}
+	if count < 0 {
+		t.Fatalf("invalid activity count: %d", count)
+	}
+	if _, err := store.PruneActivity(ctx, 100); err != nil {
+		t.Fatalf("PruneActivity: %v", err)
+	}
+}

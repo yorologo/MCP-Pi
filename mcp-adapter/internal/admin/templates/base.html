@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-900 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}MCP Gateway Admin{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', 'app.css') }}">
+</head>
+<body class="min-h-full antialiased md:flex">
+  <a href="#main-content" class="sr-only fixed left-3 top-3 z-50 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white focus:not-sr-only">Skip to main content</a>
+  {% if session.user %}
+  {% if not section %}{% set section = '' %}{% endif %}
+  <aside class="sticky top-0 z-40 w-full shrink-0 border-b border-slate-800 bg-slate-950/95 backdrop-blur md:h-screen md:w-64 md:border-b-0 md:border-r">
+    <div class="flex min-h-16 items-center justify-between px-4 md:border-b md:border-slate-800">
+      <div class="flex items-center space-x-3">
+        <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 font-bold text-white shadow-lg shadow-indigo-950/40" aria-hidden="true">
+          π
+        </div>
+        <div>
+          <div class="text-sm font-semibold tracking-wide text-white">MCP Gateway</div>
+          <div class="text-xs text-slate-400">Admin Console</div>
+        </div>
+      </div>
+      <button type="button" data-nav-toggle aria-controls="primary-navigation" aria-expanded="false" class="hidden h-11 w-11 items-center justify-center rounded-xl border border-slate-700 text-xl text-slate-300 hover:bg-slate-800 hover:text-white md:hidden">
+        <span class="sr-only">Toggle navigation</span>
+        <span aria-hidden="true">☰</span>
+      </button>
+    </div>
+    <div id="primary-navigation" class="flex max-h-[calc(100vh-4rem)] flex-col overflow-y-auto md:flex md:h-[calc(100vh-4rem)]">
+    <nav class="flex-1 space-y-1 p-3 text-sm" aria-label="Primary navigation">
+      <a href="{{ url_for('admin.dashboard') }}" {% if section == 'dashboard' %}aria-current="page"{% endif %} class="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 transition {% if section == 'dashboard' %}bg-indigo-600 text-white shadow{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+        <span aria-hidden="true">📊</span> Dashboard
+      </a>
+      <a href="{{ url_for('admin.targets_list') }}" {% if section == 'target' or section == 'targets' %}aria-current="page"{% endif %} class="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 transition {% if section == 'target' or section == 'targets' %}bg-indigo-600 text-white shadow{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+        <span aria-hidden="true">🎯</span> Targets
+      </a>
+      <a href="{{ url_for('admin.projects_list') }}" {% if section == 'project' or section == 'projects' %}aria-current="page"{% endif %} class="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 transition {% if section == 'project' or section == 'projects' %}bg-indigo-600 text-white shadow{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+        <span aria-hidden="true">📁</span> Projects
+      </a>
+      <a href="{{ url_for('admin.clients_list') }}" {% if section == 'client' or section == 'clients' %}aria-current="page"{% endif %} class="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 transition {% if section == 'client' or section == 'clients' %}bg-indigo-600 text-white shadow{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+        <span aria-hidden="true">🤖</span> AI Clients
+      </a>
+      <a href="{{ url_for('admin.activity_view') }}" {% if section == 'activity' %}aria-current="page"{% endif %} class="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 transition {% if section == 'activity' %}bg-indigo-600 text-white shadow{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+        <span aria-hidden="true">📜</span> Activity Audit
+      </a>
+      <a href="{{ url_for('admin.system_view') }}" {% if section == 'system' %}aria-current="page"{% endif %} class="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 transition {% if section == 'system' %}bg-indigo-600 text-white shadow{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+        <span aria-hidden="true">⚙️</span> System
+      </a>
+      <a href="{{ url_for('admin.settings_view') }}" {% if section == 'settings' or section == 'toggle' or section == 'disable' %}aria-current="page"{% endif %} class="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 transition {% if section == 'settings' or section == 'toggle' or section == 'disable' %}bg-indigo-600 text-white shadow{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+        <span aria-hidden="true">🛡️</span> Settings & Kill Switch
+      </a>
+      <a href="{{ url_for('admin.maintenance_view') }}" {% if section == 'maintenance' %}aria-current="page"{% endif %} class="flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 transition {% if section == 'maintenance' %}bg-indigo-600 text-white shadow{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+        <span aria-hidden="true">🔧</span> Maintenance & Diagnostics
+      </a>
+    </nav>
+    <div class="flex items-center justify-between border-t border-slate-800 p-3 text-xs text-slate-400">
+      <span class="truncate">User: <strong class="text-slate-200">{{ session.user }}</strong></span>
+      <form method="POST" action="{{ url_for('auth.logout') }}" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="inline-flex min-h-10 items-center rounded-lg border border-rose-800 bg-rose-950/60 px-3 py-2 text-rose-300 transition hover:bg-rose-900">
+          Logout
+        </button>
+      </form>
+    </div>
+    </div>
+  </aside>
+  {% endif %}
+
+  <!-- Main Content Area -->
+  <main id="main-content" tabindex="-1" class="min-w-0 flex-1 bg-slate-900">
+    <div class="mx-auto w-full max-w-7xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
+      <!-- Flash Messages -->
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="space-y-2" aria-live="polite" aria-atomic="true">
+            {% for msg in messages %}
+              <div role="{% if msg.category == 'danger' %}alert{% else %}status{% endif %}" class="flex items-center justify-between rounded-xl border p-3.5 text-sm {% if msg.category == 'success' %}bg-emerald-950/80 border-emerald-800 text-emerald-300{% elif msg.category == 'danger' %}bg-rose-950/80 border-rose-800 text-rose-300{% else %}bg-slate-800 border-slate-700 text-slate-200{% endif %} shadow">
+                <span>{{ msg.text }}</span>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+  <script src="{{ url_for('static', 'htmx.min.js') }}"></script>
+  <script src="{{ url_for('static', 'app.js') }}"></script>
+</body>
+</html>

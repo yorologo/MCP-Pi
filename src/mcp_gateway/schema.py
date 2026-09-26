@@ -208,7 +208,7 @@ def migrate_db(conn: sqlite3.Connection):
             raise
         current_version = 4
 
-    if current_version != 4:
+    if current_version not in (4, 5):
         raise RuntimeError(f"Unsupported database schema version: {current_version}")
 
     # Insert default settings if missing.

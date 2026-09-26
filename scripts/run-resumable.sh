@@ -178,7 +178,7 @@ wake_lock=$wake_lock
 META
     atomic_write "$dir/state" "STARTING"
 
-    nohup setsid flock -n "$dir/lock" "$SELF" __worker "$dir" "$wake_lock" -- "$@" \
+    nohup setsid flock -n "$dir/lock" "${BASH:-bash}" "$SELF" __worker "$dir" "$wake_lock" -- "$@" \
         </dev/null >>"$dir/log" 2>&1 &
     local launcher_pid=$!
     atomic_write "$dir/pid" "$launcher_pid"

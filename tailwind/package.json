@@ -2,7 +2,7 @@
   "name": "mcp-gateway-tailwind",
   "private": true,
   "scripts": {
-    "build": "npx tailwindcss -i ./input.css -o ../src/mcp_gateway/web/static/app.css --minify"
+    "build": "node ./node_modules/tailwindcss/lib/cli.js -i ./input.css -o ../src/mcp_gateway/web/static/app.css --minify"
   },
   "devDependencies": {
     "tailwindcss": "^3.4.1"

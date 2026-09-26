@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Login - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="flex min-h-[calc(100vh-2.5rem)] items-center justify-center py-4">
+  <div class="card w-full max-w-md space-y-6 p-6 shadow-2xl sm:p-8">
+    <div class="text-center space-y-2">
+      <div class="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white text-xl mx-auto shadow-lg">
+        π
+      </div>
+      <h1 class="text-xl font-bold tracking-tight text-white">MCP Gateway Console</h1>
+      <p class="text-xs text-slate-400">Authenticated Access Required</p>
+    </div>
+
+    {% if error %}
+    <div class="p-3 bg-rose-950/80 border border-rose-800 text-rose-300 text-sm rounded-lg">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="POST" action="{% if next %}{{ url_for('auth.login', next) }}{% else %}{{ url_for('auth.login') }}{% endif %}" class="space-y-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div>
+        <label for="username" class="block text-xs font-medium text-slate-300 mb-1">Username</label>
+        <input type="text" id="username" name="username" required autofocus autocomplete="username" class="field">
+      </div>
+      <div>
+        <label for="password" class="block text-xs font-medium text-slate-300 mb-1">Password</label>
+        <input type="password" id="password" name="password" required autocomplete="current-password" class="field">
+      </div>
+      <button type="submit" class="btn-primary w-full">
+        Sign In
+      </button>
+    </form>
+    <div class="text-center text-xs text-slate-500">
+      Authenticated admin endpoint &bull; {{ request.host }}
+    </div>
+  </div>
+</div>
+{% endblock %}

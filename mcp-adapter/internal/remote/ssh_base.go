@@ -3,6 +3,7 @@ package remote
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -69,20 +70,34 @@ func (s *SSHTransport) RunCommand(
 	}
 
 	fullCommand := command
-	if strings.TrimSpace(options.CWD) != "" {
-		if strings.EqualFold(strings.TrimSpace(target.Platform), "windows") {
-			bootstrap := "import os, subprocess, sys\n" +
+	if strings.EqualFold(strings.TrimSpace(target.Platform), "windows") {
+		if strings.TrimSpace(options.CWD) != "" || len(options.Env) > 0 {
+			envJSON, _ := json.Marshal(options.Env)
+			bootstrap := "import json, os, subprocess, sys\n" +
 				"command = sys.argv[1]\n" +
 				"cwd = sys.argv[2]\n" +
+				"env = json.loads(sys.argv[3])\n" +
 				"if cwd:\n    os.chdir(cwd)\n" +
+				"if env:\n    os.environ.update(env)\n" +
 				"sys.exit(subprocess.run(command, shell=True).returncode)\n"
 			var err error
-			fullCommand, err = buildRemotePythonCommand(bootstrap, []string{command, options.CWD})
+			fullCommand, err = buildRemotePythonCommand(bootstrap, []string{command, options.CWD, string(envJSON)})
 			if err != nil {
 				return CommandResult{}, err
 			}
-		} else {
-			fullCommand = "cd " + shellQuote(options.CWD) + " && " + command
+		}
+	} else {
+		var prefixes []string
+		for k, v := range options.Env {
+			if isSafeEnvIdentifier(k) {
+				prefixes = append(prefixes, fmt.Sprintf("export %s=%s;", k, shellQuote(v)))
+			}
+		}
+		if strings.TrimSpace(options.CWD) != "" {
+			prefixes = append(prefixes, "cd "+shellQuote(options.CWD)+" &&")
+		}
+		if len(prefixes) > 0 {
+			fullCommand = strings.Join(prefixes, " ") + " " + command
 		}
 	}
 
@@ -239,5 +254,21 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *limitedBuffer) Bytes() []byte { return b.data }
+
+func isSafeEnvIdentifier(key string) bool {
+	if len(key) == 0 {
+		return false
+	}
+	for i, r := range key {
+		if r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
 
 var _ Transport = (*SSHTransport)(nil)

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{% if is_edit %}Edit Project{% else %}Add Project{% endif %} - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+  <div class="page-header">
+    <h1 class="page-title">
+      {% if is_edit %}Edit Project: {{ project.id }}{% else %}Add Project to Target{% endif %}
+    </h1>
+    <a href="{{ url_for('admin.projects_list') }}" class="btn-secondary w-full sm:w-auto">
+      &larr; Back to Projects
+    </a>
+  </div>
+
+  <form method="POST" class="card space-y-5 p-4 sm:p-6">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    {% if not is_edit %}
+    <div>
+      <label for="project-target" class="field-label">Target Host</label>
+      <select id="project-target" name="target_id" required class="field font-mono">
+        {% for t in targets %}
+          <option value="{{ t.id }}" {% if project and project.target_id == t.id %}selected{% endif %}>{{ t.id }} ({{ t.platform }})</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label for="project-id" class="field-label">Project ID (identifier)</label>
+      <input id="project-id" type="text" name="id" value="{% if project %}{{ project.id }}{% endif %}" required class="field font-mono" placeholder="e.g. MCP_Local">
+    </div>
+    {% endif %}
+
+    <div>
+      <label for="project-display-name" class="field-label">Display Name</label>
+      <input id="project-display-name" type="text" name="display_name" value="{% if project %}{{ project.display_name }}{% endif %}" class="field" placeholder="e.g. Core Gateway Codebase">
+    </div>
+
+    <div>
+      <label for="project-root" class="field-label">Root Directory Path (Absolute)</label>
+      <input id="project-root" type="text" name="root" value="{% if project %}{{ project.root }}{% endif %}" required class="field font-mono" placeholder="/data/data/com.termux/files/home/Projects/..." aria-describedby="project-root-help">
+      <p id="project-root-help" class="field-help">All file operations are strictly confined within this canonical root.</p>
+    </div>
+
+    <div class="space-y-2 pt-2">
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="read" name="read" class="rounded bg-slate-900 border-slate-800 text-indigo-600 focus:ring-indigo-500" {% if not project or project.read %}checked{% endif %}>
+        <label for="read" class="text-xs text-slate-300">Allow Read Operations (file_stat, read_file, list_directory)</label>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="write" name="write" class="rounded bg-slate-900 border-slate-800 text-amber-600 focus:ring-amber-500" {% if project and project.write %}checked{% endif %}>
+        <label for="write" class="text-xs text-amber-300">Allow Structured File Writes (write/append/delete/copy/move/mkdir)</label>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="enabled" name="enabled" class="rounded bg-slate-900 border-slate-800 text-indigo-600 focus:ring-indigo-500" {% if not project or project.enabled %}checked{% endif %}>
+        <label for="enabled" class="text-xs text-slate-300">Project is Enabled</label>
+      </div>
+    </div>
+
+    <div class="flex flex-col-reverse gap-3 border-t border-slate-800 pt-5 sm:flex-row sm:justify-end">
+      <a href="{{ url_for('admin.projects_list') }}" class="btn-secondary">
+        Cancel
+      </a>
+      <button type="submit" class="btn-primary">
+        Save Project
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
