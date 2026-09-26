@@ -1,0 +1,40 @@
+{
+  "health_semantic": {
+    "ok": true,
+    "result": {
+      "config_loaded": true,
+      "configured_targets": 1,
+      "gateway_enabled": true,
+      "gateway_status": "ok",
+      "gateway_version": "1.4.0",
+      "shell_enabled": false,
+      "writes_enabled": false
+    },
+    "runtime_fields": [
+      "architecture",
+      "hostname",
+      "python_version"
+    ],
+    "tool": "health"
+  },
+  "list_targets": {
+    "ok": true,
+    "result": {
+      "targets": [
+        {
+          "display_name": "Target",
+          "enabled": true,
+          "id": "t",
+          "platform": "linux",
+          "privilege_policy": "never",
+          "project_count": 1,
+          "projects": [
+            "p"
+          ]
+        }
+      ]
+    },
+    "tool": "list_targets"
+  },
+  "schema": 1
+}
