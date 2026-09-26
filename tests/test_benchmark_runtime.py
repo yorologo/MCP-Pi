@@ -29,6 +29,22 @@ class BenchmarkRuntimeTests(unittest.TestCase):
         self.assertEqual(result["p50_ms"], 2.0)
         self.assertEqual(result["max_ms"], 3.0)
 
+    def test_adapter_health_ready_matches_runtime_shape(self):
+        payload = {
+            "adapter_status": "ready",
+            "ready": True,
+            "core_health": {"ok": True, "tool": "health"},
+        }
+        self.assertTrue(benchmark_runtime.adapter_health_ready(payload))
+        self.assertFalse(
+            benchmark_runtime.adapter_health_ready(
+                {**payload, "core_health": {"ok": False}}
+            )
+        )
+        self.assertFalse(
+            benchmark_runtime.adapter_health_ready({**payload, "ready": False})
+        )
+
     def test_decision_inputs_decomposes_bridge_tax(self):
         results = {
             "python_startup": {"ok": True, "p50_ms": 20.0},

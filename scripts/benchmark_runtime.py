@@ -108,17 +108,34 @@ def command_runner(
     return run
 
 
-def http_runner(url: str, *, expect_json_ok: bool = False) -> Callable[[], bytes]:
+def adapter_health_ready(payload: dict[str, Any]) -> bool:
+    core_health = payload.get("core_health")
+    return (
+        payload.get("ready") is True
+        and payload.get("adapter_status") == "ready"
+        and isinstance(core_health, dict)
+        and core_health.get("ok") is True
+    )
+
+
+def http_runner(
+    url: str,
+    *,
+    expect_json_ok: bool = False,
+    expect_adapter_ready: bool = False,
+) -> Callable[[], bytes]:
     def run() -> bytes:
         request = Request(url, headers={"Accept": "application/json"})
         with urlopen(request, timeout=30) as response:
             body = response.read()
             if response.status != 200:
                 raise RuntimeError(f"{url} returned HTTP {response.status}")
-        if expect_json_ok:
+        if expect_json_ok or expect_adapter_ready:
             payload = json.loads(body)
-            if payload.get("ok") is not True:
+            if expect_json_ok and payload.get("ok") is not True:
                 raise RuntimeError(f"{url} returned non-ok payload: {payload}")
+            if expect_adapter_ready and not adapter_health_ready(payload):
+                raise RuntimeError(f"{url} returned non-ready adapter health: {payload}")
         return body
 
     return run
@@ -405,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
             "adapter_health_http",
             http_runner(
                 f"{args.http_base.rstrip('/')}/health",
-                expect_json_ok=True,
+                expect_adapter_ready=True,
             ),
         ),
     ]
