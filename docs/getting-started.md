@@ -7,7 +7,7 @@ This is the shortest supported path from a release bundle to a working MCP-Pi ap
 Recommended/validated appliance:
 
 - Linux with `systemd`;
-- Python 3.9+;
+- Python 3.11+;
 - administrative account with `sudo`/root access;
 - network access to the Target(s) you intend to manage.
 

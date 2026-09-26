@@ -65,7 +65,7 @@ required_source() {
 }
 
 python_ok() {
-    python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1
+    python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1
 }
 
 python_deps_ok() {
@@ -138,7 +138,7 @@ validate_adapter() {
 validate_source() {
     required_source
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
-    python_ok || fail "Python 3.9 or higher is required"
+    python_ok || fail "Python 3.11 or higher is required"
     python_deps_ok || fail "Python runtime dependencies are missing; install requirements.txt"
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/mcp-install-check.XXXXXX")
     trap 'rm -rf "$tmp"' 0 HUP INT TERM
@@ -266,7 +266,7 @@ command -v python3 >/dev/null 2>&1 || {
         fail "python3 is required"
     fi
 }
-python_ok || fail "Python 3.9 or higher is required"
+python_ok || fail "Python 3.11 or higher is required"
 install_python_deps_if_needed
 
 arch=$(uname -m)

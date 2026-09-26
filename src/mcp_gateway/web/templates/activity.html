@@ -5,10 +5,70 @@
   <div class="page-header">
     <div>
       <h1 class="page-title">Activity Audit Log</h1>
-      <p class="page-description">Immutable execution and access trail (Page {{ page }} of {{ total_pages }}, {{ total }} entries total)</p>
+      <p class="page-description">Immutable execution and access trail</p>
     </div>
+    {% if page == 1 %}
+      {% if live %}
+      <a href="{{ pause_live_url }}" class="btn-secondary" aria-pressed="true">Pause LIVE</a>
+      {% else %}
+      <a href="{{ live_url }}" class="btn-secondary" aria-pressed="false">● LIVE</a>
+      {% endif %}
+    {% endif %}
   </div>
 
+  <form method="GET" action="{{ url_for('admin.activity_view') }}" class="card grid grid-cols-1 gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+    <div>
+      <label class="field-label" for="activity-actor">Actor contains</label>
+      <input id="activity-actor" class="field" name="actor" value="{{ filters.actor }}" placeholder="admin, client id...">
+    </div>
+    <div>
+      <label class="field-label" for="activity-action">Action contains</label>
+      <input id="activity-action" class="field font-mono" name="action" value="{{ filters.action }}" placeholder="write, grant, target...">
+    </div>
+    <div>
+      <label class="field-label" for="activity-target">Target</label>
+      <input id="activity-target" class="field font-mono" name="target_id" value="{{ filters.target_id }}" placeholder="termux-main">
+    </div>
+    <div>
+      <label class="field-label" for="activity-project">Project</label>
+      <input id="activity-project" class="field font-mono" name="project_id" value="{{ filters.project_id }}" placeholder="MCP_Local">
+    </div>
+    <div>
+      <label class="field-label" for="activity-result">Result</label>
+      <select id="activity-result" class="field" name="result">
+        <option value="">Any result</option>
+        <option value="pass" {% if filters.result == 'pass' %}selected{% endif %}>PASS</option>
+        <option value="deny" {% if filters.result == 'deny' %}selected{% endif %}>DENY</option>
+      </select>
+    </div>
+    <div>
+      <label class="field-label" for="activity-from">From (UTC)</label>
+      <input id="activity-from" class="field" type="datetime-local" name="from" value="{{ filters['from'] }}">
+    </div>
+    <div>
+      <label class="field-label" for="activity-to">To (UTC)</label>
+      <input id="activity-to" class="field" type="datetime-local" name="to" value="{{ filters.to }}">
+    </div>
+    <div class="flex items-end gap-2">
+      <button type="submit" class="btn-primary">Apply filters</button>
+      <a href="{{ url_for('admin.activity_view') }}" class="btn-secondary">Clear</a>
+    </div>
+  </form>
+
+  <div id="activity-results"
+       class="space-y-4"
+       {% if live %}
+       hx-get="{{ request.full_path }}"
+       hx-trigger="every 3s"
+       hx-select="#activity-results"
+       hx-target="#activity-results"
+       hx-swap="outerHTML show:none"
+       hx-sync="this:drop"
+       {% endif %}>
+    <p class="text-sm text-slate-400">
+      Page {{ page }} of {{ total_pages }} · {{ total }} matching {{ 'entry' if total == 1 else 'entries' }}
+      {% if live %}<span class="ml-2 text-emerald-300">LIVE</span>{% endif %}
+    </p>
   <div class="table-region" role="region" aria-label="Activity audit log" tabindex="0">
     <table class="data-table min-w-[64rem]">
       <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
@@ -37,9 +97,7 @@
               <span class="text-indigo-300">{{ a.action }}</span>
             {% endif %}
           </td>
-          <td class="py-3 px-4 text-slate-400">
-            {% if a.target_id %}{{ a.target_id }}{% if a.project_id %} / {{ a.project_id }}{% endif %}{% else %}&mdash;{% endif %}
-          </td>
+          <td class="py-3 px-4 text-slate-400">{% if a.target_id %}{{ a.target_id }}{% if a.project_id %} / {{ a.project_id }}{% endif %}{% else %}—{% endif %}</td>
           <td class="py-3 px-4">
             {% if a.success %}
               {% if 'write' in a.action or 'create' in a.action %}
@@ -53,35 +111,31 @@
               {% endif %}
             {% else %}
               <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950 text-rose-300 border border-rose-800">DENY</span>
-              {% if a.error_code %}
-                <span class="text-[10px] font-mono text-rose-400 ml-1">{{ a.error_code }}</span>
-              {% endif %}
+              {% if a.error_code %}<span class="text-[10px] font-mono text-rose-400 ml-1">{{ a.error_code }}</span>{% endif %}
             {% endif %}
           </td>
-          <td class="py-3 px-4 text-slate-400 truncate max-w-xs">{{ a.detail or '&mdash;' }}</td>
+          <td class="py-3 px-4 text-slate-400 truncate max-w-xs">{{ a.detail or '—' }}</td>
         </tr>
         {% else %}
-        <tr>
-          <td colspan="6" class="py-6 text-center text-slate-500">No activity recorded yet.</td>
-        </tr>
+        <tr><td colspan="6" class="py-6 text-center text-slate-500">No activity matches the current filters.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 
-  <!-- Pagination -->
   {% if total_pages > 1 %}
   <div class="flex flex-col gap-3 pt-2 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
     <div>Showing page {{ page }} of {{ total_pages }}</div>
     <div class="space-x-2">
       {% if page > 1 %}
-        <a href="{{ url_for('admin.activity_view', page=page-1) }}" class="btn-secondary">&larr; Previous</a>
+        <a href="{{ url_for('admin.activity_view', page=page-1, actor=filters.actor, action=filters.action, target_id=filters.target_id, project_id=filters.project_id, result=filters.result, from=filters['from'], to=filters.to) }}" class="btn-secondary">&larr; Previous</a>
       {% endif %}
       {% if page < total_pages %}
-        <a href="{{ url_for('admin.activity_view', page=page+1) }}" class="btn-secondary">Next &rarr;</a>
+        <a href="{{ url_for('admin.activity_view', page=page+1, actor=filters.actor, action=filters.action, target_id=filters.target_id, project_id=filters.project_id, result=filters.result, from=filters['from'], to=filters.to) }}" class="btn-secondary">Next &rarr;</a>
       {% endif %}
     </div>
   </div>
   {% endif %}
+  </div>
 </div>
 {% endblock %}

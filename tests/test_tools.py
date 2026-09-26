@@ -375,6 +375,10 @@ class TestGatewayTools(unittest.TestCase):
 
     def test_run_command_and_extended_fs_tools(self):
         self.tools._is_writes_enabled = lambda: True
+        self.tools._is_shell_enabled = lambda: True
+        self.tools._get_setting = lambda key, default=None: (
+            "true" if key in {"writes_enabled", "shell_enabled"} else default
+        )
         self.config._data["targets"]["mock-target"]["projects"]["mock-proj"]["write"] = True
 
         # run_command default cwd
@@ -498,6 +502,7 @@ class TestGatewayTools(unittest.TestCase):
     def test_privileged_run_requires_explicit_target_admin_even_with_wildcard(self):
         self.config._data["targets"]["mock-target"]["privilege_policy"] = "always_allow"
         registry = JsonRegistry(self.config)
+        registry.set_setting("shell_enabled", "true")
         registry.add_client({"id": "c1", "enabled": True})
         registry.add_grant({
             "client_id": "c1",
@@ -1073,6 +1078,9 @@ class TestGatewayTools(unittest.TestCase):
 
     def test_structured_mutations_fail_closed_on_destination_symlink_escapes(self):
         self.tools._is_writes_enabled = lambda: True
+        self.tools._get_setting = lambda key, default=None: (
+            "true" if key == "writes_enabled" else default
+        )
         self.config._data["targets"]["mock-target"]["projects"]["mock-proj"]["write"] = True
 
         cases = [

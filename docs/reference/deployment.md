@@ -14,7 +14,7 @@ The Admin Console LAN binding is deliberate. The service remains `User=mcp-gatew
 
 ## Local prerequisites
 
-- Python 3.9+
+- Python 3.11+
 - Node.js/npm only for rebuilding Tailwind CSS
 - `ssh`, `scp`, `tar`, `sha256sum` and an authorized SSH key (default: `~/.ssh/id_rsa`)
 - Go only when rebuilding the MCP adapter

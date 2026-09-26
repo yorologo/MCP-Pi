@@ -13,14 +13,14 @@
   </div>
 
   <div class="table-region" role="region" aria-label="Configured SSH targets" tabindex="0">
-    <table class="data-table min-w-[48rem]">
+    <table class="data-table w-full" data-admin-table data-search-label="Filter targets...">
       <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
         <tr>
-          <th class="py-3 px-4">Target ID</th>
-          <th class="py-3 px-4">Platform</th>
-          <th class="py-3 px-4">Projects</th>
-          <th class="py-3 px-4">Privilege</th>
-          <th class="py-3 px-4">Status</th>
+          <th class="py-3 px-4" data-sort-key="target">Target ID</th>
+          <th class="py-3 px-4" data-sort-key="platform">Platform</th>
+          <th class="py-3 px-4" data-sort-key="projects" data-sort-type="number">Projects</th>
+          <th class="py-3 px-4" data-sort-key="privilege">Privilege</th>
+          <th class="py-3 px-4" data-sort-key="status">Status</th>
           <th class="py-3 px-4 text-right">Actions</th>
         </tr>
       </thead>
@@ -34,10 +34,10 @@
             {% endif %}
           </td>
           <td class="py-3 px-4">{{ t.platform }}</td>
-          <td class="py-3 px-4">
-            <span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[11px]">
-              {{ t.project_count }} projects
-            </span>
+          <td class="py-3 px-4" data-sort-value="{{ t.project_count }}">
+            <a href="{{ url_for('admin.projects_list', target=t.id) }}" class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[11px] hover:bg-slate-700">
+              {{ t.project_count }} {{ 'project' if t.project_count == 1 else 'projects' }}
+            </a>
           </td>
           <td class="py-3 px-4">
             <span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[11px]">

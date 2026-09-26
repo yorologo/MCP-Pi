@@ -164,14 +164,14 @@ class GatewayTools:
 
     def _is_shell_enabled(self) -> bool:
         if hasattr(self.config, "get_setting"):
-            val = self.config.get_setting("shell_enabled", "true")
+            val = self.config.get_setting("shell_enabled", "false")
             if isinstance(val, bool):
                 return val
             if isinstance(val, str):
                 return val.lower() in ("true", "1", "yes", "on")
             if val is not None:
                 return bool(val)
-        return True
+        return False
 
     def _get_setting(self, key: str, default: Any = None) -> Any:
         if hasattr(self.config, "get_setting"):
@@ -2168,7 +2168,7 @@ class GatewayTools:
         if gw_check:
             return gw_check
 
-        writes_enabled = str(self._get_setting("writes_enabled", "true")).lower() == "true"
+        writes_enabled = str(self._get_setting("writes_enabled", "false")).lower() == "true"
         if not writes_enabled:
             return self._error_response("append_file", "WRITES_DISABLED", "Controlled writes are disabled", target, project, start_time)
 
@@ -2248,7 +2248,7 @@ class GatewayTools:
         if gw_check:
             return gw_check
 
-        writes_enabled = str(self._get_setting("writes_enabled", "true")).lower() == "true"
+        writes_enabled = str(self._get_setting("writes_enabled", "false")).lower() == "true"
         if not writes_enabled:
             return self._error_response("delete_file", "WRITES_DISABLED", "Controlled writes are disabled", target, project, start_time)
 
@@ -2319,7 +2319,7 @@ class GatewayTools:
         if gw_check:
             return gw_check
 
-        writes_enabled = str(self._get_setting("writes_enabled", "true")).lower() == "true"
+        writes_enabled = str(self._get_setting("writes_enabled", "false")).lower() == "true"
         if not writes_enabled:
             return self._error_response("copy_file", "WRITES_DISABLED", "Controlled writes are disabled", target, project, start_time)
 
@@ -2388,7 +2388,7 @@ class GatewayTools:
         if gw_check:
             return gw_check
 
-        writes_enabled = str(self._get_setting("writes_enabled", "true")).lower() == "true"
+        writes_enabled = str(self._get_setting("writes_enabled", "false")).lower() == "true"
         if not writes_enabled:
             return self._error_response("move_file", "WRITES_DISABLED", "Controlled writes are disabled", target, project, start_time)
 
@@ -2457,7 +2457,7 @@ class GatewayTools:
         if gw_check:
             return gw_check
 
-        writes_enabled = str(self._get_setting("writes_enabled", "true")).lower() == "true"
+        writes_enabled = str(self._get_setting("writes_enabled", "false")).lower() == "true"
         if not writes_enabled:
             return self._error_response("mkdir", "WRITES_DISABLED", "Controlled writes are disabled", target, project, start_time)
 

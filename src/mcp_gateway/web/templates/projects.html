@@ -12,14 +12,21 @@
     </a>
   </div>
 
+  {% if target_filter %}
+  <div class="flex items-center justify-between rounded border border-indigo-900/60 bg-indigo-950/20 px-4 py-3 text-sm text-indigo-200">
+    <span>Showing projects for Target <code>{{ target_filter }}</code></span>
+    <a href="{{ url_for('admin.projects_list') }}" class="btn-secondary">Clear Target filter</a>
+  </div>
+  {% endif %}
+
   <div class="table-region" role="region" aria-label="Scoped projects" tabindex="0">
-    <table class="data-table min-w-[56rem]">
+    <table class="data-table w-full" data-admin-table data-search-label="Filter projects...">
       <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
         <tr>
-          <th class="py-3 px-4">Target / Project ID</th>
-          <th class="py-3 px-4">Root Path</th>
-          <th class="py-3 px-4">Permissions</th>
-          <th class="py-3 px-4">Status</th>
+          <th class="py-3 px-4" data-sort-key="project">Target / Project ID</th>
+          <th class="py-3 px-4" data-sort-key="root">Root Path</th>
+          <th class="py-3 px-4" data-sort-key="permissions">Permissions</th>
+          <th class="py-3 px-4" data-sort-key="status">Status</th>
           <th class="py-3 px-4 text-right">Actions</th>
         </tr>
       </thead>

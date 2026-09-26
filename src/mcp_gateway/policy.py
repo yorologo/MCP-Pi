@@ -377,7 +377,7 @@ def authorize_client(
 
     # 6. Dedicated trusted target-shell kill switch. Grants are checked first to avoid state leaks.
     if tool_name == "run_command" and hasattr(registry, "get_setting"):
-        shell_enabled = registry.get_setting("shell_enabled", "true")
+        shell_enabled = registry.get_setting("shell_enabled", "false")
         if str(shell_enabled).lower() != "true":
             return False, "TARGET_SHELL_DISABLED: Trusted target shell execution is disabled"
 
@@ -408,7 +408,7 @@ def authorize_client(
     # 9. Check write policy if tool is mutating
     if tool_name in ("write_file", "append_file", "delete_file", "copy_file", "move_file", "mkdir"):
         if hasattr(registry, "get_setting"):
-            writes_enabled = registry.get_setting("writes_enabled", "true")
+            writes_enabled = registry.get_setting("writes_enabled", "false")
             if str(writes_enabled).lower() != "true":
                 return False, "WRITES_DISABLED: Global writes are disabled"
         if target_id and project_id and hasattr(registry, "get_project"):

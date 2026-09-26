@@ -40,11 +40,17 @@ sudo -u mcp-gateway mcp-gateway setup
 - **Clients** — AI client identities, effective capabilities and per-client Grant management.
   - **Grants** — list, create, edit, enable/disable and delete Target/Project capability grants.
   - **Check Effective Access** — evaluate a selected tool through the real `authorize_client()` Policy Engine before relying on a grant.
-- **Activity** — audit records.
+- **Activity** — server-side audit filtering by actor, action, Target, Project, result and UTC time range.
 - **System** — runtime/hardware information.
 - **Settings** — limits and kill switches.
 - **Maintenance** — Doctor, backup and safe maintenance actions.
 
+
+## Administrative tables
+
+Targets, Projects, AI Clients and Client Grants share one lightweight progressive-enhancement pattern. Column headings support ascending, descending and original-order sorting, and a local search box filters the rows already rendered on that page. The underlying Registry queries also define a deterministic default order.
+
+The Target project count links directly to Projects with that Target filter applied. Activity is intentionally different: its dataset is unbounded, so filtering and pagination stay server-side rather than loading the complete audit log into the browser. On page 1, LIVE mode is an explicit URL state and reuses the vendored HTMX runtime for three-second polling. The refreshed region uses a no-scroll swap so polling does not move the operator's viewport; Pause LIVE returns to the normal static page.
 
 ## Client grants
 
@@ -54,7 +60,7 @@ Open **AI Clients → Grants** for a client. Each grant reuses the existing Regi
 Client → Target → Project → Capability → Enabled
 ```
 
-Prefer the narrowest scope that meets the need. `*` is supported for compatibility and deliberate broad access, but a fully global wildcard grant or a global `target_admin` grant requires explicit confirmation in the UI. The page supports create/edit/enable/disable/delete without direct SQLite access.
+Prefer the narrowest scope that meets the need. The form presents ordinary capabilities separately from Target shell and Target admin privileges while preserving the existing Registry representation internally. The wildcard means all compatible ordinary capabilities and never implies Target admin. The grant list marks wildcard/admin grants and provides a High impact only view. `*` is supported for compatibility and deliberate broad access, but a fully global wildcard grant or a global `target_admin` grant requires explicit confirmation in the UI. The page supports create/edit/enable/disable/delete without direct SQLite access.
 
 **Check Effective Access** calls the same `authorize_client()` function used by MCP discovery/execution, so results include grants plus client/Target/Project state and global kill switches. It does not maintain a parallel permission model.
 
@@ -88,7 +94,9 @@ For arbitrary `run_command` access, MCP-Pi also treats the normal SSH account as
 - `mcp-gateway` service user;
 - only `CAP_NET_BIND_SERVICE` for TCP/80 when needed.
 
-`gateway_enabled`, `writes_enabled` and `shell_enabled` are independent operational switches. See [security.md](security.md).
+`gateway_enabled`, `writes_enabled` and `shell_enabled` are independent operational switches. Security-expanding Admin changes require a durable audit attempt before mutation. Defensive actions such as disabling global writes/shell, disabling a Project/Target/client or revoking access remain available when the audit sink is degraded so an audit outage cannot prevent containment.
+
+See [security.md](security.md).
 
 ## Frontend development
 

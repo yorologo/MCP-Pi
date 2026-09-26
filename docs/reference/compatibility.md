@@ -14,7 +14,7 @@
 | MCP SDK | Go SDK `1.7.0` |
 | MCP protocol | `2026-07-28` |
 | Legacy MCP protocol | `2025-11-25` |
-| Python | `3.9+` |
+| Python | `3.11+` |
 | Declared architectures | `armv6l`, `aarch64`, `x86_64` |
 
 The current deterministic Core catalog contains **21 tools**. Catalog v4 keeps the same names but extends the `run_command` input contract with the explicit `privilege=standard|required` field, so schema-aware clients can distinguish it from v3. Client-visible `tools/list` may contain fewer because policy/grants filter the catalog.

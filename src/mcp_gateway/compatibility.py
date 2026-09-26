@@ -18,7 +18,7 @@ _DEFAULT_COMPATIBILITY: Dict[str, Any] = {
         "protocol_legacy": "2025-11-25",
     },
     "runtime": {
-        "python": "3.9+",
+        "python": "3.11+",
         "architecture": ["armv6l", "aarch64", "x86_64"],
     },
 }

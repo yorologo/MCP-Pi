@@ -10,6 +10,19 @@ permissions:
   contents: read
 
 jobs:
+  python-minimum:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Python 3.11 compatibility tests
+        run: PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py'
+
   validate:
     runs-on: ubuntu-latest
     steps:
@@ -37,6 +50,11 @@ jobs:
           GOARM: '6'
           CGO_ENABLED: '0'
         run: go build -trimpath -o "$RUNNER_TEMP/mcp-gateway-adapter-armv6" .
+      - name: Shell static analysis
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck install.sh scripts/*.sh
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -63,7 +81,6 @@ jobs:
           tar -tzf "$pkg" | grep -q '/bin/mcp-gateway-adapter$'
           tar -tzf "$pkg" | grep -q '/install.sh$'
           sha256sum "$pkg"
-
 
   windows-transport:
     runs-on: windows-latest

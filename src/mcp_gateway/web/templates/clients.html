@@ -13,15 +13,15 @@
   </div>
 
   <div class="table-region" role="region" aria-label="Registered AI clients" tabindex="0">
-    <table class="data-table min-w-[52rem]">
+    <table class="data-table w-full" data-admin-table data-search-label="Filter AI clients...">
       <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
         <tr>
-          <th class="py-3 px-4">Client ID</th>
-          <th class="py-3 px-4">Display Name</th>
-          <th class="py-3 px-4">Provider</th>
-          <th class="py-3 px-4">Protocol</th>
-          <th class="py-3 px-4">Status</th>
-          <th class="py-3 px-4">Effective Capabilities</th>
+          <th class="py-3 px-4" data-sort-key="client">Client ID</th>
+          <th class="py-3 px-4" data-sort-key="name">Display Name</th>
+          <th class="py-3 px-4" data-sort-key="provider">Provider</th>
+          <th class="py-3 px-4" data-sort-key="protocol">Protocol</th>
+          <th class="py-3 px-4" data-sort-key="status">Status</th>
+          <th class="py-3 px-4" data-sort-key="capabilities">Effective Capabilities</th>
           <th class="py-3 px-4 text-right">Actions</th>
         </tr>
       </thead>
@@ -30,8 +30,8 @@
         <tr class="hover:bg-slate-900/40">
           <td class="py-3 px-4 font-mono font-medium text-white">{{ c.id }}</td>
           <td class="py-3 px-4">{{ c.display_name }}</td>
-          <td class="py-3 px-4">{{ c.provider or '&mdash;' }}</td>
-          <td class="py-3 px-4 font-mono text-indigo-300">{{ c.protocol }}</td>
+          <td class="py-3 px-4">{{ c.provider or '—' }}</td>
+          <td class="max-w-xs break-words py-3 px-4 font-mono text-indigo-300">{{ c.protocol }}</td>
           <td class="py-3 px-4">
             {% if c.enabled %}
               <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">ENABLED</span>

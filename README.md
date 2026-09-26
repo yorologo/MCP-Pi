@@ -22,7 +22,7 @@ flowchart LR
 | Tool catalog | v4 / 21 tools |
 | Registry schema | 4 |
 | MCP protocol | `2026-07-28` |
-| Python | 3.9+ |
+| Python | 3.11+ |
 
 `main` is the stable release branch and `develop` remains the integration branch. The current published release is `v1.4.0`.
 

@@ -28,16 +28,14 @@ def get_or_create_secret_key(secret_file: Optional[str] = None) -> str:
                 return key
 
     key = secrets.token_hex(32)
-    try:
-        os.makedirs(os.path.dirname(secret_file), exist_ok=True)
-        # Create with 600 permissions
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        mode = 0o600
-        fd = os.open(secret_file, flags, mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(key)
-    except Exception:
-        pass  # In test/sandbox environments, fallback to in-memory key
+    secret_dir = os.path.dirname(os.path.abspath(secret_file))
+    os.makedirs(secret_dir, exist_ok=True)
+    # Create with 600 permissions. Runtime startup fails closed if persistence fails.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    mode = 0o600
+    fd = os.open(secret_file, flags, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(key)
     return key
 
 

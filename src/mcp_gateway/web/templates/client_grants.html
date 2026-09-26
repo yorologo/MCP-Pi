@@ -25,7 +25,7 @@
       {% if editing_grant %}<a href="{{ url_for('admin.client_grants', client_id=client.id) }}" class="btn-secondary">Cancel edit</a>{% endif %}
     </div>
 
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div>
         <label for="grant-target" class="field-label">Target</label>
         <select id="grant-target" name="target_id" class="field font-mono" required>
@@ -43,23 +43,55 @@
           {% for project in projects %}<option value="{{ project.id }}" {% if selected_project == project.id %}selected{% endif %}>{{ project.target_id }} / {{ project.id }}{% if not project.enabled %} (disabled){% endif %}</option>{% endfor %}
         </select>
       </div>
-      <div>
-        <label for="grant-capability" class="field-label">Capability</label>
-        <input id="grant-capability" name="capability" class="field font-mono" list="grant-capability-options" required value="{{ editing_grant.capability if editing_grant else 'read' }}">
-        <datalist id="grant-capability-options">
-          {% for value, label in common_capabilities %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-          {% for value in specific_capabilities %}<option value="{{ value }}">Specific tool capability</option>{% endfor %}
-        </datalist>
-        <p class="mt-1 text-xs text-slate-500">Known capabilities only; comma-separated values are supported for compatibility. Privileged Target execution requires an explicit <code>target_admin</code> grant; <code>*</code> does not imply that new privilege.</p>
-      </div>
     </div>
+
+    <fieldset class="rounded border border-slate-800 p-4">
+      <legend class="px-2 text-sm font-semibold text-slate-200">Capabilities</legend>
+      <p class="mb-3 text-xs text-slate-500">Choose ordinary MCP capabilities. <code>*</code> means all compatible ordinary capabilities, but never implies <code>target_admin</code>.</p>
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {% for value, label in common_capabilities %}
+        <label class="inline-flex items-center gap-2 text-sm {% if value == '*' %}text-amber-300{% else %}text-slate-300{% endif %}">
+          <input type="checkbox" name="capabilities" value="{{ value }}" class="rounded" {% if value in selected_capabilities %}checked{% endif %}>
+          <span>{{ label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      {% if specific_capabilities %}
+      <details class="mt-4">
+        <summary class="cursor-pointer text-xs text-slate-400">Specific tool capabilities</summary>
+        <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {% for value in specific_capabilities %}
+          <label class="inline-flex items-center gap-2 text-xs text-slate-400">
+            <input type="checkbox" name="capabilities" value="{{ value }}" class="rounded" {% if value in selected_capabilities %}checked{% endif %}>
+            <code>{{ value }}</code>
+          </label>
+          {% endfor %}
+        </div>
+      </details>
+      {% endif %}
+    </fieldset>
+
+    <fieldset class="rounded border border-amber-900/70 bg-amber-950/10 p-4">
+      <legend class="px-2 text-sm font-semibold text-amber-200">Target privileges</legend>
+      <div class="space-y-3">
+        <label class="flex items-start gap-3 text-sm text-slate-300">
+          <input type="checkbox" name="target_shell" class="mt-1 rounded" {% if 'target_shell' in selected_capabilities %}checked{% endif %}>
+          <span><strong>Target shell</strong><br><span class="text-xs text-slate-500">Allows trusted shell execution when the Target and global shell gate also allow it. Redundant when <code>*</code> is selected.</span></span>
+        </label>
+        <label class="flex items-start gap-3 text-sm text-amber-300">
+          <input type="checkbox" name="target_admin" class="mt-1 rounded" {% if 'target_admin' in selected_capabilities %}checked{% endif %}>
+          <span><strong>Target admin</strong><br><span class="text-xs text-slate-500">Explicit operating-system privilege. It is never implied by <code>*</code> and remains subject to Target privilege policy/approval.</span></span>
+        </label>
+      </div>
+    </fieldset>
 
     <div class="flex flex-wrap items-center gap-5">
       <label class="inline-flex items-center gap-2 text-sm text-slate-300">
         <input type="checkbox" name="enabled" class="rounded" {% if not editing_grant or editing_grant.enabled %}checked{% endif %}> Enabled
       </label>
-      <label class="inline-flex items-center gap-2 text-xs text-amber-300">
-        <input type="checkbox" name="confirm_global" class="rounded"> I understand that a global wildcard or global <code>target_admin</code> grant is high impact and applies across all configured Targets/Projects.
+      <label class="inline-flex items-start gap-2 text-xs text-amber-300">
+        <input type="checkbox" name="confirm_global" class="mt-0.5 rounded">
+        <span>I understand that a global wildcard or global <code>target_admin</code> grant is high impact and applies across all configured Targets/Projects.</span>
       </label>
     </div>
 
@@ -69,17 +101,29 @@
   </form>
 
   <div class="table-region" role="region" aria-label="Client grants" tabindex="0">
-    <table class="data-table min-w-[56rem]">
+    <table id="grants-table" class="data-table w-full" data-admin-table data-search-label="Filter grants..." data-high-impact-toggle="true">
       <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
-        <tr><th class="py-3 px-4">ID</th><th class="py-3 px-4">Target</th><th class="py-3 px-4">Project</th><th class="py-3 px-4">Capability</th><th class="py-3 px-4">Status</th><th class="py-3 px-4 text-right">Actions</th></tr>
+        <tr>
+          <th class="py-3 px-4" data-sort-key="id">ID</th>
+          <th class="py-3 px-4" data-sort-key="target">Target</th>
+          <th class="py-3 px-4" data-sort-key="project">Project</th>
+          <th class="py-3 px-4" data-sort-key="capability">Capability</th>
+          <th class="py-3 px-4" data-sort-key="status">Status</th>
+          <th class="py-3 px-4 text-right">Actions</th>
+        </tr>
       </thead>
       <tbody class="divide-y divide-slate-800 text-slate-300">
         {% for grant in grants %}
-        <tr class="hover:bg-slate-900/40">
+        {% set high_impact = '*' in grant.capability or 'target_admin' in grant.capability %}
+        <tr data-high-impact="{{ 'true' if high_impact else 'false' }}" class="hover:bg-slate-900/40 {% if high_impact %}bg-amber-950/10{% endif %}">
           <td class="py-3 px-4 font-mono">#{{ grant.id }}</td>
           <td class="py-3 px-4 font-mono">{{ grant.target_id }}</td>
           <td class="py-3 px-4 font-mono">{{ grant.project_id or '*' }}</td>
-          <td class="py-3 px-4 font-mono text-indigo-300">{{ grant.capability }}</td>
+          <td class="py-3 px-4 font-mono text-indigo-300">
+            {{ grant.capability }}
+            {% if '*' in grant.capability %}<span class="ml-1 rounded border border-amber-800 px-1.5 py-0.5 text-[10px] text-amber-300">WILDCARD</span>{% endif %}
+            {% if 'target_admin' in grant.capability %}<span class="ml-1 rounded border border-rose-800 px-1.5 py-0.5 text-[10px] text-rose-300">ADMIN</span>{% endif %}
+          </td>
           <td class="py-3 px-4">{% if grant.enabled %}<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">ENABLED</span>{% else %}<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950 text-rose-300 border border-rose-800">DISABLED</span>{% endif %}</td>
           <td class="py-3 px-4 text-right space-x-2">
             <form method="POST" action="{{ url_for('admin.client_grant_toggle', client_id=client.id, grant_id=grant.id) }}" class="inline">

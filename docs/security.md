@@ -116,7 +116,9 @@ The MCP adapter is loopback-first. Production cloud ingress, when used, occurs t
 
 ## Audit
 
-Critical mutations require the audit sink to be available before execution. If audit cannot be recorded where required, the operation must fail rather than execute silently.
+Security-expanding mutations require the audit sink to be available before execution. If the required attempt record cannot be persisted, the operation fails before changing authorization or operational scope.
+
+Fail closed does not mean trapping the operator in an unsafe state: defensive reductions such as disabling writes/shell, disabling a Target/Project/client or revoking a grant remain available when the audit sink is degraded. Their result audit remains best-effort in that degraded condition.
 
 Activity records include actor, Target/Project scope, action, success/failure and request correlation metadata; secrets should not be logged.
 

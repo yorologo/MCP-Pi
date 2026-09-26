@@ -8,6 +8,7 @@ import socket
 import sys
 import time
 from typing import Any, Dict
+from urllib.parse import urlsplit
 from flask import (
     Blueprint,
     abort,
@@ -51,6 +52,25 @@ def get_tools():
 
 
 ALWAYS_ALLOW_CONFIRM_TTL_SECONDS = 300
+
+
+def _safe_local_redirect(value: str):
+    """Return a same-origin absolute path or None."""
+    value = str(value or "").strip()
+    if not value or "\\" in value or "\r" in value or "\n" in value:
+        return None
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return None
+    if (
+        parsed.scheme
+        or parsed.netloc
+        or not parsed.path.startswith("/")
+        or parsed.path.startswith("//")
+    ):
+        return None
+    return value
 
 
 def _target_privilege_scopes(target_id: str):
@@ -169,10 +189,8 @@ def login():
     registry.update_admin_login(username)
     record_audit("admin_login_success", success=True, detail=f"Admin '{username}' logged in")
 
-    next_url = request.args.get("next")
-    if next_url and next_url.startswith("/"):
-        return redirect(next_url)
-    return redirect(url_for("admin.dashboard"))
+    next_url = _safe_local_redirect(request.args.get("next"))
+    return redirect(next_url or url_for("admin.dashboard"))
 
 
 @auth_bp.route("/logout", methods=["POST"])
@@ -306,6 +324,13 @@ def target_add():
                 required=True,
             )
         registry = get_registry()
+        if data["enabled"]:
+            record_audit(
+                "add_target_attempt",
+                target_id=data["id"],
+                detail=f"Add enabled target '{data['id']}'",
+                required=True,
+            )
         registry.add_target(data)
         record_audit("add_target", target_id=data["id"], success=True, detail=f"Added target '{data['id']}'")
         flash(f"Target '{data['id']}' created successfully.", "success")
@@ -320,17 +345,9 @@ def target_add():
 def target_edit(target_id: str):
     registry = get_registry()
     try:
-        target = registry.get_target(target_id)
+        target = registry.get_target(target_id, include_disabled=True)
     except Exception:
-        # Check raw db if disabled
-        with registry._get_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM targets WHERE id = ?", (target_id,))
-            row = cursor.fetchone()
-            if not row:
-                abort(404, description="Target not found")
-            target = dict(row)
-            target["enabled"] = bool(target["enabled"])
+        abort(404, description="Target not found")
 
     if request.method == "GET":
         target["id"] = target_id
@@ -404,6 +421,26 @@ def target_edit(target_id: str):
                     },
                     sort_keys=True,
                 ),
+                required=True,
+            )
+        # privilege_user/policy already have dedicated required audit events.
+        security_fields = (
+            "platform",
+            "host",
+            "port",
+            "user",
+            "ssh_alias",
+            "enabled",
+        )
+        security_changed = any(
+            update_data.get(field) != target.get(field)
+            for field in security_fields
+        )
+        if update_data["enabled"] and security_changed:
+            record_audit(
+                "update_target_attempt",
+                target_id=target_id,
+                detail=f"Update active Target security context for '{target_id}'",
                 required=True,
             )
         registry.update_target(target_id, update_data)
@@ -587,17 +624,22 @@ def target_privilege_always_allow(target_id: str):
 @login_required
 def target_toggle(target_id: str):
     registry = get_registry()
-    with registry._get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT enabled FROM targets WHERE id = ?", (target_id,))
-        row = cursor.fetchone()
-        if not row:
-            abort(404, description="Target not found")
-        new_state = not bool(row["enabled"])
-        registry.update_target(target_id, {"enabled": new_state})
-        record_audit("toggle_target", target_id=target_id, success=True, detail=f"Set target '{target_id}' enabled={new_state}")
-        status_txt = "enabled" if new_state else "disabled"
-        flash(f"Target '{target_id}' is now {status_txt}.", "info")
+    try:
+        target = registry.get_target(target_id, include_disabled=True)
+    except Exception:
+        abort(404, description="Target not found")
+    new_state = not bool(target["enabled"])
+    if new_state:
+        record_audit(
+            "toggle_target_attempt",
+            target_id=target_id,
+            detail=f"Enable target '{target_id}'",
+            required=True,
+        )
+    registry.update_target(target_id, {"enabled": new_state})
+    record_audit("toggle_target", target_id=target_id, success=True, detail=f"Set target '{target_id}' enabled={new_state}")
+    status_txt = "enabled" if new_state else "disabled"
+    flash(f"Target '{target_id}' is now {status_txt}.", "info")
     return redirect(url_for("admin.targets_list"))
 
 
@@ -710,8 +752,13 @@ def target_privilege_revoke(target_id: str):
 @login_required
 def projects_list():
     registry = get_registry()
-    projects = registry.list_projects()
-    return render_template("projects.html", projects=projects)
+    target_filter = request.args.get("target", "").strip()
+    projects = registry.list_projects(target_filter or None)
+    return render_template(
+        "projects.html",
+        projects=projects,
+        target_filter=target_filter,
+    )
 
 
 @bp.route("/projects/add", methods=["GET", "POST"])
@@ -737,6 +784,14 @@ def project_add():
         return render_template("project_form.html", project=data, targets=targets, is_edit=False)
 
     try:
+        if data["enabled"]:
+            record_audit(
+                "add_project_attempt",
+                target_id=target_id,
+                project_id=data["id"],
+                detail=f"Add enabled project '{data['id']}'",
+                required=True,
+            )
         registry.add_project(target_id, data)
         record_audit("add_project", target_id=target_id, project_id=data["id"], success=True, detail=f"Added project '{data['id']}'")
         flash(f"Project '{data['id']}' created under target '{target_id}'.", "success")
@@ -752,16 +807,10 @@ def project_edit(target_id: str, project_id: str):
     registry = get_registry()
     targets = registry.list_targets()
 
-    with registry._get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM projects WHERE target_id = ? AND id = ?", (target_id, project_id))
-        p_row = cursor.fetchone()
-        if not p_row:
-            abort(404, description="Project not found")
-        project = dict(p_row)
-        project["read"] = bool(project["read_enabled"])
-        project["write"] = bool(project["write_enabled"])
-        project["enabled"] = bool(project["enabled"])
+    try:
+        project = registry.get_project(target_id, project_id, include_disabled=True)
+    except Exception:
+        abort(404, description="Project not found")
 
     if request.method == "GET":
         return render_template("project_form.html", project=project, targets=targets, is_edit=True)
@@ -775,6 +824,18 @@ def project_edit(target_id: str, project_id: str):
         "enabled": request.form.get("enabled") == "on",
     }
     try:
+        security_changed = any(
+            update_data.get(field) != project.get(field)
+            for field in ("root", "read", "write", "enabled")
+        )
+        if update_data["enabled"] and security_changed:
+            record_audit(
+                "update_project_attempt",
+                target_id=target_id,
+                project_id=project_id,
+                detail=f"Update active project security context for '{project_id}'",
+                required=True,
+            )
         registry.update_project(target_id, project_id, update_data)
         record_audit("update_project", target_id=target_id, project_id=project_id, success=True, detail=f"Updated project '{project_id}'")
         flash(f"Project '{project_id}' updated.", "success")
@@ -789,17 +850,23 @@ def project_edit(target_id: str, project_id: str):
 @login_required
 def project_toggle(target_id: str, project_id: str):
     registry = get_registry()
-    with registry._get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT enabled FROM projects WHERE target_id = ? AND id = ?", (target_id, project_id))
-        row = cursor.fetchone()
-        if not row:
-            abort(404, description="Project not found")
-        new_state = not bool(row["enabled"])
-        registry.update_project(target_id, project_id, {"enabled": new_state})
-        record_audit("toggle_project", target_id=target_id, project_id=project_id, success=True, detail=f"Set project '{project_id}' enabled={new_state}")
-        status_txt = "enabled" if new_state else "disabled"
-        flash(f"Project '{project_id}' is now {status_txt}.", "info")
+    try:
+        project = registry.get_project(target_id, project_id, include_disabled=True)
+    except Exception:
+        abort(404, description="Project not found")
+    new_state = not bool(project["enabled"])
+    if new_state:
+        record_audit(
+            "toggle_project_attempt",
+            target_id=target_id,
+            project_id=project_id,
+            detail=f"Enable project '{project_id}'",
+            required=True,
+        )
+    registry.update_project(target_id, project_id, {"enabled": new_state})
+    record_audit("toggle_project", target_id=target_id, project_id=project_id, success=True, detail=f"Set project '{project_id}' enabled={new_state}")
+    status_txt = "enabled" if new_state else "disabled"
+    flash(f"Project '{project_id}' is now {status_txt}.", "info")
     return redirect(url_for("admin.projects_list"))
 
 
@@ -807,17 +874,23 @@ def project_toggle(target_id: str, project_id: str):
 @login_required
 def project_toggle_write(target_id: str, project_id: str):
     registry = get_registry()
-    with registry._get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT write_enabled FROM projects WHERE target_id = ? AND id = ?", (target_id, project_id))
-        row = cursor.fetchone()
-        if not row:
-            abort(404, description="Project not found")
-        new_state = not bool(row["write_enabled"])
-        registry.update_project(target_id, project_id, {"write": new_state})
-        record_audit("toggle_project_write", target_id=target_id, project_id=project_id, success=True, detail=f"Set project '{project_id}' write={new_state}")
-        status_txt = "ENABLED" if new_state else "DISABLED"
-        flash(f"Project '{project_id}' write capability is now {status_txt}.", "warning" if new_state else "info")
+    try:
+        project = registry.get_project(target_id, project_id, include_disabled=True)
+    except Exception:
+        abort(404, description="Project not found")
+    new_state = not bool(project["write"])
+    if new_state:
+        record_audit(
+            "toggle_project_write_attempt",
+            target_id=target_id,
+            project_id=project_id,
+            detail=f"Enable write for project '{project_id}'",
+            required=True,
+        )
+    registry.update_project(target_id, project_id, {"write": new_state})
+    record_audit("toggle_project_write", target_id=target_id, project_id=project_id, success=True, detail=f"Set project '{project_id}' write={new_state}")
+    status_txt = "ENABLED" if new_state else "DISABLED"
+    flash(f"Project '{project_id}' write capability is now {status_txt}.", "warning" if new_state else "info")
     return redirect(url_for("admin.projects_list"))
 
 
@@ -830,10 +903,8 @@ GRANT_COMMON_CAPABILITIES = (
     ("read", "Read"),
     ("write", "Write"),
     ("execute", "Tasks / Execute"),
-    ("target_shell", "Target shell"),
-    (TARGET_PRIVILEGE_CAPABILITY, "Target administrative privilege"),
     ("admin", "Gateway appliance admin"),
-    ("*", "All compatible tool capabilities (*)"),
+    ("*", "* — All compatible tool capabilities"),
 )
 
 
@@ -856,8 +927,17 @@ def _normalize_grant_capability(raw: str) -> str:
     unknown = [token for token in tokens if token not in known]
     if unknown:
         raise ValueError(f"Unknown grant capability: {', '.join(unknown)}")
-    if "*" in tokens and len(tokens) > 1:
-        raise ValueError("'*' cannot be combined with other capabilities.")
+    if "*" in tokens:
+        non_wildcard = [token for token in tokens if token != "*"]
+        if any(token != TARGET_PRIVILEGE_CAPABILITY for token in non_wildcard):
+            raise ValueError(
+                "'*' cannot be combined with ordinary capabilities; target_admin is the only explicit exception."
+            )
+        tokens = ["*"] + (
+            [TARGET_PRIVILEGE_CAPABILITY]
+            if TARGET_PRIVILEGE_CAPABILITY in non_wildcard
+            else []
+        )
     return ",".join(tokens)
 
 
@@ -866,7 +946,24 @@ def _grant_form_data(registry, client_id: str):
     registry.get_client(client_id)
     target_id = request.form.get("target_id", "").strip()
     project_id = request.form.get("project_id", "").strip() or "*"
-    capability = _normalize_grant_capability(request.form.get("capability", ""))
+
+    # New UI submits semantic multi-value controls. Keep the legacy CSV field as
+    # an input compatibility path for existing clients/tests.
+    capability_values = [
+        value.strip()
+        for value in request.form.getlist("capabilities")
+        if value.strip()
+    ]
+    if request.form.get("target_shell") == "on":
+        capability_values.append("target_shell")
+    if request.form.get("target_admin") == "on":
+        capability_values.append(TARGET_PRIVILEGE_CAPABILITY)
+    raw_capability = (
+        ",".join(capability_values)
+        if capability_values
+        else request.form.get("capability", "")
+    )
+    capability = _normalize_grant_capability(raw_capability)
 
     target_ids = {t["id"] for t in registry.list_targets()}
     projects = registry.list_projects()
@@ -914,7 +1011,17 @@ def _client_grants_context(registry, client_id: str, editing_grant=None, access_
     projects = registry.list_projects()
     grants = registry.list_grants(client_id=client_id)
     common_values = {value for value, _ in GRANT_COMMON_CAPABILITIES}
-    specific = sorted(_known_grant_capabilities() - common_values)
+    privilege_values = {"target_shell", TARGET_PRIVILEGE_CAPABILITY}
+    specific = sorted(
+        _known_grant_capabilities() - common_values - privilege_values
+    )
+    selected = {
+        token.strip()
+        for token in str(
+            editing_grant.get("capability", "") if editing_grant else "read"
+        ).split(",")
+        if token.strip()
+    }
     return {
         "client": client,
         "grants": grants,
@@ -922,6 +1029,7 @@ def _client_grants_context(registry, client_id: str, editing_grant=None, access_
         "projects": projects,
         "common_capabilities": GRANT_COMMON_CAPABILITIES,
         "specific_capabilities": specific,
+        "selected_capabilities": selected,
         "tool_names": sorted(TOOL_CAPABILITIES),
         "editing_grant": editing_grant,
         "access_result": access_result,
@@ -959,6 +1067,12 @@ def client_add():
 
     try:
         registry = get_registry()
+        if data["enabled"]:
+            record_audit(
+                "add_client_attempt",
+                detail=f"Add enabled AI client '{data['id']}'",
+                required=True,
+            )
         registry.add_client(data)
         record_audit("add_client", success=True, detail=f"Added AI client '{data['id']}'")
         flash(f"AI Client '{data['id']}' created.", "success")
@@ -988,6 +1102,12 @@ def client_edit(client_id: str):
         "notes": request.form.get("notes", "").strip(),
     }
     try:
+        if update_data["enabled"] and not client.get("enabled", True):
+            record_audit(
+                "update_client_attempt",
+                detail=f"Enable AI client '{client_id}'",
+                required=True,
+            )
         registry.update_client(client_id, update_data)
         record_audit("update_client", success=True, detail=f"Updated AI client '{client_id}'")
         flash(f"AI Client '{client_id}' updated.", "success")
@@ -1005,6 +1125,12 @@ def client_toggle(client_id: str):
     try:
         client = registry.get_client(client_id)
         new_state = not client.get("enabled", True)
+        if new_state:
+            record_audit(
+                "toggle_client_attempt",
+                detail=f"Enable AI client '{client_id}'",
+                required=True,
+            )
         registry.update_client(client_id, {"enabled": new_state})
         record_audit("toggle_client", success=True, detail=f"Set client '{client_id}' enabled={new_state}")
         status_txt = "enabled" if new_state else "disabled"
@@ -1036,6 +1162,14 @@ def client_grant_add(client_id: str):
     registry = get_registry()
     try:
         data = _grant_form_data(registry, client_id)
+        if data["enabled"]:
+            record_audit(
+                "add_grant_attempt",
+                target_id=data["target_id"],
+                project_id=data["project_id"],
+                detail=f"client={client_id} capability={data['capability']}",
+                required=True,
+            )
         grant_id = registry.add_grant(data)
         record_audit(
             "add_grant",
@@ -1055,9 +1189,21 @@ def client_grant_add(client_id: str):
 @login_required
 def client_grant_edit(client_id: str, grant_id: int):
     registry = get_registry()
-    _grant_for_client_or_404(registry, client_id, grant_id)
+    current_grant = _grant_for_client_or_404(registry, client_id, grant_id)
     try:
         data = _grant_form_data(registry, client_id)
+        if data["enabled"]:
+            record_audit(
+                "update_grant_attempt",
+                target_id=data["target_id"],
+                project_id=data["project_id"],
+                detail=(
+                    f"client={client_id} grant_id={grant_id} "
+                    f"old_capability={current_grant.get('capability')} "
+                    f"new_capability={data['capability']}"
+                ),
+                required=True,
+            )
         registry.update_grant(grant_id, {k: v for k, v in data.items() if k != "client_id"})
         record_audit(
             "update_grant",
@@ -1078,6 +1224,14 @@ def client_grant_toggle(client_id: str, grant_id: int):
     registry = get_registry()
     grant = _grant_for_client_or_404(registry, client_id, grant_id)
     new_state = not grant.get("enabled", True)
+    if new_state:
+        record_audit(
+            "toggle_grant_attempt",
+            target_id=grant.get("target_id"),
+            project_id=grant.get("project_id"),
+            detail=f"client={client_id} grant_id={grant_id} enable=true",
+            required=True,
+        )
     registry.update_grant(grant_id, {"enabled": new_state})
     record_audit(
         "toggle_grant",
@@ -1152,6 +1306,13 @@ def client_grant_check(client_id: str):
 # Activity Audit
 # ==========================================
 
+def _activity_datetime_bound(value: str, *, end: bool = False) -> str:
+    value = str(value or "").strip().replace("T", " ")
+    if len(value) == 16:
+        value += ":59" if end else ":00"
+    return value
+
+
 @bp.route("/activity")
 @login_required
 def activity_view():
@@ -1163,9 +1324,54 @@ def activity_view():
     per_page = 50
     offset = (page - 1) * per_page
 
-    total = registry.get_activity_count()
-    items = registry.list_activity(limit=per_page, offset=offset)
+    result = request.args.get("result", "").strip().lower()
+    filters = {
+        "actor": request.args.get("actor", "").strip(),
+        "action": request.args.get("action", "").strip(),
+        "target_id": request.args.get("target_id", "").strip(),
+        "project_id": request.args.get("project_id", "").strip(),
+        "from_timestamp": _activity_datetime_bound(request.args.get("from", "")),
+        "to_timestamp": _activity_datetime_bound(request.args.get("to", ""), end=True),
+    }
+    if result == "pass":
+        filters["success"] = True
+    elif result == "deny":
+        filters["success"] = False
+    filters = {key: value for key, value in filters.items() if value not in ("", None)}
+
+    total = registry.get_activity_count(filters=filters)
     total_pages = max(1, (total + per_page - 1) // per_page)
+    if page > total_pages:
+        page = total_pages
+        offset = (page - 1) * per_page
+    items = registry.list_activity(limit=per_page, offset=offset, filters=filters)
+
+    query_filters = {
+        "actor": request.args.get("actor", "").strip(),
+        "action": request.args.get("action", "").strip(),
+        "target_id": request.args.get("target_id", "").strip(),
+        "project_id": request.args.get("project_id", "").strip(),
+        "result": result if result in ("pass", "deny") else "",
+        "from": request.args.get("from", "").strip(),
+        "to": request.args.get("to", "").strip(),
+    }
+    query_args = {
+        key: value
+        for key, value in query_filters.items()
+        if value
+    }
+    live = request.args.get("live", "").strip() == "1" and page == 1
+    live_url = url_for(
+        "admin.activity_view",
+        **query_args,
+        page=1,
+        live="1",
+    )
+    pause_live_url = url_for(
+        "admin.activity_view",
+        **query_args,
+        page=1,
+    )
 
     return render_template(
         "activity.html",
@@ -1173,6 +1379,10 @@ def activity_view():
         page=page,
         total_pages=total_pages,
         total=total,
+        filters=query_filters,
+        live=live,
+        live_url=live_url,
+        pause_live_url=pause_live_url,
     )
 
 
@@ -1264,7 +1474,7 @@ def settings_view():
         settings = {
             "gateway_enabled": str(registry.get_setting("gateway_enabled", "true")).lower() in ("true", "1", "yes", "on"),
             "writes_enabled": str(registry.get_setting("writes_enabled", "false")).lower() in ("true", "1", "yes", "on"),
-            "shell_enabled": str(registry.get_setting("shell_enabled", "true")).lower() in ("true", "1", "yes", "on"),
+            "shell_enabled": str(registry.get_setting("shell_enabled", "false")).lower() in ("true", "1", "yes", "on"),
             "default_timeout": int(registry.get_setting("default_timeout", 30)),
             "max_output_bytes": int(registry.get_setting("max_output_bytes", 262144)),
             "max_file_read_bytes": int(registry.get_setting("max_file_read_bytes", 1048576)),
@@ -1298,6 +1508,11 @@ def settings_view():
             flash("Activity retention must be between 100 and 50000 rows.", "danger")
             return redirect(url_for("admin.settings_view"))
 
+        record_audit(
+            "update_settings_attempt",
+            detail="Update operational limits",
+            required=True,
+        )
         registry.set_setting("default_timeout", timeout)
         registry.set_setting("max_output_bytes", max_output)
         registry.set_setting("max_file_read_bytes", max_read)
@@ -1318,6 +1533,12 @@ def toggle_kill_switch():
     registry = get_registry()
     curr = str(registry.get_setting("gateway_enabled", "true")).lower() in ("true", "1", "yes", "on")
     new_state = not curr
+    if new_state:
+        record_audit(
+            "toggle_kill_switch_attempt",
+            detail="Enable gateway operations",
+            required=True,
+        )
     registry.set_setting("gateway_enabled", "true" if new_state else "false")
     record_audit(
         "toggle_kill_switch",
@@ -1336,6 +1557,12 @@ def toggle_writes_switch():
     registry = get_registry()
     curr = str(registry.get_setting("writes_enabled", "false")).lower() in ("true", "1", "yes", "on")
     new_state = not curr
+    if new_state:
+        record_audit(
+            "toggle_writes_switch_attempt",
+            detail="Enable structured filesystem writes",
+            required=True,
+        )
     registry.set_setting("writes_enabled", "true" if new_state else "false")
     record_audit(
         "toggle_writes_switch",
@@ -1352,8 +1579,14 @@ def toggle_writes_switch():
 @login_required
 def toggle_shell_switch():
     registry = get_registry()
-    curr = str(registry.get_setting("shell_enabled", "true")).lower() in ("true", "1", "yes", "on")
+    curr = str(registry.get_setting("shell_enabled", "false")).lower() in ("true", "1", "yes", "on")
     new_state = not curr
+    if new_state:
+        record_audit(
+            "toggle_shell_switch_attempt",
+            detail="Enable trusted Target shell",
+            required=True,
+        )
     registry.set_setting("shell_enabled", "true" if new_state else "false")
     record_audit("toggle_shell_switch", success=True, detail=f"Admin toggled shell_enabled to {new_state}")
     msg = "Trusted target shell ENABLED for explicitly granted clients." if new_state else "Trusted target shell DISABLED globally."

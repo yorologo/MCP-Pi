@@ -45,7 +45,7 @@ def create_manifest(version: Optional[str] = None, output_path: Optional[str] = 
         "mcp_sdk": compat.get("mcp", {}).get("sdk", "go-sdk"),
         "mcp_sdk_version": compat.get("mcp", {}).get("version", "1.7.0"),
         "mcp_protocol": compat.get("mcp", {}).get("protocol", "2026-07-28"),
-        "minimum_python": "3.9",
+        "minimum_python": "3.11",
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     if output_path:

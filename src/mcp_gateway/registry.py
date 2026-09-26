@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 import uuid
 import time
+from datetime import datetime, timezone
 
 from .config import GatewayConfig, ConfigError
 from .policy import PRIVILEGE_APPROVAL_TTL_SECONDS, normalize_privilege_policy
@@ -19,7 +20,7 @@ class RegistryBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_target(self, target_id: str) -> Dict:
+    def get_target(self, target_id: str, include_disabled: bool = False) -> Dict:
         pass
 
     @abc.abstractmethod
@@ -27,7 +28,12 @@ class RegistryBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_project(self, target_id: str, project_id: str) -> Dict:
+    def get_project(
+        self,
+        target_id: str,
+        project_id: str,
+        include_disabled: bool = False,
+    ) -> Dict:
         pass
 
     @abc.abstractmethod
@@ -129,7 +135,12 @@ class RegistryBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def list_activity(self, limit: int = 50, offset: int = 0) -> List[Dict]:
+    def list_activity(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict]:
         pass
 
     @abc.abstractmethod
@@ -145,7 +156,7 @@ class RegistryBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_activity_count(self) -> int:
+    def get_activity_count(self, filters: Optional[Dict[str, Any]] = None) -> int:
         pass
 
     @abc.abstractmethod
@@ -185,8 +196,8 @@ class JsonRegistry(RegistryBase):
     def list_targets(self) -> List[Dict]:
         return self.config.list_targets()
 
-    def get_target(self, target_id: str) -> Dict:
-        return self.config.get_target(target_id)
+    def get_target(self, target_id: str, include_disabled: bool = False) -> Dict:
+        return self.config.get_target(target_id, include_disabled=include_disabled)
 
     def list_projects(self, target_id: Optional[str] = None) -> List[Dict]:
         projects = []
@@ -205,8 +216,17 @@ class JsonRegistry(RegistryBase):
                     pass
         return projects
 
-    def get_project(self, target_id: str, project_id: str) -> Dict:
-        return self.config.get_project(target_id, project_id)
+    def get_project(
+        self,
+        target_id: str,
+        project_id: str,
+        include_disabled: bool = False,
+    ) -> Dict:
+        return self.config.get_project(
+            target_id,
+            project_id,
+            include_disabled=include_disabled,
+        )
 
     def list_clients(self) -> List[Dict]:
         return list(self._clients.values())
@@ -352,8 +372,51 @@ class JsonRegistry(RegistryBase):
         entry_with_id = {"id": str(uuid.uuid4()), "timestamp": time.time(), **entry}
         self._activity.append(entry_with_id)
 
-    def list_activity(self, limit: int = 50, offset: int = 0) -> List[Dict]:
-        return self._activity[offset:offset+limit]
+    def list_activity(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict]:
+        rows = list(reversed(self._activity))
+        filters = filters or {}
+        for key in ("actor", "action"):
+            value = str(filters.get(key) or "").lower()
+            if value:
+                rows = [row for row in rows if value in str(row.get(key) or "").lower()]
+        for key in ("target_id", "project_id"):
+            value = str(filters.get(key) or "")
+            if value:
+                rows = [row for row in rows if str(row.get(key) or "") == value]
+        if filters.get("success") is not None:
+            expected = bool(filters["success"])
+            rows = [row for row in rows if bool(row.get("success", True)) == expected]
+
+        def _bound_epoch(key: str):
+            value = str(filters.get(key) or "").strip()
+            if not value:
+                return None
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+
+        start_epoch = _bound_epoch("from_timestamp")
+        end_epoch = _bound_epoch("to_timestamp")
+        if start_epoch is not None:
+            rows = [
+                row for row in rows
+                if float(row.get("timestamp", 0) or 0) >= start_epoch
+            ]
+        if end_epoch is not None:
+            rows = [
+                row for row in rows
+                if float(row.get("timestamp", 0) or 0) <= end_epoch
+            ]
+        return rows[offset:offset + limit]
 
     def get_admin_user(self, username: str) -> Optional[Dict]:
         return self._admin_users.get(username)
@@ -367,8 +430,10 @@ class JsonRegistry(RegistryBase):
         if username in self._admin_users:
             self._admin_users[username]["last_login"] = time.time()
 
-    def get_activity_count(self) -> int:
-        return len(self._activity)
+    def get_activity_count(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        if not filters:
+            return len(self._activity)
+        return len(self.list_activity(limit=len(self._activity), filters=filters))
 
     def prune_activity(self, keep: int) -> int:
         if len(self._activity) <= keep:
@@ -425,7 +490,7 @@ class SQLiteRegistry(RegistryBase):
     def list_targets(self) -> List[Dict]:
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, display_name, platform, privilege_policy, enabled FROM targets")
+            cursor.execute("SELECT id, display_name, platform, privilege_policy, enabled FROM targets ORDER BY id")
             results = []
             for row in cursor.fetchall():
                 t = dict(row)
@@ -440,27 +505,28 @@ class SQLiteRegistry(RegistryBase):
                 results.append(t)
             return results
 
-    def get_target(self, target_id: str) -> Dict:
+    def get_target(self, target_id: str, include_disabled: bool = False) -> Dict:
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM targets WHERE id = ?", (target_id,))
             row = cursor.fetchone()
             if not row:
                 raise ConfigError(f"Target '{target_id}' is not configured", code="UNKNOWN_TARGET")
-            
+
             target = dict(row)
             target["enabled"] = bool(target["enabled"])
-            
-            if not target["enabled"]:
+
+            if not include_disabled and not target["enabled"]:
                 raise ConfigError(f"Target '{target_id}' is disabled", code="TARGET_DISABLED")
 
-            # Remove db-only fields (retain id for cryptographic and transport identity)
             target["id"] = target_id
-            target.pop("created_at", None)
-            target.pop("updated_at", None)
-            target.pop("display_name", None)
+            if not include_disabled:
+                # Keep the operational Target contract minimal.
+                target.pop("created_at", None)
+                target.pop("updated_at", None)
+                target.pop("display_name", None)
 
-            # Build projects dict
+            # Build projects dict.
             cursor.execute("SELECT * FROM projects WHERE target_id = ?", (target_id,))
             projects_data = {}
             for prow in cursor.fetchall():
@@ -470,20 +536,31 @@ class SQLiteRegistry(RegistryBase):
                     "read": bool(prow["read_enabled"]),
                     "write": bool(prow["write_enabled"]),
                     "enabled": bool(prow["enabled"]),
-                    "tasks": {}
+                    "tasks": {},
                 }
-                
-                cursor.execute("SELECT * FROM project_tasks WHERE target_id = ? AND project_id = ?", (target_id, pid))
+                if include_disabled:
+                    pdict.update(
+                        {
+                            "id": pid,
+                            "target_id": target_id,
+                            "display_name": prow["display_name"],
+                        }
+                    )
+
+                cursor.execute(
+                    "SELECT * FROM project_tasks WHERE target_id = ? AND project_id = ?",
+                    (target_id, pid),
+                )
                 for trow in cursor.fetchall():
                     task_name = trow["task_name"]
                     pdict["tasks"][task_name] = {
                         "enabled": bool(trow["enabled"]),
                         "argv": json.loads(trow["argv_json"]),
-                        "timeout": trow["timeout"]
+                        "timeout": trow["timeout"],
                     }
-                
+
                 projects_data[pid] = pdict
-                
+
             target["projects"] = projects_data
             return target
 
@@ -491,9 +568,9 @@ class SQLiteRegistry(RegistryBase):
         with self._get_conn() as conn:
             cursor = conn.cursor()
             if target_id:
-                cursor.execute("SELECT * FROM projects WHERE target_id = ?", (target_id,))
+                cursor.execute("SELECT * FROM projects WHERE target_id = ? ORDER BY id", (target_id,))
             else:
-                cursor.execute("SELECT * FROM projects")
+                cursor.execute("SELECT * FROM projects ORDER BY target_id, id")
                 
             projects = []
             for prow in cursor.fetchall():
@@ -521,8 +598,13 @@ class SQLiteRegistry(RegistryBase):
                 projects.append(pdict)
             return projects
 
-    def get_project(self, target_id: str, project_id: str) -> Dict:
-        target = self.get_target(target_id)
+    def get_project(
+        self,
+        target_id: str,
+        project_id: str,
+        include_disabled: bool = False,
+    ) -> Dict:
+        target = self.get_target(target_id, include_disabled=include_disabled)
         projects = target.get("projects", {})
         if project_id not in projects:
             raise ConfigError(
@@ -530,7 +612,7 @@ class SQLiteRegistry(RegistryBase):
                 code="UNKNOWN_PROJECT",
             )
         project = projects[project_id]
-        if not project.get("enabled", True):
+        if not include_disabled and not project.get("enabled", True):
             raise ConfigError(
                 f"Project '{project_id}' in target '{target_id}' is disabled",
                 code="PROJECT_DISABLED",
@@ -540,7 +622,7 @@ class SQLiteRegistry(RegistryBase):
     def list_clients(self) -> List[Dict]:
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM ai_clients")
+            cursor.execute("SELECT * FROM ai_clients ORDER BY id")
             clients = []
             for row in cursor.fetchall():
                 c = dict(row)
@@ -826,9 +908,9 @@ class SQLiteRegistry(RegistryBase):
         with self._get_conn() as conn:
             cursor = conn.cursor()
             if client_id:
-                cursor.execute("SELECT * FROM grants WHERE client_id = ?", (client_id,))
+                cursor.execute("SELECT * FROM grants WHERE client_id = ? ORDER BY id", (client_id,))
             else:
-                cursor.execute("SELECT * FROM grants")
+                cursor.execute("SELECT * FROM grants ORDER BY client_id, id")
             grants = []
             for row in cursor.fetchall():
                 g = dict(row)
@@ -1052,10 +1134,54 @@ class SQLiteRegistry(RegistryBase):
             ))
             conn.commit()
 
-    def list_activity(self, limit: int = 50, offset: int = 0) -> List[Dict]:
+    @staticmethod
+    def _activity_filter_sql(filters: Optional[Dict[str, Any]] = None):
+        filters = filters or {}
+        clauses = []
+        values = []
+        for key in ("actor", "action"):
+            value = str(filters.get(key) or "").strip()
+            if value:
+                escaped = (
+                    value.replace("!", "!!")
+                    .replace("%", "!%")
+                    .replace("_", "!_")
+                )
+                clauses.append(f"{key} LIKE ? ESCAPE '!'")
+                values.append(f"%{escaped}%")
+        for key in ("target_id", "project_id"):
+            value = str(filters.get(key) or "").strip()
+            if value:
+                clauses.append(f"{key} = ?")
+                values.append(value)
+        if filters.get("success") is not None:
+            clauses.append("success = ?")
+            values.append(1 if filters["success"] else 0)
+        start = str(filters.get("from_timestamp") or "").strip()
+        if start:
+            clauses.append("timestamp >= ?")
+            values.append(start)
+        end = str(filters.get("to_timestamp") or "").strip()
+        if end:
+            clauses.append("timestamp <= ?")
+            values.append(end)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where, values
+
+    def list_activity(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict]:
+        where, values = self._activity_filter_sql(filters)
+        query = (
+            "SELECT * FROM activity"
+            f"{where} ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?"
+        )
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM activity ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?", (limit, offset))
+            cursor.execute(query, (*values, limit, offset))
             activities = []
             for row in cursor.fetchall():
                 a = dict(row)
@@ -1089,10 +1215,11 @@ class SQLiteRegistry(RegistryBase):
             cursor.execute("UPDATE admin_users SET last_login = datetime('now') WHERE username = ?", (username,))
             conn.commit()
 
-    def get_activity_count(self) -> int:
+    def get_activity_count(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        where, values = self._activity_filter_sql(filters)
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) as c FROM activity")
+            cursor.execute(f"SELECT COUNT(*) as c FROM activity{where}", tuple(values))
             return cursor.fetchone()["c"]
 
     def prune_activity(self, keep: int) -> int:

@@ -187,28 +187,35 @@ class GatewayConfig:
 
         self._data = {"targets": validated_targets}
 
-    def get_target(self, target_id: str) -> Dict[str, Any]:
+    def get_target(self, target_id: str, include_disabled: bool = False) -> Dict[str, Any]:
         """Retrieve target configuration or raise ConfigError."""
         targets = self._data.get("targets", {})
         if target_id not in targets:
             raise ConfigError(f"Target '{target_id}' is not configured", code="UNKNOWN_TARGET")
         target = dict(targets[target_id])
         target.setdefault("id", target_id)
-        if not target.get("enabled", True):
+        if not include_disabled and not target.get("enabled", True):
             raise ConfigError(f"Target '{target_id}' is disabled", code="TARGET_DISABLED")
         return target
 
-    def get_project(self, target_id: str, project_id: str) -> Dict[str, Any]:
+    def get_project(
+        self,
+        target_id: str,
+        project_id: str,
+        include_disabled: bool = False,
+    ) -> Dict[str, Any]:
         """Retrieve project configuration under target or raise ConfigError."""
-        target = self.get_target(target_id)
+        target = self.get_target(target_id, include_disabled=include_disabled)
         projects = target.get("projects", {})
         if project_id not in projects:
             raise ConfigError(
                 f"Project '{project_id}' is not configured under target '{target_id}'",
                 code="UNKNOWN_PROJECT",
             )
-        project = projects[project_id]
-        if not project.get("enabled", True):
+        project = dict(projects[project_id])
+        project.setdefault("id", project_id)
+        project.setdefault("target_id", target_id)
+        if not include_disabled and not project.get("enabled", True):
             raise ConfigError(
                 f"Project '{project_id}' in target '{target_id}' is disabled",
                 code="PROJECT_DISABLED",

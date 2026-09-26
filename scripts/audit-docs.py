@@ -89,6 +89,12 @@ def main() -> int:
     if int(manifest.get("tool_catalog", -1)) != catalog_version:
         add(errors, "manifest tool catalog differs from compatibility.json")
 
+    minimum_python = str(manifest.get("minimum_python", "")).strip()
+    if not minimum_python:
+        add(errors, "manifest minimum_python is missing")
+    if str(compat.get("runtime", {}).get("python", "")) != f"{minimum_python}+":
+        add(errors, "manifest and compatibility Python contracts differ")
+
     sys.path.insert(0, str(ROOT / "src"))
     from mcp_gateway.bridge import ALLOWED_TOOLS, get_catalog_metadata  # noqa: E402
 
@@ -149,11 +155,20 @@ def main() -> int:
     if "archive/" not in docs_index or "reference/" not in docs_index:
         add(errors, "docs/README.md must classify reference and archive material")
 
+    project_state = (DOCS / "project-state.md").read_text(encoding="utf-8")
+    for required in ("gateway_status", ".deployment.json", ".deployed-git-sha"):
+        if required not in project_state:
+            add(errors, f"project-state must point live production state to {required}")
+    if re.search(r"production remains on v[0-9]", project_state, re.I):
+        add(errors, "project-state duplicates a mutable production version")
+
     active_deployers = sorted(p.name for p in (ROOT / "scripts").glob("deploy*"))
     if active_deployers != ["deploy-pi.sh"]:
         add(errors, f"active deployment entrypoints are ambiguous: {active_deployers}")
 
     installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+    if minimum_python and f"Python {minimum_python} or higher is required" not in installer:
+        add(errors, "installer does not enforce manifest minimum_python")
     for required in ("--check", "--rollback", "INSTALLATION_VERIFIED", "mcp-gateway.previous-install"):
         if required not in installer:
             add(errors, f"installer contract missing {required}")
@@ -175,9 +190,9 @@ def main() -> int:
         if required not in grant_views:
             add(errors, f"Admin grant management contract missing {required}")
     admin_doc = (DOCS / "admin-console.md").read_text(encoding="utf-8")
-    for required in ("AI Clients → Grants", "Check Effective Access", "authorize_client()"):
+    for required in ("AI Clients → Grants", "Check Effective Access", "authorize_client()", "Administrative tables", "server-side audit filtering"):
         if required not in admin_doc:
-            add(errors, f"Admin grant documentation missing {required}")
+            add(errors, f"Admin Console documentation missing {required}")
 
     deployer = (ROOT / "scripts" / "deploy-pi.sh").read_text(encoding="utf-8")
     for required in ("MCP_PI_RESUMABLE_JOB_ID", "MCP_DEPLOY_ALLOW_DIRECT", "CONTROL_PLANE_RESTART=EXPECTED", "CONTROL_PLANE_RESTORED"):
