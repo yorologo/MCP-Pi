@@ -1,0 +1,601 @@
+[
+  {
+    "name": "append_file",
+    "description": "Append UTF-8 text content to an existing file in an authorized project",
+    "input_schema": {
+      "properties": {
+        "content": {
+          "description": "UTF-8 text content to append",
+          "type": "string"
+        },
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "relative_path": {
+          "description": "Relative path to file within project root",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "relative_path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "copy_file",
+    "description": "Copy a file within an authorized project",
+    "input_schema": {
+      "properties": {
+        "dest_path": {
+          "description": "Relative path to destination file",
+          "type": "string"
+        },
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "source_path": {
+          "description": "Relative path to source file",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "source_path",
+        "dest_path"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "delete_file",
+    "description": "Delete a file or empty directory within an authorized project",
+    "input_schema": {
+      "properties": {
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "relative_path": {
+          "description": "Relative path to file or empty directory within project root",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "relative_path"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "file_stat",
+    "description": "Get metadata of a file or directory within a project",
+    "input_schema": {
+      "properties": {
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "relative_path": {
+          "description": "Relative path to file or directory",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "relative_path"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "gateway_backup",
+    "description": "Generate safe online SQLite backup of gateway registry database",
+    "input_schema": {
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "gateway_doctor",
+    "description": "Execute unified 19-point system health and integrity check",
+    "input_schema": {
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "gateway_maintenance",
+    "description": "Perform safe automated maintenance (disk check, backup rotation, registry integrity, update preview)",
+    "input_schema": {
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "gateway_reboot",
+    "description": "Request controlled reboot of the MCP-Pi appliance",
+    "input_schema": {
+      "properties": {
+        "confirm": {
+          "description": "Explicit confirmation to reboot appliance (must be true)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "confirm"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "gateway_status",
+    "description": "Check appliance health, system metrics (RAM, zram, CPU, temp, storage), and service status",
+    "input_schema": {
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "git_status",
+    "description": "Run 'git status --short' on authorized project repository",
+    "input_schema": {
+      "properties": {
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "health",
+    "description": "Check gateway health, uptime, version, and target count",
+    "input_schema": {
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "list_directory",
+    "description": "List directory contents under an authorized project",
+    "input_schema": {
+      "properties": {
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "relative_path": {
+          "description": "Relative path within project root (default: '.')",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "list_targets",
+    "description": "Return safe list of configured targets without secrets",
+    "input_schema": {
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "mkdir",
+    "description": "Create a directory within an authorized project",
+    "input_schema": {
+      "properties": {
+        "parents": {
+          "description": "Create parent directories if needed (default: true)",
+          "type": "boolean"
+        },
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "relative_path": {
+          "description": "Relative path of directory to create",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "relative_path"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "move_file",
+    "description": "Move or rename a file within an authorized project",
+    "input_schema": {
+      "properties": {
+        "dest_path": {
+          "description": "Relative path to destination file",
+          "type": "string"
+        },
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "source_path": {
+          "description": "Relative path to source file",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "source_path",
+        "dest_path"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "read_file",
+    "description": "Read text file content safely within project boundaries",
+    "input_schema": {
+      "properties": {
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "relative_path": {
+          "description": "Relative path to text file",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "relative_path"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "run_command",
+    "description": "Execute a trusted Target shell command with explicit standard or required privilege intent",
+    "input_schema": {
+      "properties": {
+        "command": {
+          "description": "Shell command line to execute",
+          "type": "string"
+        },
+        "cwd": {
+          "description": "Working directory (defaults to project root)",
+          "type": "string"
+        },
+        "env": {
+          "description": "Optional environment variables key-value map",
+          "type": "object"
+        },
+        "privilege": {
+          "description": "Privilege intent. Defaults to standard; required is governed by an explicit target_admin grant and the Target privilege policy.",
+          "enum": [
+            "standard",
+            "required"
+          ],
+          "type": "string"
+        },
+        "project": {
+          "description": "Authorized project ID (defaults to active project)",
+          "type": "string"
+        },
+        "stdin": {
+          "description": "Standard input string to supply to command",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID (e.g. termux-main)",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Execution timeout in seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "target",
+        "command"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "run_task",
+    "description": "Execute an allowlisted pre-configured task",
+    "input_schema": {
+      "properties": {
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        },
+        "task": {
+          "description": "Pre-configured task name in project allowlist",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "task"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "search",
+    "description": "Search text or regular expression patterns within files in an authorized project",
+    "input_schema": {
+      "properties": {
+        "is_regex": {
+          "description": "Treat pattern as regex (default: false)",
+          "type": "boolean"
+        },
+        "pattern": {
+          "description": "Text pattern or regex to search for",
+          "type": "string"
+        },
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "relative_path": {
+          "description": "Relative path to search within (default: '.')",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "pattern"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "target_status",
+    "description": "Verify reachability and latency of a target machine",
+    "input_schema": {
+      "properties": {
+        "target": {
+          "description": "Configured Target ID (e.g. termux-main)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "write_file",
+    "description": "Safely write or mutate a text file in an authorized project with atomic replacement and hash verification",
+    "input_schema": {
+      "properties": {
+        "content": {
+          "description": "UTF-8 text content to write",
+          "type": "string"
+        },
+        "create": {
+          "description": "If true, creates a new file (fails if file already exists)",
+          "type": "boolean"
+        },
+        "dry_run": {
+          "description": "If true, returns diff and sha256 without mutating the target file",
+          "type": "boolean"
+        },
+        "expected_sha256": {
+          "description": "Expected SHA256 of existing file before overwrite (required for overwrite unless create=true)",
+          "type": "string"
+        },
+        "project": {
+          "description": "Project ID",
+          "type": "string"
+        },
+        "relative_path": {
+          "description": "Relative path to file within project root",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "project",
+        "relative_path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  }
+]

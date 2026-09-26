@@ -1,0 +1,175 @@
+{
+  "authorization_cases": [
+    {
+      "allowed": false,
+      "client_id": null,
+      "error_code": "ANONYMOUS_CLIENT_DENIED",
+      "name": "anonymous_denied",
+      "project_id": null,
+      "reason": "ANONYMOUS_CLIENT_DENIED: Client identity required",
+      "target_id": null,
+      "tool": "health"
+    },
+    {
+      "allowed": false,
+      "client_id": "client",
+      "error_code": "TOOL_NOT_RECOGNIZED",
+      "name": "unknown_tool_before_registry_state",
+      "project_id": null,
+      "reason": "TOOL_NOT_RECOGNIZED: Tool 'not_a_tool' not in gateway catalog",
+      "target_id": null,
+      "tool": "not_a_tool"
+    },
+    {
+      "allowed": false,
+      "client_id": "missing",
+      "error_code": "CLIENT_NOT_FOUND",
+      "name": "missing_client",
+      "project_id": null,
+      "reason": "CLIENT_NOT_FOUND: Client 'missing' is not registered",
+      "target_id": null,
+      "tool": "health"
+    },
+    {
+      "allowed": false,
+      "client_id": "disabled",
+      "error_code": "CLIENT_DISABLED",
+      "name": "disabled_client",
+      "project_id": null,
+      "reason": "CLIENT_DISABLED: Client 'disabled' is disabled",
+      "target_id": null,
+      "tool": "health"
+    },
+    {
+      "allowed": false,
+      "client_id": "client",
+      "error_code": "TOOL_NOT_ALLOWED",
+      "name": "no_grants_denied",
+      "project_id": "p",
+      "reason": "TOOL_NOT_ALLOWED: Client 'client' has no active grants",
+      "target_id": "t",
+      "tool": "read_file"
+    },
+    {
+      "allowed": false,
+      "client_id": "client",
+      "error_code": "TOOL_NOT_ALLOWED",
+      "name": "grant_precedes_write_switch",
+      "project_id": "p",
+      "reason": "TOOL_NOT_ALLOWED: Client 'client' lacks grant capability for tool 'write_file'",
+      "target_id": "t",
+      "tool": "write_file"
+    },
+    {
+      "allowed": false,
+      "client_id": "client",
+      "error_code": "WRITES_DISABLED",
+      "name": "writes_global_kill_switch",
+      "project_id": "p",
+      "reason": "WRITES_DISABLED: Global writes are disabled",
+      "target_id": "t",
+      "tool": "write_file"
+    },
+    {
+      "allowed": false,
+      "client_id": "client",
+      "error_code": "TARGET_SHELL_DISABLED",
+      "name": "shell_kill_switch",
+      "project_id": "p",
+      "reason": "TARGET_SHELL_DISABLED: Trusted target shell execution is disabled",
+      "target_id": "t",
+      "tool": "run_command"
+    },
+    {
+      "allowed": true,
+      "client_id": "client",
+      "error_code": null,
+      "name": "gateway_disabled_health_exception",
+      "project_id": null,
+      "reason": null,
+      "target_id": null,
+      "tool": "health"
+    },
+    {
+      "allowed": false,
+      "client_id": "client",
+      "error_code": "GATEWAY_DISABLED",
+      "name": "gateway_disabled_other_tool",
+      "project_id": "p",
+      "reason": "GATEWAY_DISABLED: Global kill switch is active",
+      "target_id": "t",
+      "tool": "read_file"
+    },
+    {
+      "allowed": false,
+      "client_id": "client",
+      "error_code": "TARGET_DISABLED",
+      "name": "target_disabled",
+      "project_id": "p",
+      "reason": "TARGET_DISABLED: Target 't' is disabled",
+      "target_id": "t",
+      "tool": "read_file"
+    },
+    {
+      "allowed": false,
+      "client_id": "client",
+      "error_code": "PROJECT_DISABLED",
+      "name": "project_disabled",
+      "project_id": "p",
+      "reason": "PROJECT_DISABLED: Project 'p' is disabled",
+      "target_id": "t",
+      "tool": "read_file"
+    },
+    {
+      "allowed": false,
+      "client_id": "client",
+      "error_code": "WRITE_NOT_ALLOWED",
+      "name": "project_write_disabled",
+      "project_id": "p",
+      "reason": "WRITE_NOT_ALLOWED: Write disabled for project 'p'",
+      "target_id": "t",
+      "tool": "write_file"
+    },
+    {
+      "allowed": true,
+      "client_id": "client",
+      "error_code": null,
+      "name": "write_allowed",
+      "project_id": "p",
+      "reason": null,
+      "target_id": "t",
+      "tool": "write_file"
+    },
+    {
+      "allowed": true,
+      "client_id": "client",
+      "error_code": null,
+      "name": "read_allowed",
+      "project_id": "p",
+      "reason": null,
+      "target_id": "t",
+      "tool": "read_file"
+    }
+  ],
+  "privilege_cases": [
+    {
+      "allowed": false,
+      "capabilities": [
+        "*"
+      ],
+      "error_code": "PRIVILEGE_GRANT_REQUIRED",
+      "name": "wildcard_does_not_grant_target_admin",
+      "reason": "PRIVILEGE_GRANT_REQUIRED: Client 'client' requires an explicit target_admin grant for t/p"
+    },
+    {
+      "allowed": true,
+      "capabilities": [
+        "target_admin"
+      ],
+      "error_code": null,
+      "name": "explicit_target_admin",
+      "reason": null
+    }
+  ],
+  "schema": 1
+}

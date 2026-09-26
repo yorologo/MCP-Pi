@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "tools": [
+    "append_file",
+    "copy_file",
+    "delete_file",
+    "file_stat",
+    "gateway_backup",
+    "gateway_doctor",
+    "gateway_maintenance",
+    "gateway_reboot",
+    "gateway_status",
+    "git_status",
+    "health",
+    "list_directory",
+    "list_targets",
+    "mkdir",
+    "move_file",
+    "read_file",
+    "run_command",
+    "run_task",
+    "search",
+    "target_status",
+    "write_file"
+  ],
+  "tool_count": 21,
+  "catalog_hash": "41e2a308522d6abd42c645f95a64f358ac3f99d1dca5fd314ba19e05ebde54e2",
+  "tool_catalog_version": 4
+}
