@@ -1,0 +1,234 @@
+{
+  "append": {
+    "ok": true,
+    "project": "mock-proj",
+    "result": {
+      "bytes_appended": 10,
+      "new_sha256": "",
+      "path": "existing.txt"
+    },
+    "target": "mock-target",
+    "tool": "append_file"
+  },
+  "copy": {
+    "ok": true,
+    "project": "mock-proj",
+    "result": {
+      "copied": true,
+      "dest": "existing_copy.txt",
+      "source": "existing.txt"
+    },
+    "target": "mock-target",
+    "tool": "copy_file"
+  },
+  "delete": {
+    "ok": true,
+    "project": "mock-proj",
+    "result": {
+      "deleted": true,
+      "path": "existing.txt"
+    },
+    "target": "mock-target",
+    "tool": "delete_file"
+  },
+  "errors": {
+    "append_dest_symlink": {
+      "error": {
+        "code": "SYMLINK_WRITE_DENIED",
+        "message": "Destination is a symlink"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "append_file"
+    },
+    "copy_nested_symlink": {
+      "error": {
+        "code": "PATH_OUTSIDE_ALLOWED_ROOT",
+        "message": "Destination parent resolves outside project root"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "copy_file"
+    },
+    "delete_dest_symlink": {
+      "error": {
+        "code": "SYMLINK_WRITE_DENIED",
+        "message": "Destination is a symlink"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "delete_file"
+    },
+    "mkdir_nested_symlink": {
+      "error": {
+        "code": "PATH_OUTSIDE_ALLOWED_ROOT",
+        "message": "Destination parent resolves outside project root"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "mkdir"
+    },
+    "move_nested_symlink": {
+      "error": {
+        "code": "PATH_OUTSIDE_ALLOWED_ROOT",
+        "message": "Destination parent resolves outside project root"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "move_file"
+    },
+    "write_absolute": {
+      "error": {
+        "code": "INVALID_PATH",
+        "message": "Absolute paths are not allowed"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "write_file"
+    },
+    "write_missing_sha": {
+      "error": {
+        "code": "WRITE_CONFLICT",
+        "message": "expected_sha256 is required when overwriting an existing file"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "write_file"
+    },
+    "write_nested_symlink": {
+      "error": {
+        "code": "PATH_OUTSIDE_ALLOWED_ROOT",
+        "message": "Destination parent resolves outside project root"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "write_file"
+    },
+    "write_nul": {
+      "error": {
+        "code": "INVALID_ENCODING",
+        "message": "Content contains NUL byte"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "write_file"
+    },
+    "write_project_disabled": {
+      "error": {
+        "code": "WRITE_NOT_ALLOWED",
+        "message": "Write capability is disabled for this project"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "write_file"
+    },
+    "write_symlink": {
+      "error": {
+        "code": "SYMLINK_WRITE_DENIED",
+        "message": "Target path is a symlink: symlink_file.txt"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "write_file"
+    },
+    "write_traversal": {
+      "error": {
+        "code": "INVALID_PATH",
+        "message": "Parent directory traversal ('..') is not allowed"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "write_file"
+    },
+    "write_writes_disabled": {
+      "error": {
+        "code": "WRITES_DISABLED",
+        "message": "Controlled writes are disabled by administrator setting"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "write_file"
+    },
+    "write_wrong_sha": {
+      "error": {
+        "code": "WRITE_CONFLICT",
+        "message": "Hash mismatch: expected wronghash, found d5bcc2740e7d6f0877af642460870a72be59856e6341921f25af79d5adb2696b"
+      },
+      "ok": false,
+      "project": "mock-proj",
+      "target": "mock-target",
+      "tool": "write_file"
+    },
+    "writes_disabled": {
+      "ok": false
+    }
+  },
+  "mkdir": {
+    "ok": true,
+    "project": "mock-proj",
+    "result": {
+      "created": true,
+      "path": "new_dir"
+    },
+    "target": "mock-target",
+    "tool": "mkdir"
+  },
+  "move": {
+    "ok": true,
+    "project": "mock-proj",
+    "result": {
+      "dest": "existing_moved.txt",
+      "moved": true,
+      "source": "existing.txt"
+    },
+    "target": "mock-target",
+    "tool": "move_file"
+  },
+  "schema": 1,
+  "write_create": {
+    "ok": true,
+    "project": "mock-proj",
+    "result": {
+      "atomic": true,
+      "backup_path": null,
+      "bytes_written": 10,
+      "created": true,
+      "new_sha256": "02dc6ac2e01918b438261e0142683d51de73ac7657ea61099f5357b46ee36c38",
+      "old_sha256": null,
+      "path": "new.txt",
+      "sha256": "02dc6ac2e01918b438261e0142683d51de73ac7657ea61099f5357b46ee36c38"
+    },
+    "target": "mock-target",
+    "tool": "write_file"
+  },
+  "write_create_dry": {
+    "ok": true,
+    "project": "mock-proj",
+    "result": {
+      "current_sha256": null,
+      "diff": "--- a/new.txt\n+++ b/new.txt\n@@ -0,0 +1 @@\n+hello new\n",
+      "diff_truncated": false,
+      "dry_run": true,
+      "path": "new.txt",
+      "proposed_sha256": "02dc6ac2e01918b438261e0142683d51de73ac7657ea61099f5357b46ee36c38",
+      "size_after": 10,
+      "size_before": 0,
+      "unified_diff": "--- a/new.txt\n+++ b/new.txt\n@@ -0,0 +1 @@\n+hello new\n"
+    },
+    "target": "mock-target",
+    "tool": "write_file"
+  }
+}

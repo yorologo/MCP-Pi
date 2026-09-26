@@ -111,6 +111,68 @@ func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName strin
 		}
 		return responseMap(c.GitStatus(ctx, invocation.RequestID, target, project))
 
+	case "write_file":
+		target, okTarget := requiredString(args, "target")
+		project, okProject := requiredString(args, "project")
+		relativePath, okPath := preferredString(args, "relative_path", "path")
+		content, okContent := args["content"].(string)
+		if !okTarget || !okProject || !okPath || !okContent {
+			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target', 'project', 'relative_path', and 'content' are required")
+		}
+		expectedSHA, _ := args["expected_sha256"].(string)
+		return responseMap(c.WriteFile(ctx, invocation.RequestID, clientID, target, project, writeRequest{
+			Path:           relativePath,
+			Content:        content,
+			ExpectedSHA256: expectedSHA,
+			DryRun:         pythonTruthy(args["dry_run"]),
+			Create:         pythonTruthy(args["create"]),
+		}))
+
+	case "append_file":
+		target, okTarget := requiredString(args, "target")
+		project, okProject := requiredString(args, "project")
+		path, okPath := preferredString(args, "relative_path", "path")
+		content, okContent := args["content"].(string)
+		if !okTarget || !okProject || !okPath || !okContent {
+			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target', 'project', 'path' (or 'relative_path'), and 'content' are required")
+		}
+		return responseMap(c.AppendFile(ctx, invocation.RequestID, clientID, target, project, path, content))
+
+	case "delete_file":
+		target, okTarget := requiredString(args, "target")
+		project, okProject := requiredString(args, "project")
+		path, okPath := preferredString(args, "relative_path", "path")
+		if !okTarget || !okProject || !okPath {
+			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target', 'project', and 'path' (or 'relative_path') are required")
+		}
+		return responseMap(c.DeleteFile(ctx, invocation.RequestID, clientID, target, project, path))
+
+	case "copy_file", "move_file":
+		target, okTarget := requiredString(args, "target")
+		project, okProject := requiredString(args, "project")
+		sourcePath, okSource := requiredString(args, "source_path")
+		destPath, okDest := requiredString(args, "dest_path")
+		if !okTarget || !okProject || !okSource || !okDest {
+			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target', 'project', 'source_path', and 'dest_path' are required")
+		}
+		if toolName == "copy_file" {
+			return responseMap(c.CopyFile(ctx, invocation.RequestID, clientID, target, project, sourcePath, destPath))
+		}
+		return responseMap(c.MoveFile(ctx, invocation.RequestID, clientID, target, project, sourcePath, destPath))
+
+	case "mkdir":
+		target, okTarget := requiredString(args, "target")
+		project, okProject := requiredString(args, "project")
+		path, okPath := preferredString(args, "relative_path", "path")
+		if !okTarget || !okProject || !okPath {
+			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target', 'project', and 'path' (or 'relative_path') are required")
+		}
+		parents := true
+		if raw, exists := args["parents"]; exists {
+			parents = pythonTruthy(raw)
+		}
+		return responseMap(c.Mkdir(ctx, invocation.RequestID, clientID, target, project, path, parents))
+
 	case "search":
 		target, okTarget := requiredString(args, "target")
 		project, okProject := requiredString(args, "project")
@@ -196,6 +258,13 @@ func requiredTargetProjectPath(args map[string]any) (string, string, string, boo
 	project, okProject := requiredString(args, "project")
 	relativePath, okPath := requiredString(args, "relative_path")
 	return target, project, relativePath, okTarget && okProject && okPath
+}
+
+func preferredString(args map[string]any, primary, fallback string) (string, bool) {
+	if value, ok := args[primary].(string); ok && value != "" {
+		return value, true
+	}
+	return requiredString(args, fallback)
 }
 
 func requiredString(args map[string]any, key string) (string, bool) {

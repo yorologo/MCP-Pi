@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -25,6 +27,10 @@ func (f *fakeRemote) RunCommand(_ context.Context, _ registry.Target, command st
 		return remote.CommandResult{ExitCode: 0, Stdout: "remote-box\n", DurationMS: 12}, nil
 	}
 	return remote.CommandResult{ExitCode: 1, Stderr: "unexpected command"}, nil
+}
+
+func (f *fakeRemote) RunPython(_ context.Context, _ registry.Target, _ string, _ []string, _ []byte, _ time.Duration) (remote.CommandResult, error) {
+	return remote.CommandResult{ExitCode: 0}, nil
 }
 
 func (f *fakeRemote) ProbeFacts(_ context.Context, _ registry.Target, _ bool, _ time.Duration) (map[string]any, error) {
@@ -74,6 +80,39 @@ func (f *fakeRemote) Search(_ context.Context, _ registry.Target, _, _, _ string
 	return []remote.SearchMatch{
 		{File: "a.txt", Line: 2, Text: "needle here"},
 		{File: "dir/b.txt", Line: 7, Text: "another needle"},
+	}, nil
+}
+
+func (f *fakeRemote) ProbePath(_ context.Context, _ registry.Target, candidatePath string, _ time.Duration) (remote.PathProbe, error) {
+	return remote.PathProbe{
+		Exists:              false,
+		CanonicalPath:       candidatePath,
+		ParentExists:        true,
+		ParentCanonicalPath: filepath.Dir(candidatePath),
+	}, nil
+}
+
+func (f *fakeRemote) ResolveSafeDestination(_ context.Context, _ registry.Target, projectRoot, candidatePath string, _ bool, _ time.Duration) (remote.SafeDestination, error) {
+	return remote.SafeDestination{
+		RootCanonical:   projectRoot,
+		ParentCanonical: filepath.Dir(candidatePath),
+		DestinationPath: candidatePath,
+	}, nil
+}
+
+func (f *fakeRemote) WriteFileAtomic(_ context.Context, _ registry.Target, _ string, content []byte, create bool, expectedSHA256 string, _ int, _ time.Duration) (remote.AtomicWriteResult, error) {
+	sum := sha256.Sum256(content)
+	var old *string
+	if expectedSHA256 != "" {
+		value := expectedSHA256
+		old = &value
+	}
+	return remote.AtomicWriteResult{
+		Created:      create,
+		OldSHA256:    old,
+		NewSHA256:    fmt.Sprintf("%x", sum),
+		BytesWritten: len(content),
+		Atomic:       true,
 	}, nil
 }
 

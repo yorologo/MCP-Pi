@@ -166,8 +166,8 @@ func TestInvokeSearchRecordsBestEffortAudit(t *testing.T) {
 
 func TestInvokeUnportedToolFailsClosed(t *testing.T) {
 	c, _, _ := seededRemoteCore(t)
-	response := c.Invoke(context.Background(), Invocation{ClientID: "local"}, "write_file", map[string]any{
-		"target": "t", "project": "p", "relative_path": "x", "content": "x",
+	response := c.Invoke(context.Background(), Invocation{ClientID: "local"}, "run_task", map[string]any{
+		"target": "t", "project": "p", "task": "status",
 	})
 	code, _ := invokeError(t, response)
 	if code != "TOOL_NOT_IMPLEMENTED" {
