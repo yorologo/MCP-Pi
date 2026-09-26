@@ -34,7 +34,7 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SOURCE_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 SERVICE_USER=mcp-gateway
 SERVICE_GROUP=mcp-gateway
 SERVICE_HOME=/home/mcp-gateway

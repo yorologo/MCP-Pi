@@ -241,7 +241,8 @@ worker() {
     atomic_write "$dir/pid" "$$"
     atomic_write "$dir/state" "RUNNING"
 
-    export MCP_PI_RESUMABLE_JOB_ID="$(meta_value "$dir" job)"
+    MCP_PI_RESUMABLE_JOB_ID="$(meta_value "$dir" job)"
+    export MCP_PI_RESUMABLE_JOB_ID
     export MCP_PI_RESUMABLE_STATE_DIR="$dir"
 
     local wake_acquired=0

@@ -111,7 +111,6 @@ REMOTE_UNIT_BACKUP="${REMOTE_DATA_DIR}/deploy-unit-backup-${STAMP}"
 REMOTE_REGISTRY_BACKUP="${REMOTE_DATA_DIR}/backups/deploy-pre-${SHORT_SHA}-${STAMP}.db"
 OLD_DEPLOY_SHA=""
 ACTIVATED=0
-ROLLBACK_VERIFIED=0
 
 cleanup_local() {
     rm -rf "${STAGE_DIR}"
@@ -208,7 +207,6 @@ REMOTE
     fi
     echo "CONTROL_PLANE_RESTORED reason=rollback"
     ACTIVATED=0
-    ROLLBACK_VERIFIED=1
     echo "ROLLBACK_VERIFIED old_sha=${OLD_DEPLOY_SHA:-unknown}"
 }
 

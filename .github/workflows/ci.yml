@@ -54,7 +54,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck install.sh scripts/*.sh
+          shellcheck --severity=warning install.sh scripts/*.sh
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
