@@ -81,7 +81,8 @@ Before these integration changes may be promoted:
 3. pass installer, documentation and build gates;
 4. validate the declared Python minimum independently of the reference runtime;
 5. commit and push the exact validated state to `develop`;
-6. only in the later deployment phase, deploy that exact commit to the reference ARMv6 appliance and run functional/performance acceptance;
-7. keep `main` unchanged until release promotion is explicitly justified.
+6. only in the later deployment phase, deploy that exact commit to the reference ARMv6 appliance and run functional/security acceptance plus `scripts/benchmark_runtime.py`;
+7. use the ARMv6 benchmark to quantify the current Go-to-Python process boundary before approving any Python-to-Go Core migration;
+8. keep `main` unchanged until release promotion is explicitly justified.
 
 Evidence from the later appliance acceptance, not this document, determines whether deployment is PASS.

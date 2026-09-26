@@ -130,4 +130,6 @@ flowchart TD
 
 The reference appliance is intentionally constrained. Heavy tests, frontend builds and Go cross-compilation run on a development host. The appliance runs only lightweight validation/Doctor and the production services.
 
+The current Go adapter invokes the Python Core through a fresh bridge subprocess for individual tool calls. That boundary is a known performance candidate on ARMv6, but a full Go rewrite is not assumed to be beneficial until the reference appliance quantifies process-startup, in-process Core, adapter and remote-operation costs separately. See [performance.md](reference/performance.md) for the canonical measurement and migration gate.
+
 See [security.md](security.md), [configuration.md](configuration.md) and [compatibility.md](reference/compatibility.md).

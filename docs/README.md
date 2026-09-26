@@ -26,6 +26,12 @@ Project context, not step-by-step operating instructions:
 
 [`reference/`](reference/) keeps specialized protocol, lifecycle, deployment and integration material that is useful to maintainers but should not compete with the beginner path.
 
+Key maintainer references:
+
+- [`reference/performance.md`](reference/performance.md) — runtime benchmark and evidence gate for any Python-to-Go consolidation.
+- [`reference/mcp-adapter.md`](reference/mcp-adapter.md) — Go MCP adapter and Python bridge boundary.
+- [`reference/compatibility.md`](reference/compatibility.md) — supported runtime/platform contract.
+
 Reference documents are not the source of truth for a command when a CURRENT guide says otherwise.
 
 ## ARCHIVE — historical evidence

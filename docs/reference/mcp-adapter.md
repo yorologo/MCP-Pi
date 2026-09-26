@@ -1,4 +1,4 @@
-# Adaptador Oficial de Protocolo MCP (Phase 4C)
+# Adaptador Oficial de Protocolo MCP
 
 Este documento describe la especificación técnica, arquitectura, transporte y modelo de seguridad del **Adaptador Oficial de Protocolo MCP (Model Context Protocol)** implementado en MCP-Pi.
 
@@ -6,7 +6,7 @@ Este documento describe la especificación técnica, arquitectura, transporte y 
 
 ## 1. Visión General y Propósito
 
-El adaptador MCP actúa como una capa de serialización y transporte agnóstica del cliente, construida directamente sobre el **SDK Oficial de Go** (`github.com/modelcontextprotocol/go-sdk` v1.7.0). Su función es exponer el catálogo de 8 herramientas seguras del Gateway Core hacia clientes MCP mediante una interfaz formal y estandarizada, sin ejecutar nunca lógica sensible en el propio adaptador.
+El adaptador MCP actúa como una capa de serialización y transporte agnóstica del cliente, construida directamente sobre el **SDK Oficial de Go** (`github.com/modelcontextprotocol/go-sdk` v1.7.0). Su función es exponer el catálogo determinista actual de 21 herramientas del Gateway Core hacia clientes MCP mediante una interfaz formal y estandarizada, sin duplicar la lógica sensible del Policy Engine en el propio adaptador.
 
 ```text
 [ Cliente MCP (Claude Desktop, IDE, etc.) ]
@@ -95,17 +95,17 @@ El adaptador invoca al núcleo Python mediante subprocesos aislados:
 ```bash
 python3 -m mcp_gateway.bridge invoke <tool_name> '<json_arguments>'
 ```
-- Cada invocación inicia un proceso Python ligero que carga la configuración o registro SQLite actual.
-- El tiempo de ejecución del puente en MCP-Pi es de aproximadamente **2.0 segundos**, atribuible a la inicialización del intérprete de Python 3.9 sobre la CPU single-core de 700 MHz.
+- Cada invocación inicia actualmente un proceso Python nuevo que carga el bridge/Core y abre el Registry existente.
+- Esta frontera proceso-por-invocación es un candidato explícito de optimización en ARMv6. No se mantiene una cifra fija de latencia en esta referencia porque depende del runtime y del hardware desplegado; la medición autoritativa se obtiene con [`performance.md`](performance.md) y `scripts/benchmark_runtime.py`.
 - Respeta de inmediato el **Emergency Kill Switch**: si `gateway_enabled` es falso en la base de datos SQLite, la llamada es rechazada con el código estandarizado `GATEWAY_DISABLED`.
 
 ---
 
 ## 7. Identidad del Cliente y Limitaciones Actuales
 
-- **Perfil Lógico**: En la Fase 4C, las peticiones del adaptador operan bajo el perfil lógico `mcp-local`.
-- **Identidad Upstream No Autenticada**: El protocolo MCP recibe metadatos `clientInfo` autodeclarados por el cliente, los cuales no son criptográficamente confiables.
-- **Fase 6 (External AI Clients)**: La asociación de identidades upstream autenticadas (OAuth de OpenAI, tokens de Gemini o Claude) con los registros de la tabla `ai_clients` se implementará formalmente en la Fase 6.
+- **Identidad efectiva**: se configura con `--client-id` / `MCP_CLIENT_ID`; cuando existe autenticación HTTP sin un ID explícito, el runtime actual usa `chatgpt-main` como identidad configurada por defecto.
+- **Autenticación HTTP**: el Bearer token se carga preferentemente desde archivo (`--auth-token-file` / `MCP_AUTH_TOKEN_FILE`) o desde la configuración equivalente. Un `X-MCP-Client-ID` solo se acepta con token válido y debe coincidir con la identidad configurada; de lo contrario se rechaza como spoofing.
+- **Anonymous/fail-closed**: cuando hay autenticación configurada, las peticiones no autenticadas reciben un servidor con identidad `NONE` y catálogo vacío. `clientInfo` del protocolo no sustituye autenticación.
 
 ---
 
@@ -114,4 +114,4 @@ python3 -m mcp_gateway.bridge invoke <tool_name> '<json_arguments>'
 > [!WARNING]
 > **Aislamiento de Red y ChatGPT**:
 > ChatGPT no puede conectarse de manera directa a un servidor MCP confinado exclusivamente a `127.0.0.1:8090`. Por principios de diseño y seguridad, el puerto 8090 **NO** debe exponerse a la LAN ni a Internet mediante port forwarding o servicios no auditados.
-> La integración con ChatGPT en la Fase 6 requerirá la evaluación de un túnel seguro dedicado (Secure MCP Tunnel o conector de red privada).
+> El acceso externo debe mantenerse detrás del túnel/conector autenticado previsto por el despliegue. El puerto local `8090` no debe exponerse directamente a la LAN o Internet.

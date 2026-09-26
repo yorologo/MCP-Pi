@@ -35,6 +35,8 @@ CONTEXT_FILES = [
     ROOT / "CHANGELOG.md",
     DOCS / "releases" / "v1.3.3.md",
     DOCS / "reference" / "compatibility.md",
+    DOCS / "reference" / "performance.md",
+    DOCS / "reference" / "mcp-adapter.md",
     DOCS / "reference" / "roadmap.md",
 ]
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -154,6 +156,17 @@ def main() -> int:
     docs_index = (DOCS / "README.md").read_text(encoding="utf-8")
     if "archive/" not in docs_index or "reference/" not in docs_index:
         add(errors, "docs/README.md must classify reference and archive material")
+    if "reference/performance.md" not in docs_index:
+        add(errors, "docs/README.md must link the runtime performance reference")
+
+    performance_doc = (DOCS / "reference" / "performance.md").read_text(encoding="utf-8")
+    for required in ("benchmark_runtime.py", "bridge_process_tax_p50_ms", "Go-only"):
+        if required not in performance_doc:
+            add(errors, f"performance reference missing {required}")
+
+    benchmark_path = ROOT / "scripts" / "benchmark_runtime.py"
+    if not benchmark_path.exists():
+        add(errors, "runtime benchmark is missing: scripts/benchmark_runtime.py")
 
     project_state = (DOCS / "project-state.md").read_text(encoding="utf-8")
     for required in ("gateway_status", ".deployment.json", ".deployed-git-sha"):
