@@ -1,0 +1,606 @@
+{
+  "canonical_paths": [
+    {
+      "canonical": "/srv/project",
+      "platform": null,
+      "result": {
+        "ok": true,
+        "value": null
+      },
+      "root": "/srv/project"
+    },
+    {
+      "canonical": "/srv/project/file",
+      "platform": null,
+      "result": {
+        "ok": true,
+        "value": null
+      },
+      "root": "/srv/project"
+    },
+    {
+      "canonical": "/srv/project2/file",
+      "platform": null,
+      "result": {
+        "code": "PATH_OUTSIDE_ALLOWED_ROOT",
+        "message": "Path '/srv/project2/file' resolves outside allowed root '/srv/project'",
+        "ok": false
+      },
+      "root": "/srv/project"
+    },
+    {
+      "canonical": "/srv/project/../other",
+      "platform": null,
+      "result": {
+        "code": "PATH_OUTSIDE_ALLOWED_ROOT",
+        "message": "Path '/srv/project/../other' resolves outside allowed root '/srv/project'",
+        "ok": false
+      },
+      "root": "/srv/project"
+    },
+    {
+      "canonical": "C:\\Work\\Repo",
+      "platform": "windows",
+      "result": {
+        "ok": true,
+        "value": null
+      },
+      "root": "C:\\Work\\Repo"
+    },
+    {
+      "canonical": "c:\\work\\repo\\File.txt",
+      "platform": "windows",
+      "result": {
+        "ok": true,
+        "value": null
+      },
+      "root": "C:\\Work\\Repo"
+    },
+    {
+      "canonical": "C:\\Work\\Repo2\\File.txt",
+      "platform": "windows",
+      "result": {
+        "code": "PATH_OUTSIDE_ALLOWED_ROOT",
+        "message": "Path 'C:\\Work\\Repo2\\File.txt' resolves outside allowed root 'C:\\Work\\Repo'",
+        "ok": false
+      },
+      "root": "C:\\Work\\Repo"
+    },
+    {
+      "canonical": "D:\\Work\\Repo\\File.txt",
+      "platform": "windows",
+      "result": {
+        "code": "PATH_OUTSIDE_ALLOWED_ROOT",
+        "message": "Path 'D:\\Work\\Repo\\File.txt' resolves outside allowed root 'C:\\Work\\Repo'",
+        "ok": false
+      },
+      "root": "C:\\Work\\Repo"
+    },
+    {
+      "canonical": "C:/Work/Repo/Sub/../File.txt",
+      "platform": "windows",
+      "result": {
+        "ok": true,
+        "value": null
+      },
+      "root": "C:\\Work\\Repo"
+    }
+  ],
+  "capabilities": [
+    {
+      "capability": "read",
+      "project": {
+        "read": true,
+        "write": false
+      },
+      "result": {
+        "ok": true,
+        "value": null
+      }
+    },
+    {
+      "capability": "read",
+      "project": {
+        "read": false,
+        "write": true
+      },
+      "result": {
+        "code": "TOOL_NOT_ALLOWED",
+        "message": "Read capability is disabled for this project",
+        "ok": false
+      }
+    },
+    {
+      "capability": "write",
+      "project": {
+        "read": true,
+        "write": true
+      },
+      "result": {
+        "ok": true,
+        "value": null
+      }
+    },
+    {
+      "capability": "write",
+      "project": {
+        "read": true,
+        "write": false
+      },
+      "result": {
+        "code": "WRITE_NOT_ALLOWED",
+        "message": "Write capability is disabled for this project",
+        "ok": false
+      }
+    },
+    {
+      "capability": "read",
+      "project": {},
+      "result": {
+        "ok": true,
+        "value": null
+      }
+    },
+    {
+      "capability": "execute",
+      "project": {},
+      "result": {
+        "code": "TOOL_NOT_ALLOWED",
+        "message": "Unknown capability: execute",
+        "ok": false
+      }
+    }
+  ],
+  "content_utf8": [
+    {
+      "input": "hello",
+      "result": {
+        "ok": true,
+        "value": {
+          "hex": "68656c6c6f",
+          "utf8_len": 5
+        }
+      }
+    },
+    {
+      "input": "\u00e1",
+      "result": {
+        "ok": true,
+        "value": {
+          "hex": "c3a1",
+          "utf8_len": 2
+        }
+      }
+    },
+    {
+      "input": "emoji \ud83d\ude00",
+      "result": {
+        "ok": true,
+        "value": {
+          "hex": "656d6f6a6920f09f9880",
+          "utf8_len": 10
+        }
+      }
+    },
+    {
+      "input": "a\u0000b",
+      "result": {
+        "code": "INVALID_ENCODING",
+        "message": "Content contains NUL byte",
+        "ok": false
+      }
+    }
+  ],
+  "privilege_policy": [
+    {
+      "input": null,
+      "result": {
+        "ok": true,
+        "value": "never"
+      }
+    },
+    {
+      "input": " ASK_ALWAYS ",
+      "result": {
+        "ok": true,
+        "value": "ask_always"
+      }
+    },
+    {
+      "input": "ask_once_per_boot",
+      "result": {
+        "ok": true,
+        "value": "ask_once_per_boot"
+      }
+    },
+    {
+      "input": "always_allow",
+      "result": {
+        "ok": true,
+        "value": "always_allow"
+      }
+    },
+    {
+      "input": "bogus",
+      "result": {
+        "code": "INVALID_PRIVILEGE_POLICY",
+        "message": "Unsupported privilege policy: 'bogus'",
+        "ok": false
+      }
+    }
+  ],
+  "privilege_request": [
+    {
+      "input": null,
+      "result": {
+        "ok": true,
+        "value": "standard"
+      }
+    },
+    {
+      "input": " REQUIRED ",
+      "result": {
+        "ok": true,
+        "value": "required"
+      }
+    },
+    {
+      "input": "standard",
+      "result": {
+        "ok": true,
+        "value": "standard"
+      }
+    },
+    {
+      "input": "admin",
+      "result": {
+        "code": "INVALID_PRIVILEGE_REQUEST",
+        "message": "Unsupported privilege request: 'admin'",
+        "ok": false
+      }
+    }
+  ],
+  "relative_paths": [
+    {
+      "input": "foo/bar",
+      "result": {
+        "ok": true,
+        "value": "foo/bar"
+      }
+    },
+    {
+      "input": " foo/./bar ",
+      "result": {
+        "ok": true,
+        "value": "foo/bar"
+      }
+    },
+    {
+      "input": "foo\\bar",
+      "result": {
+        "ok": true,
+        "value": "foo/bar"
+      }
+    },
+    {
+      "input": "foo/",
+      "result": {
+        "ok": true,
+        "value": "foo"
+      }
+    },
+    {
+      "input": "",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Path cannot be empty",
+        "ok": false
+      }
+    },
+    {
+      "input": ".",
+      "result": {
+        "ok": true,
+        "value": "."
+      }
+    },
+    {
+      "input": "..",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Parent directory traversal ('..') is not allowed",
+        "ok": false
+      }
+    },
+    {
+      "input": "../x",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Parent directory traversal ('..') is not allowed",
+        "ok": false
+      }
+    },
+    {
+      "input": "foo/../bar",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Parent directory traversal ('..') is not allowed",
+        "ok": false
+      }
+    },
+    {
+      "input": "/etc/passwd",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Absolute paths are not allowed",
+        "ok": false
+      }
+    },
+    {
+      "input": "\\\\server\\share",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Absolute paths are not allowed",
+        "ok": false
+      }
+    },
+    {
+      "input": "~/.ssh",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Absolute paths are not allowed",
+        "ok": false
+      }
+    },
+    {
+      "input": "C:\\Windows",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Absolute drive paths are not allowed",
+        "ok": false
+      }
+    },
+    {
+      "input": "foo//bar",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Empty path segment is not allowed",
+        "ok": false
+      }
+    },
+    {
+      "input": "foo/bar//",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Empty path segment is not allowed",
+        "ok": false
+      }
+    },
+    {
+      "input": "a\u0000b",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Path contains NUL byte",
+        "ok": false
+      }
+    }
+  ],
+  "schema": 1,
+  "tasks": [
+    {
+      "name": "valid",
+      "project": {
+        "tasks": {
+          "build": {
+            "argv": [
+              "go",
+              "test",
+              "./..."
+            ],
+            "enabled": true,
+            "timeout": 30
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "value": {
+          "argv": [
+            "go",
+            "test",
+            "./..."
+          ],
+          "timeout": 30
+        }
+      },
+      "task": "build"
+    },
+    {
+      "name": "disabled",
+      "project": {
+        "tasks": {
+          "build": {
+            "argv": [
+              "go",
+              "test"
+            ],
+            "enabled": false,
+            "timeout": 30
+          }
+        }
+      },
+      "result": {
+        "code": "TASK_NOT_ALLOWED",
+        "message": "Task 'build' is disabled",
+        "ok": false
+      },
+      "task": "build"
+    },
+    {
+      "name": "empty_argv",
+      "project": {
+        "tasks": {
+          "build": {
+            "argv": [],
+            "enabled": true,
+            "timeout": 30
+          }
+        }
+      },
+      "result": {
+        "code": "TASK_INVALID",
+        "message": "Task 'build' has invalid argv",
+        "ok": false
+      },
+      "task": "build"
+    },
+    {
+      "name": "empty_arg",
+      "project": {
+        "tasks": {
+          "build": {
+            "argv": [
+              "go",
+              ""
+            ],
+            "enabled": true,
+            "timeout": 30
+          }
+        }
+      },
+      "result": {
+        "code": "TASK_INVALID",
+        "message": "Task 'build' has invalid argv",
+        "ok": false
+      },
+      "task": "build"
+    },
+    {
+      "name": "low_timeout",
+      "project": {
+        "tasks": {
+          "build": {
+            "argv": [
+              "go"
+            ],
+            "enabled": true,
+            "timeout": 0
+          }
+        }
+      },
+      "result": {
+        "code": "TASK_INVALID",
+        "message": "Task 'build' timeout must be between 1 and 3600 seconds",
+        "ok": false
+      },
+      "task": "build"
+    },
+    {
+      "name": "high_timeout",
+      "project": {
+        "tasks": {
+          "build": {
+            "argv": [
+              "go"
+            ],
+            "enabled": true,
+            "timeout": 3601
+          }
+        }
+      },
+      "result": {
+        "code": "TASK_INVALID",
+        "message": "Task 'build' timeout must be between 1 and 3600 seconds",
+        "ok": false
+      },
+      "task": "build"
+    },
+    {
+      "name": "string_timeout",
+      "project": {
+        "tasks": {
+          "build": {
+            "argv": [
+              "go"
+            ],
+            "enabled": true,
+            "timeout": "30"
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "value": {
+          "argv": [
+            "go"
+          ],
+          "timeout": 30
+        }
+      },
+      "task": "build"
+    },
+    {
+      "name": "missing",
+      "project": {
+        "tasks": {}
+      },
+      "result": {
+        "code": "TASK_NOT_ALLOWED",
+        "message": "Task 'build' is not allowlisted for this project",
+        "ok": false
+      },
+      "task": "build"
+    }
+  ],
+  "write_paths": [
+    {
+      "input": ".",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Target path cannot be the root directory",
+        "ok": false
+      }
+    },
+    {
+      "input": "foo",
+      "result": {
+        "ok": true,
+        "value": "foo"
+      }
+    },
+    {
+      "input": "foo/",
+      "result": {
+        "ok": true,
+        "value": "foo"
+      }
+    },
+    {
+      "input": "../x",
+      "result": {
+        "code": "INVALID_PATH",
+        "message": "Parent directory traversal ('..') is not allowed",
+        "ok": false
+      }
+    }
+  ],
+  "write_sizes": [
+    {
+      "hex": "616263",
+      "max": 3,
+      "result": {
+        "ok": true,
+        "value": null
+      }
+    },
+    {
+      "hex": "61626364",
+      "max": 3,
+      "result": {
+        "code": "FILE_TOO_LARGE",
+        "message": "Content size (4 bytes) exceeds allowed limit of 3 bytes",
+        "ok": false
+      }
+    }
+  ]
+}
