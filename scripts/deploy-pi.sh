@@ -219,6 +219,7 @@ candidate="$1"; upload="$2"; expected_sha="$3"
 work="$upload/extracted"
 rm -rf "$work"
 mkdir -p "$work"
+umask 022
 tar -xzf "$upload/release.tar.gz" -C "$work"
 pkg="$(find "$work" -mindepth 1 -maxdepth 1 -type d -name 'MCP-Pi-*' -print -quit)"
 [ -n "$pkg" ]

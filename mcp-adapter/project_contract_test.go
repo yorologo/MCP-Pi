@@ -151,6 +151,7 @@ func TestOperationalContractsRemainExplicit(t *testing.T) {
 			"CONTROL_PLANE_RESTORED",
 			"ROLLBACK_VERIFIED",
 			`"runtime": "go-only"`,
+			"umask 022",
 		},
 		"scripts/build-release-package.sh": {
 			"release packaging requires a clean worktree",

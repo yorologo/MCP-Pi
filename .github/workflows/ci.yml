@@ -86,10 +86,23 @@ jobs:
           tar -tzf "$pkg" > "$RUNNER_TEMP/release.contents"
           grep -q '/bin/mcp-gateway-adapter$' "$RUNNER_TEMP/release.contents"
           grep -q '/install.sh$' "$RUNNER_TEMP/release.contents"
-          if grep -E '/(src/mcp_gateway|requirements[.]txt|[^/]+[.]py)$' "$RUNNER_TEMP/release.contents"; then
+          if grep -E '/(src/mcp_gateway|requirements[.]txt|[^/]+[.]py)          root="$(find "$RUNNER_TEMP/release-extract" -mindepth 1 -maxdepth 1 -type d -name 'MCP-Pi-*' -print -quit)"
+          test -n "$root"
+          test -x "$root/bin/mcp-gateway-adapter"
+          test -x "$root/bin/mcp-gateway"
+          test -x "$root/bin/mcp-gateway-client-stdio"
+          if find "$root" -type d ! -perm -0005 -print -quit | grep -q .; then
+            echo "Release contains a directory not traversable by the service account" >&2
+            exit 1
+          fi
+          sha256sum -c "$root/SHA256SUMS"
+          sha256sum "$pkg"
+ "$RUNNER_TEMP/release.contents"; then
             echo "Python payload found in release bundle" >&2
             exit 1
           fi
+          # Extraction permissions must reflect the archive, not the restrictive build umask.
+          umask 022
           tar -xzf "$pkg" -C "$RUNNER_TEMP/release-extract"
           root="$(find "$RUNNER_TEMP/release-extract" -mindepth 1 -maxdepth 1 -type d -name 'MCP-Pi-*' -print -quit)"
           test -n "$root"
