@@ -83,9 +83,10 @@ jobs:
           scripts/build-release-package.sh "$GITHUB_SHA" "$RUNNER_TEMP/release"
           pkg="$(find "$RUNNER_TEMP/release" -maxdepth 1 -name 'MCP-Pi-*-linux-armv6-*.tar.gz' -print -quit)"
           test -n "$pkg"
-          tar -tzf "$pkg" | grep -q '/bin/mcp-gateway-adapter
-          tar -tzf "$pkg" | grep -q '/install.sh
-          if tar -tzf "$pkg" | grep -E '/(src/mcp_gateway|requirements\.txt|[^/]+\.py); then
+          tar -tzf "$pkg" > "$RUNNER_TEMP/release.contents"
+          grep -q '/bin/mcp-gateway-adapter$' "$RUNNER_TEMP/release.contents"
+          grep -q '/install.sh$' "$RUNNER_TEMP/release.contents"
+          if grep -E '/(src/mcp_gateway|requirements[.]txt|[^/]+[.]py)$' "$RUNNER_TEMP/release.contents"; then
             echo "Python payload found in release bundle" >&2
             exit 1
           fi
