@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file defines how automated contributors must work on MCP-Pi. The current source candidate is 1.5.0-rc.2 and the product runtime is Go-only.
+This file defines how automated contributors must work on MCP-Pi. The current source candidate is 1.5.0-rc.3 and the product runtime is Go-only.
 
 ## Non-negotiable principles
 

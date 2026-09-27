@@ -291,7 +291,7 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 	tunnelStatus := "SKIP"
 	tunnelMsg := "optional tunnel not evaluated"
 
-	if systemdAvailable() {
+	if applianceSystemdAvailable() {
 		adminActive := serviceIsActive("mcp-gateway-admin.service")
 		mcpActive := serviceIsActive("mcp-gateway-mcp.service")
 		servicesPassed := adminActive && mcpActive
@@ -725,6 +725,21 @@ func systemdAvailable() bool {
 	}
 	_, err := exec.LookPath("systemctl")
 	return err == nil
+}
+
+func applianceSystemdAvailable() bool {
+	if !systemdAvailable() {
+		return false
+	}
+	for _, path := range []string{
+		"/etc/systemd/system/mcp-gateway-admin.service",
+		"/etc/systemd/system/mcp-gateway-mcp.service",
+	} {
+		if _, err := os.Stat(path); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func serviceIsActive(service string) bool {

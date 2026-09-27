@@ -2,6 +2,16 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
+
+## 1.5.0-rc.3 — candidate
+
+### Fixed
+- Doctor now distinguishes a real MCP-Pi systemd installation from a generic Linux/systemd host, so CI and development Linux hosts no longer fail appliance-only service/readiness checks.
+- The rc.2 tag is preserved as an immutable failed-CI candidate; rc.3 carries the corrected environment detection.
+
+### Compatibility
+- Core API, Bridge API, Tool Catalog, MCP protocol and Registry schema are unchanged from rc.2.
+
 ## 1.5.0-rc.2 — candidate
 
 ### Security

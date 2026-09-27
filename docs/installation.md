@@ -1,6 +1,6 @@
 # Installation
 
-`install.sh` is the canonical install/reinstall/update/rollback engine for the 1.5.0-rc.2 Go-only candidate. `scripts/deploy-pi.sh` is a maintainer promotion wrapper around the same installer, not a second activation engine.
+`install.sh` is the canonical install/reinstall/update/rollback engine for the 1.5.0-rc.3 Go-only candidate. `scripts/deploy-pi.sh` is a maintainer promotion wrapper around the same installer, not a second activation engine.
 
 ## Supported path
 

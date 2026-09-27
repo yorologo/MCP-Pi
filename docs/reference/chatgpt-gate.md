@@ -1,6 +1,6 @@
 # ChatGPT integration gate and secure MCP tunnel
 
-This reference describes the optional external MCP access path for the 1.5.0-rc.2 Go-only gateway.
+This reference describes the optional external MCP access path for the 1.5.0-rc.3 Go-only gateway.
 
 ## Local gate
 
