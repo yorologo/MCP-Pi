@@ -19,7 +19,7 @@
       <label for="project-target" class="field-label">Target Host</label>
       <select id="project-target" name="target_id" required class="field font-mono">
         {% for t in targets %}
-          <option value="{{ t.id }}" {% if project and project.target_id == t.id %}selected{% endif %}>{{ t.display_name or t.id }} · {{ t.id }} ({{ t.platform }})</option>
+          <option value="{{ t.id }}" {% if project and project.target_id == t.id %}selected{% endif %}>{% if t.display_name %}{{ t.display_name }}{% else %}{{ t.id }}{% endif %} · {{ t.id }} ({{ t.platform }})</option>
         {% endfor %}
       </select>
     </div>

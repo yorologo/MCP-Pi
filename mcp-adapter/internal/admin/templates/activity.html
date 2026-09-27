@@ -115,7 +115,7 @@
               {% if a.error_code %}<span class="text-[10px] font-mono text-rose-400 ml-1">{{ a.error_code }}</span>{% endif %}
             {% endif %}
           </td>
-          <td class="py-3 px-4 text-slate-400 truncate max-w-xs">{{ a.detail or '—' }}</td>
+          <td class="py-3 px-4 text-slate-400 truncate max-w-xs">{% if a.detail %}{{ a.detail }}{% else %}—{% endif %}</td>
         </tr>
         {% empty %}
         <tr><td colspan="6" class="py-6 text-center text-slate-500">No activity matches the current filters.</td></tr>

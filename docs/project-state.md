@@ -2,7 +2,7 @@
 
 This file records source/integration state, not live production.
 
-The current source candidate is **1.5.0-rc.3** on `develop`. `main` remains the stable-history branch until a deliberately validated promotion.
+The current source candidate is **1.5.0-rc.4** on `develop`. `main` remains the stable-history branch until a deliberately validated promotion.
 
 Numeric build/API/catalog/schema/protocol values are not duplicated here; use `manifest.json`, `compatibility.json` and `mcp-gateway version --json`.
 

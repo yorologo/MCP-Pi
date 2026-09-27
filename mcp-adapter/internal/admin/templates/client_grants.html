@@ -31,14 +31,14 @@
         <select id="grant-target" name="target_id" class="field font-mono" required>
           <option value="">Select Target</option>
           <option value="*" {% if editing_grant and editing_grant.target_id == '*' %}selected{% endif %}>* (all targets)</option>
-          {% for target in targets %}<option value="{{ target.id }}" {% if editing_grant and editing_grant.target_id == target.id %}selected{% endif %}>{{ target.display_name or target.id }} · {{ target.id }}{% if not target.enabled %} (disabled){% endif %}</option>{% endfor %}
+          {% for target in targets %}<option value="{{ target.id }}" {% if editing_grant and editing_grant.target_id == target.id %}selected{% endif %}>{% if target.display_name %}{{ target.display_name }}{% else %}{{ target.id }}{% endif %} · {{ target.id }}{% if not target.enabled %} (disabled){% endif %}</option>{% endfor %}
         </select>
       </div>
       <div>
         <label for="grant-project" class="field-label">Project</label>
         <select id="grant-project" name="project_id" class="field font-mono" required>
           <option value="*" {% if not editing_grant or not editing_grant.project_id or editing_grant.project_id == '*' %}selected{% endif %}>* (all projects in scope)</option>
-          {% for project in projects %}<option value="{{ project.id }}" {% if editing_grant and editing_grant.project_id == project.id %}selected{% endif %}>{{ project.display_name or project.id }} · {{ project.target_id }} / {{ project.id }}{% if not project.enabled %} (disabled){% endif %}</option>{% endfor %}
+          {% for project in projects %}<option value="{{ project.id }}" {% if editing_grant and editing_grant.project_id == project.id %}selected{% endif %}>{% if project.display_name %}{{ project.display_name }}{% else %}{{ project.id }}{% endif %} · {{ project.target_id }} / {{ project.id }}{% if not project.enabled %} (disabled){% endif %}</option>{% endfor %}
         </select>
       </div>
     </div>
@@ -114,7 +114,7 @@
         {% set high_impact = '*' in grant.capability or 'target_admin' in grant.capability %}
         <tr data-high-impact="{% if high_impact %}true{% else %}false{% endif %}" class="hover:bg-slate-900/40 {% if high_impact %}bg-amber-950/10{% endif %}">
           <td class="py-3 px-4 font-mono">{{ grant.target_id }}</td>
-          <td class="py-3 px-4 font-mono">{{ grant.project_id or '*' }}</td>
+          <td class="py-3 px-4 font-mono">{% if grant.project_id %}{{ grant.project_id }}{% else %}*{% endif %}</td>
           <td class="py-3 px-4 font-mono text-indigo-300">
             {{ grant.capability }}
             {% if '*' in grant.capability %}<span class="ml-1 rounded border border-amber-800 px-1.5 py-0.5 text-[10px] text-amber-300">WILDCARD</span>{% endif %}
@@ -147,8 +147,8 @@
       <p class="text-xs text-slate-400">Checks ordinary tool access through <code>authorize_client()</code>. Execution on an already privileged Target, including <code>run_command</code> and allowlisted <code>run_task</code>, additionally requires explicit <code>target_admin</code> plus the Target privilege policy/approval.</p>
     </div>
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <div><label for="check-target" class="field-label">Target</label><select id="check-target" name="target_id" class="field font-mono"><option value="*">* (no Target constraint)</option>{% for target in targets %}<option value="{{ target.id }}">{{ target.display_name or target.id }} · {{ target.id }}</option>{% endfor %}</select></div>
-      <div><label for="check-project" class="field-label">Project</label><select id="check-project" name="project_id" class="field font-mono"><option value="*">* (no Project constraint)</option>{% for project in projects %}<option value="{{ project.id }}">{{ project.display_name or project.id }} · {{ project.target_id }} / {{ project.id }}</option>{% endfor %}</select></div>
+      <div><label for="check-target" class="field-label">Target</label><select id="check-target" name="target_id" class="field font-mono"><option value="*">* (no Target constraint)</option>{% for target in targets %}<option value="{{ target.id }}">{% if target.display_name %}{{ target.display_name }}{% else %}{{ target.id }}{% endif %} · {{ target.id }}</option>{% endfor %}</select></div>
+      <div><label for="check-project" class="field-label">Project</label><select id="check-project" name="project_id" class="field font-mono"><option value="*">* (no Project constraint)</option>{% for project in projects %}<option value="{{ project.id }}">{% if project.display_name %}{{ project.display_name }}{% else %}{{ project.id }}{% endif %} · {{ project.target_id }} / {{ project.id }}</option>{% endfor %}</select></div>
       <div><label for="check-tool" class="field-label">Tool</label><select id="check-tool" name="tool_name" class="field font-mono" required>{% for tool in tool_names %}<option value="{{ tool }}">{{ tool }}</option>{% endfor %}</select></div>
     </div>
     <div class="flex justify-end"><button type="submit" class="btn-primary">Check Access</button></div>

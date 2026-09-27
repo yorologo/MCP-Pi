@@ -102,11 +102,11 @@
         </div>
         <div>
           <div class="text-xs uppercase tracking-wide text-slate-500">Observed level</div>
-          <div class="mt-1 font-mono text-sm text-slate-200">{{ priv.current_level or 'unknown' }} → {{ priv.maximum_level or 'unknown' }}</div>
+          <div class="mt-1 font-mono text-sm text-slate-200">{% if priv.current_level %}{{ priv.current_level }}{% else %}unknown{% endif %} → {% if priv.maximum_level %}{{ priv.maximum_level }}{% else %}unknown{% endif %}</div>
         </div>
         <div>
           <div class="text-xs uppercase tracking-wide text-slate-500">Backend</div>
-          <div class="mt-1 font-mono text-sm text-slate-200">{{ priv.backend or 'none' }}{% if priv.backend_user %} · {{ priv.backend_user }}{% endif %}{% if priv.backend_ready %} · ready{% else %} · not ready{% endif %}</div>
+          <div class="mt-1 font-mono text-sm text-slate-200">{% if priv.backend %}{{ priv.backend }}{% else %}none{% endif %}{% if priv.backend_user %} · {{ priv.backend_user }}{% endif %}{% if priv.backend_ready %} · ready{% else %} · not ready{% endif %}</div>
         </div>
         <div>
           <div class="text-xs uppercase tracking-wide text-slate-500">Approval</div>

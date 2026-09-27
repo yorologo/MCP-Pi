@@ -27,8 +27,8 @@
       <tbody class="divide-y divide-slate-800 text-slate-300">
         {% for c in clients %}
         <tr class="hover:bg-slate-900/40">
-          <td class="py-3 px-4"><div class="font-medium text-white">{{ c.display_name or c.id }}</div><div class="text-[11px] font-mono text-slate-500">{{ c.id }}</div></td>
-          <td class="py-3 px-4">{{ c.provider or '—' }}</td>
+          <td class="py-3 px-4"><div class="font-medium text-white">{% if c.display_name %}{{ c.display_name }}{% else %}{{ c.id }}{% endif %}</div><div class="text-[11px] font-mono text-slate-500">{{ c.id }}</div></td>
+          <td class="py-3 px-4">{% if c.provider %}{{ c.provider }}{% else %}—{% endif %}</td>
           <td class="max-w-xs break-words py-3 px-4 font-mono text-indigo-300">{{ c.protocol }}</td>
           <td class="py-3 px-4">
             {% if c.enabled %}

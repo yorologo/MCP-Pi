@@ -38,7 +38,8 @@ func setupTestAdminServer(t *testing.T) (*Server, *registry.Store) {
 
 	_, _ = store.DB().ExecContext(ctx, `INSERT INTO targets(id, display_name, platform, host, port, user, privilege_policy, enabled) VALUES ('test-target', 'Test Target', 'linux', '127.0.0.1', 22, 'testuser', 'never', 1)`)
 	_, _ = store.DB().ExecContext(ctx, `INSERT INTO projects(id, target_id, display_name, root, read_enabled, write_enabled, enabled) VALUES ('test-proj', 'test-target', 'Test Project', '/srv/test', 1, 0, 1)`)
-	_, _ = store.DB().ExecContext(ctx, `INSERT INTO ai_clients(id, display_name, enabled) VALUES ('test-client', 'Test AI Client', 1)`)
+	_, _ = store.DB().ExecContext(ctx, `INSERT INTO ai_clients(id, display_name, provider, protocol, enabled) VALUES ('test-client', 'Test AI Client', 'openai', 'mcp', 1)`)
+	_, _ = store.DB().ExecContext(ctx, `INSERT INTO grants(client_id, target_id, project_id, capability, enabled) VALUES ('test-client', 'test-target', 'test-proj', 'read', 1)`)
 
 	coreInstance := core.New(store, core.Config{
 		GatewayVersion:     buildinfo.GatewayVersion,
@@ -311,11 +312,11 @@ func TestAdminPagesRender(t *testing.T) {
 		url     string
 		content string
 	}{
-		{"/targets", "Targets"},
+		{"/targets", "Test Target"},
 		{"/targets/test-target/edit", "Test Target"},
-		{"/projects", "Projects"},
-		{"/clients", "Clients"},
-		{"/clients/test-client/grants", "test-client"},
+		{"/projects", "Test Project"},
+		{"/clients", "Test AI Client"},
+		{"/clients/test-client/grants", "Test Project"},
 		{"/activity", "Activity Audit Log"},
 		{"/settings", "Settings"},
 		{"/maintenance", "Maintenance"},
@@ -332,8 +333,12 @@ func TestAdminPagesRender(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Errorf("GET %s returned code %d", p.url, rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), p.content) {
+		body := rec.Body.String()
+		if !strings.Contains(body, p.content) {
 			t.Errorf("GET %s body missing '%s'", p.url, p.content)
+		}
+		if strings.Contains(body, ">True<") {
+			t.Errorf("GET %s rendered boolean True as presentation text", p.url)
 		}
 	}
 }

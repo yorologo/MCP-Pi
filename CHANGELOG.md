@@ -3,6 +3,16 @@
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
 
+## 1.5.0-rc.4 — candidate
+
+### Fixed
+- Admin Console text fallbacks no longer use boolean `or` expressions in Pongo2 output tags, which rendered literal `True` instead of display names, provider/privilege values, grant scopes and other fallback text.
+- Added render regression coverage for Targets, Projects, AI Clients and Client Grants so human-readable values are asserted and boolean `True` cannot silently replace presentation text.
+
+### Compatibility
+- Core API, Bridge API, Tool Catalog, MCP protocol and Registry schema are unchanged from rc.3.
+
+
 ## 1.5.0-rc.3 — candidate
 
 ### Fixed
