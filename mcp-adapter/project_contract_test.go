@@ -156,6 +156,7 @@ func TestOperationalContractsRemainExplicit(t *testing.T) {
 			"release packaging requires a clean worktree",
 			"GOARCH=arm GOARM=6",
 			"runtime=go-only",
+			"chmod -R u=rwX,go=rX",
 		},
 	}
 	for rel, required := range checks {
@@ -206,7 +207,7 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 
 	candidateValidation := []string{
 		`sudo sha256sum "$candidate/bin/mcp-gateway-adapter"`,
-		`sudo "$candidate/bin/mcp-gateway-adapter" version --json`,
+		`sudo -u mcp-gateway "$candidate/bin/mcp-gateway-adapter" version --json`,
 		`sudo "$candidate/install.sh" --check`,
 		`sudo find "$candidate"`,
 		`sudo systemd-analyze verify "$candidate/config/systemd/$unit"`,

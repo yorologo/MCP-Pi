@@ -176,6 +176,8 @@ on_error() {
     echo "DEPLOYMENT_FAILED rc=$rc" >&2
     if [ "$ACTIVATED" -eq 1 ]; then
         rollback || { echo "ROLLBACK_FAILED: manual recovery required; previous=$REMOTE_PREVIOUS" >&2; cleanup_remote_transfer; exit 90; }
+    else
+        ssh_pi "sudo rm -rf '$REMOTE_UNIT_BACKUP'; sudo rm -f '$REMOTE_REGISTRY_BACKUP'" >/dev/null 2>&1 || true
     fi
     cleanup_remote_transfer
     exit "$rc"
@@ -224,9 +226,8 @@ sudo rm -rf "$candidate"
 sudo mkdir -p "$candidate"
 sudo cp -a "$pkg/." "$candidate/"
 sudo chown -R root:root "$candidate"
-sudo chmod 0755 "$candidate/bin/mcp-gateway-adapter" "$candidate/bin/mcp-gateway" "$candidate/bin/mcp-gateway-client-stdio" "$candidate/install.sh"
 test "$(sudo sha256sum "$candidate/bin/mcp-gateway-adapter" | awk '{print $1}')" = "$expected_sha"
-sudo "$candidate/bin/mcp-gateway-adapter" version --json | grep -q '"registry_schema_version": 5'
+sudo -u mcp-gateway "$candidate/bin/mcp-gateway-adapter" version --json | grep -q '"registry_schema_version": 5'
 sudo "$candidate/install.sh" --check >/dev/null
 if sudo find "$candidate" -type f \( -name '*.py' -o -name requirements.txt \) -print -quit | grep -q .; then exit 45; fi
 for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service; do

@@ -57,9 +57,15 @@ for doc in \
     fi
 done
 
+# Normalize package modes so the artifact is independent of the caller's umask.
+chmod -R u=rwX,go=rX "$PKG_ROOT"
 chmod 0755 "$PKG_ROOT/install.sh" "$PKG_ROOT/bin/mcp-gateway" \
-    "$PKG_ROOT/bin/mcp-gateway-client-stdio" "$PKG_ROOT/bin/mcp-gateway-adapter"
+    "$PKG_ROOT/bin/mcp-gateway-client-stdio" "$PKG_ROOT/bin/mcp-gateway-adapter" \
+    "$PKG_ROOT/config/systemd/mcp-gateway-tunnel-check"
 sh -n "$PKG_ROOT/install.sh"
+if find "$PKG_ROOT" -type d ! -perm -0005 -print -quit | grep -q .; then
+    fail "release package contains a directory that is not traversable by the service account"
+fi
 
 # Product invariant: the distributed appliance bundle contains no Python payload.
 if find "$PKG_ROOT" -type f \( -name '*.py' -o -name 'requirements.txt' \) -print -quit | grep -q .; then

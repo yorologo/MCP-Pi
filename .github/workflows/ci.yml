@@ -78,14 +78,26 @@ jobs:
 
       - name: Build and inspect ARMv6 release bundle
         run: |
-          mkdir -p "$RUNNER_TEMP/release"
+          umask 077
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/release-extract"
           scripts/build-release-package.sh "$GITHUB_SHA" "$RUNNER_TEMP/release"
           pkg="$(find "$RUNNER_TEMP/release" -maxdepth 1 -name 'MCP-Pi-*-linux-armv6-*.tar.gz' -print -quit)"
           test -n "$pkg"
-          tar -tzf "$pkg" | grep -q '/bin/mcp-gateway-adapter$'
-          tar -tzf "$pkg" | grep -q '/install.sh$'
-          if tar -tzf "$pkg" | grep -E '/(src/mcp_gateway|requirements\.txt|[^/]+\.py)$'; then
+          tar -tzf "$pkg" | grep -q '/bin/mcp-gateway-adapter
+          tar -tzf "$pkg" | grep -q '/install.sh
+          if tar -tzf "$pkg" | grep -E '/(src/mcp_gateway|requirements\.txt|[^/]+\.py); then
             echo "Python payload found in release bundle" >&2
             exit 1
           fi
+          tar -xzf "$pkg" -C "$RUNNER_TEMP/release-extract"
+          root="$(find "$RUNNER_TEMP/release-extract" -mindepth 1 -maxdepth 1 -type d -name 'MCP-Pi-*' -print -quit)"
+          test -n "$root"
+          test -x "$root/bin/mcp-gateway-adapter"
+          test -x "$root/bin/mcp-gateway"
+          test -x "$root/bin/mcp-gateway-client-stdio"
+          if find "$root" -type d ! -perm -0005 -print -quit | grep -q .; then
+            echo "Release contains a directory not traversable by the service account" >&2
+            exit 1
+          fi
+          sha256sum -c "$root/SHA256SUMS"
           sha256sum "$pkg"
