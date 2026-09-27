@@ -1,37 +1,19 @@
 package remote
 
 import (
-	"bytes"
-	"compress/zlib"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"mcp-gateway-adapter/internal/registry"
 )
-
-func buildRemotePythonCommand(pyCode string, argv []string) (string, error) {
-	argsJSON, err := json.Marshal(argv)
-	if err != nil {
-		return "", fmt.Errorf("encode remote python argv: %w", err)
-	}
-	script := "import sys\nsys.argv = ['mcp-helper'] + " + string(argsJSON) + "\n" + pyCode
-
-	var compressed bytes.Buffer
-	writer := zlib.NewWriter(&compressed)
-	if _, err := writer.Write([]byte(script)); err != nil {
-		return "", fmt.Errorf("compress remote python helper: %w", err)
-	}
-	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("close remote python compressor: %w", err)
-	}
-	payload := base64.StdEncoding.EncodeToString(compressed.Bytes())
-	return `python3 -c "import base64,zlib;exec(zlib.decompress(base64.b64decode('` + payload + `')))"`, nil
-}
 
 func (s *SSHTransport) ResolveCanonicalPath(
 	ctx context.Context,
@@ -39,26 +21,35 @@ func (s *SSHTransport) ResolveCanonicalPath(
 	candidatePath string,
 	timeout time.Duration,
 ) (string, error) {
-	command, err := buildRemotePythonCommand(
-		"import os, sys; print(os.path.realpath(sys.argv[1]))",
-		[]string{candidatePath},
-	)
-	if err != nil {
-		return "", err
+	var command string
+	if isWindowsTarget(target) {
+		script := "$p=" + powerShellQuote(candidatePath) + ";" +
+			"if(-not (Test-Path -LiteralPath $p)){exit 2};" +
+			"$item=Get-Item -LiteralPath $p -Force;" +
+			"if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){exit 6};" +
+			"[IO.Path]::GetFullPath($item.FullName)"
+		command = buildPowerShellCommand(script)
+	} else {
+		command = "p=" + shellQuote(candidatePath) + `; if [ ! -e "$p" ] && [ ! -L "$p" ]; then exit 2; fi; realpath -e -- "$p"`
 	}
 	result, err := s.RunCommand(ctx, target, command, CommandOptions{Timeout: timeout})
 	if err != nil {
 		return "", err
 	}
-	canonical := lastNonEmptyLine(result.Stdout)
-	if !result.OK() || canonical == "" {
-		return "", NewError(
-			"SSH_FAILED",
-			"Unable to resolve canonical path on target: "+strings.TrimSpace(result.Stderr),
-			result.ExitCode,
-		)
+	switch result.ExitCode {
+	case 0:
+		canonical := lastNonEmptyLine(result.Stdout)
+		if canonical == "" {
+			return "", NewError("SSH_FAILED", "Canonical path probe returned no path", 0)
+		}
+		return canonical, nil
+	case 2:
+		return "", NewError("NOT_FOUND", "Path does not exist: "+candidatePath, result.ExitCode)
+	case 6:
+		return "", NewError("SYMLINK_WRITE_DENIED", "Reparse-point paths are not accepted as canonical roots on Windows: "+candidatePath, result.ExitCode)
+	default:
+		return "", NewError("SSH_FAILED", nonEmptyRemote(result.Stderr, "Unable to resolve canonical path on target"), result.ExitCode)
 	}
-	return canonical, nil
 }
 
 func (s *SSHTransport) ListDirectory(
@@ -71,28 +62,21 @@ func (s *SSHTransport) ListDirectory(
 	if limit <= 0 {
 		limit = 200
 	}
-	script := `import os, sys, json
-p = sys.argv[1]
-limit = int(sys.argv[2])
-if not os.path.exists(p):
-    sys.exit(2)
-if not os.path.isdir(p):
-    sys.exit(3)
-entries = []
-try:
-    for name in sorted(os.listdir(p))[:limit]:
-        fp = os.path.join(p, name)
-        t = 'symlink' if os.path.islink(fp) else ('directory' if os.path.isdir(fp) else ('file' if os.path.isfile(fp) else 'other'))
-        s = os.path.getsize(fp) if t == 'file' else None
-        entries.append({'name': name, 'type': t, 'size': s})
-    print(json.dumps(entries))
-except Exception as exc:
-    print(str(exc), file=sys.stderr)
-    sys.exit(4)
-`
-	command, err := buildRemotePythonCommand(script, []string{canonicalPath, strconv.Itoa(limit)})
-	if err != nil {
-		return nil, err
+	var command string
+	if isWindowsTarget(target) {
+		script := "$p=" + powerShellQuote(canonicalPath) + ";" +
+			"$limit=" + strconv.Itoa(limit) + ";" +
+			"if(-not (Test-Path -LiteralPath $p)){exit 2};" +
+			"$item=Get-Item -LiteralPath $p -Force;if(-not $item.PSIsContainer){exit 3};" +
+			"Get-ChildItem -LiteralPath $p -Force | Sort-Object Name | Select-Object -First $limit | ForEach-Object {" +
+			"$name=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_.Name));" +
+			"$type=if(($_.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0){'symlink'}elseif($_.PSIsContainer){'directory'}else{'file'};" +
+			"$size=if($_.PSIsContainer){''}else{$_.Length};Write-Output ($name+\"`t\"+$type+\"`t\"+$size)}"
+		command = buildPowerShellCommand(script)
+	} else {
+		command = "p=" + shellQuote(canonicalPath) + "; limit=" + strconv.Itoa(limit) + `; ` +
+			`if [ ! -e "$p" ]; then exit 2; fi; if [ ! -d "$p" ]; then exit 3; fi; ` +
+			`find "$p" -mindepth 1 -maxdepth 1 -printf '%f\0%y\0%s\0' | head -z -n $((limit * 3))`
 	}
 	result, err := s.RunCommand(ctx, target, command, CommandOptions{Timeout: timeout})
 	if err != nil {
@@ -101,15 +85,65 @@ except Exception as exc:
 	switch result.ExitCode {
 	case 0:
 	case 2:
-		return nil, NewError("NOT_FOUND", strings.TrimSpace(result.Stderr), result.ExitCode)
+		return nil, NewError("NOT_FOUND", "Directory not found: "+canonicalPath, result.ExitCode)
 	case 3:
-		return nil, NewError("NOT_DIRECTORY", strings.TrimSpace(result.Stderr), result.ExitCode)
+		return nil, NewError("NOT_DIRECTORY", "Path is not a directory: "+canonicalPath, result.ExitCode)
 	default:
 		return nil, NewError("SSH_FAILED", nonEmptyRemote(result.Stderr, "Failed to list directory"), result.ExitCode)
 	}
+
 	var entries []DirectoryEntry
-	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Stdout)), &entries); err != nil {
-		return nil, NewError("SSH_FAILED", "Failed to decode remote directory listing", result.ExitCode)
+	if isWindowsTarget(target) {
+		for _, line := range strings.Split(strings.TrimSpace(result.Stdout), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			parts := strings.SplitN(strings.TrimSuffix(line, "\r"), "\t", 3)
+			if len(parts) != 3 {
+				return nil, NewError("SSH_FAILED", "Invalid Windows directory listing response", 0)
+			}
+			nameBytes, err := base64.StdEncoding.DecodeString(parts[0])
+			if err != nil {
+				return nil, NewError("SSH_FAILED", "Invalid Windows directory entry encoding", 0)
+			}
+			entry := DirectoryEntry{Name: string(nameBytes), Type: parts[1]}
+			if parts[2] != "" {
+				size, err := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
+				if err != nil {
+					return nil, NewError("SSH_FAILED", "Invalid Windows directory entry size", 0)
+				}
+				entry.Size = &size
+			}
+			entries = append(entries, entry)
+		}
+	} else {
+		parts := strings.Split(result.Stdout, "\x00")
+		for i := 0; i+2 < len(parts); i += 3 {
+			if parts[i] == "" && parts[i+1] == "" && parts[i+2] == "" {
+				continue
+			}
+			entryType := "other"
+			switch parts[i+1] {
+			case "f":
+				entryType = "file"
+			case "d":
+				entryType = "directory"
+			case "l":
+				entryType = "symlink"
+			}
+			entry := DirectoryEntry{Name: parts[i], Type: entryType}
+			if entryType == "file" {
+				size, err := strconv.ParseInt(parts[i+2], 10, 64)
+				if err == nil {
+					entry.Size = &size
+				}
+			}
+			entries = append(entries, entry)
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+		if len(entries) > limit {
+			entries = entries[:limit]
+		}
 	}
 	return entries, nil
 }
@@ -120,33 +154,42 @@ func (s *SSHTransport) FileStat(
 	canonicalPath string,
 	timeout time.Duration,
 ) (FileStat, error) {
-	script := `import os, sys, json
-p = sys.argv[1]
-if not os.path.exists(p):
-    sys.exit(2)
-st = os.stat(p)
-t = 'symlink' if os.path.islink(p) else ('directory' if os.path.isdir(p) else ('file' if os.path.isfile(p) else 'other'))
-print(json.dumps({'exists': True, 'type': t, 'size': st.st_size, 'mtime': int(st.st_mtime)}))
-`
-	command, err := buildRemotePythonCommand(script, []string{canonicalPath})
-	if err != nil {
-		return FileStat{}, err
+	var command string
+	if isWindowsTarget(target) {
+		script := "$p=" + powerShellQuote(canonicalPath) + ";" +
+			"if(-not (Test-Path -LiteralPath $p)){exit 2};$i=Get-Item -LiteralPath $p -Force;" +
+			"$type=if(($i.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0){'symlink'}elseif($i.PSIsContainer){'directory'}else{'file'};" +
+			"$size=if($i.PSIsContainer){0}else{$i.Length};$mtime=([DateTimeOffset]$i.LastWriteTimeUtc).ToUnixTimeSeconds();" +
+			"Write-Output ($type+\"`t\"+$size+\"`t\"+$mtime)"
+		command = buildPowerShellCommand(script)
+	} else {
+		command = "p=" + shellQuote(canonicalPath) + `; if [ ! -e "$p" ] && [ ! -L "$p" ]; then exit 2; fi; ` +
+			`type=other; [ -L "$p" ] && type=symlink || { [ -d "$p" ] && type=directory || { [ -f "$p" ] && type=file || true; }; }; ` +
+			`size=$(stat -c %s -- "$p") || exit 4; mtime=$(stat -c %Y -- "$p") || exit 4; printf '%s\t%s\t%s\n' "$type" "$size" "$mtime"`
 	}
 	result, err := s.RunCommand(ctx, target, command, CommandOptions{Timeout: timeout})
 	if err != nil {
 		return FileStat{}, err
 	}
 	if result.ExitCode == 2 {
-		return FileStat{}, NewError("NOT_FOUND", strings.TrimSpace(result.Stderr), result.ExitCode)
+		return FileStat{}, NewError("NOT_FOUND", "Path not found: "+canonicalPath, result.ExitCode)
 	}
 	if !result.OK() {
 		return FileStat{}, NewError("SSH_FAILED", nonEmptyRemote(result.Stderr, "Stat failed"), result.ExitCode)
 	}
-	var stat FileStat
-	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Stdout)), &stat); err != nil {
-		return FileStat{}, NewError("SSH_FAILED", "Failed to decode remote file stat", result.ExitCode)
+	parts := strings.Split(strings.TrimSpace(result.Stdout), "\t")
+	if len(parts) != 3 {
+		return FileStat{}, NewError("SSH_FAILED", "Invalid file stat response", 0)
 	}
-	return stat, nil
+	size, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+	if err != nil {
+		return FileStat{}, NewError("SSH_FAILED", "Invalid file size in stat response", 0)
+	}
+	mtime, err := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
+	if err != nil {
+		return FileStat{}, NewError("SSH_FAILED", "Invalid mtime in stat response", 0)
+	}
+	return FileStat{Exists: true, Type: parts[0], Size: size, MTime: mtime}, nil
 }
 
 func (s *SSHTransport) ReadFile(
@@ -159,48 +202,50 @@ func (s *SSHTransport) ReadFile(
 	if maxBytes <= 0 {
 		maxBytes = 1048576
 	}
-	script := `import sys, os
-path = sys.argv[1]
-limit = int(sys.argv[2])
-if not os.path.exists(path):
-    sys.exit(2)
-if os.path.isdir(path):
-    sys.exit(3)
-size = os.path.getsize(path)
-if size > limit:
-    sys.exit(4)
-with open(path, 'rb') as fh:
-    data = fh.read(limit + 1)
-if b'\x00' in data:
-    sys.exit(5)
-sys.stdout.buffer.write(data)
-`
-	command, err := buildRemotePythonCommand(script, []string{canonicalPath, strconv.FormatInt(maxBytes, 10)})
-	if err != nil {
-		return "", err
+	var command string
+	if isWindowsTarget(target) {
+		script := "$p=" + powerShellQuote(canonicalPath) + ";$limit=" + strconv.FormatInt(maxBytes, 10) + ";" +
+			"if(-not (Test-Path -LiteralPath $p)){exit 2};$i=Get-Item -LiteralPath $p -Force;if($i.PSIsContainer){exit 3};if($i.Length -gt $limit){exit 4};" +
+			"[Convert]::ToBase64String([IO.File]::ReadAllBytes($p))"
+		command = buildPowerShellCommand(script)
+	} else {
+		command = "p=" + shellQuote(canonicalPath) + "; limit=" + strconv.FormatInt(maxBytes, 10) + `; ` +
+			`if [ ! -e "$p" ]; then exit 2; fi; if [ -d "$p" ]; then exit 3; fi; size=$(wc -c < "$p") || exit 5; ` +
+			`if [ "$size" -gt "$limit" ]; then exit 4; fi; base64 < "$p" | tr -d '\n'`
 	}
-	result, err := s.RunCommand(ctx, target, command, CommandOptions{Timeout: timeout})
+	maxOutput := int(maxBytes + maxBytes/3 + 8192)
+	if maxOutput < defaultMaxOutput {
+		maxOutput = defaultMaxOutput
+	}
+	result, err := s.RunCommand(ctx, target, command, CommandOptions{Timeout: timeout, MaxOutputBytes: maxOutput})
 	if err != nil {
 		return "", err
 	}
 	switch result.ExitCode {
 	case 0:
-		return result.Stdout, nil
 	case 2:
-		return "", NewError("NOT_FOUND", fmt.Sprintf("File not found: %s", canonicalPath), result.ExitCode)
+		return "", NewError("NOT_FOUND", "File not found: "+canonicalPath, result.ExitCode)
 	case 3:
-		return "", NewError("INVALID_PATH", fmt.Sprintf("Target path is a directory: %s", canonicalPath), result.ExitCode)
+		return "", NewError("INVALID_PATH", "Target path is a directory: "+canonicalPath, result.ExitCode)
 	case 4:
 		return "", NewError("FILE_TOO_LARGE", fmt.Sprintf("File size exceeds allowed limit of %d bytes", maxBytes), result.ExitCode)
-	case 5:
-		return "", NewError("BINARY_FILE_NOT_SUPPORTED", "Binary file not supported", result.ExitCode)
 	default:
-		return "", NewError(
-			"SSH_FAILED",
-			fmt.Sprintf("Error reading file '%s': %s", canonicalPath, strings.TrimSpace(result.Stderr)),
-			result.ExitCode,
-		)
+		return "", NewError("SSH_FAILED", nonEmptyRemote(result.Stderr, "Error reading file"), result.ExitCode)
 	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(result.Stdout))
+	if err != nil {
+		return "", NewError("SSH_FAILED", "Remote file payload was not valid base64", 0)
+	}
+	if len(raw) > int(maxBytes) {
+		return "", NewError("FILE_TOO_LARGE", fmt.Sprintf("File size exceeds allowed limit of %d bytes", maxBytes), 0)
+	}
+	if strings.IndexByte(string(raw), 0) >= 0 {
+		return "", NewError("BINARY_FILE_NOT_SUPPORTED", "Binary file not supported", 0)
+	}
+	if !utf8.Valid(raw) {
+		return "", NewError("INVALID_ENCODING", "File is not valid UTF-8", 0)
+	}
+	return string(raw), nil
 }
 
 func (s *SSHTransport) GitStatus(
@@ -224,6 +269,8 @@ func (s *SSHTransport) GitStatus(
 	return result.Stdout, nil
 }
 
+var grepLineRE = regexp.MustCompile(`^(.*):([0-9]+):(.*)$`)
+
 func (s *SSHTransport) Search(
 	ctx context.Context,
 	target registry.Target,
@@ -235,52 +282,95 @@ func (s *SSHTransport) Search(
 	if limit <= 0 {
 		limit = 100
 	}
-	script := `import os, re, json, sys
-root = sys.argv[1]
-base = sys.argv[2]
-pat = sys.argv[3]
-is_re = sys.argv[4].lower() == 'true'
-limit = int(sys.argv[5])
-regex = re.compile(pat) if is_re else None
-matches = []
-for current, dirs, files in os.walk(base):
-    dirs[:] = [d for d in dirs if not d.startswith('.git') and not d.startswith('__pycache__')]
-    for name in files:
-        fp = os.path.join(current, name)
-        try:
-            with open(fp, 'r', encoding='utf-8', errors='ignore') as fh:
-                for idx, line in enumerate(fh, 1):
-                    hit = regex.search(line) if is_re else (pat in line)
-                    if hit:
-                        matches.append({'file': os.path.relpath(fp, root), 'line': idx, 'text': line.strip()[:200]})
-                        if len(matches) >= limit:
-                            break
-        except Exception:
-            pass
-        if len(matches) >= limit:
-            break
-    if len(matches) >= limit:
-        break
-print(json.dumps(matches))
-`
-	command, err := buildRemotePythonCommand(
-		script,
-		[]string{projectRoot, searchRoot, pattern, strconv.FormatBool(isRegex), strconv.Itoa(limit)},
-	)
-	if err != nil {
-		return nil, err
+	var command string
+	if isWindowsTarget(target) {
+		simple := "$false"
+		if !isRegex {
+			simple = "$true"
+		}
+		script := "$base=" + powerShellQuote(searchRoot) + ";$pattern=" + powerShellQuote(pattern) + ";$limit=" + strconv.Itoa(limit) + ";" +
+			"if(-not (Test-Path -LiteralPath $base)){exit 2};" +
+			"Get-ChildItem -LiteralPath $base -File -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern $pattern -SimpleMatch:" + simple + " -ErrorAction SilentlyContinue | Select-Object -First $limit | ForEach-Object {" +
+			"$p=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_.Path));$t=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_.Line));Write-Output ($p+\"`t\"+$_.LineNumber+\"`t\"+$t)}"
+		command = buildPowerShellCommand(script)
+	} else {
+		mode := "-E"
+		if !isRegex {
+			mode = "-F"
+		}
+		command = "base=" + shellQuote(searchRoot) + "; pattern=" + shellQuote(pattern) + "; limit=" + strconv.Itoa(limit) + `; ` +
+			`if [ ! -d "$base" ]; then exit 2; fi; ` +
+			`{ grep -RInI ` + mode + ` -- "$pattern" "$base" || [ "$?" -eq 1 ]; } | head -n "$limit"`
 	}
 	result, err := s.RunCommand(ctx, target, command, CommandOptions{Timeout: timeout})
 	if err != nil {
 		return nil, err
 	}
-	if !result.OK() || strings.TrimSpace(result.Stdout) == "" {
-		// Preserve current Python semantics: command/JSON failures yield no matches.
-		return []SearchMatch{}, nil
+	if result.ExitCode == 2 {
+		return nil, NewError("NOT_FOUND", "Search root not found: "+searchRoot, result.ExitCode)
+	}
+	if !result.OK() {
+		return nil, NewError("SSH_FAILED", nonEmptyRemote(result.Stderr, "Search failed"), result.ExitCode)
 	}
 	var matches []SearchMatch
-	if err := json.Unmarshal([]byte(result.Stdout), &matches); err != nil {
-		return []SearchMatch{}, nil
+	for _, line := range strings.Split(strings.TrimSpace(result.Stdout), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line == "" {
+			continue
+		}
+		if isWindowsTarget(target) {
+			parts := strings.SplitN(line, "\t", 3)
+			if len(parts) != 3 {
+				return nil, NewError("SSH_FAILED", "Invalid Windows search response", 0)
+			}
+			pb, err := base64.StdEncoding.DecodeString(parts[0])
+			if err != nil {
+				return nil, NewError("SSH_FAILED", "Invalid Windows search path encoding", 0)
+			}
+			tb, err := base64.StdEncoding.DecodeString(parts[2])
+			if err != nil {
+				return nil, NewError("SSH_FAILED", "Invalid Windows search text encoding", 0)
+			}
+			lineNo, err := strconv.Atoi(parts[1])
+			if err != nil {
+				return nil, NewError("SSH_FAILED", "Invalid Windows search line number", 0)
+			}
+			matches = append(matches, SearchMatch{File: remoteRelative(projectRoot, string(pb), true), Line: lineNo, Text: string(tb)})
+			continue
+		}
+		m := grepLineRE.FindStringSubmatch(line)
+		if len(m) != 4 {
+			continue
+		}
+		lineNo, err := strconv.Atoi(m[2])
+		if err != nil {
+			continue
+		}
+		matches = append(matches, SearchMatch{File: remoteRelative(projectRoot, m[1], false), Line: lineNo, Text: m[3]})
+	}
+	if len(matches) > limit {
+		matches = matches[:limit]
 	}
 	return matches, nil
+}
+
+func remoteRelative(root, candidate string, windows bool) string {
+	if windows {
+		r := strings.ReplaceAll(strings.TrimSpace(root), "/", `\`)
+		c := strings.ReplaceAll(strings.TrimSpace(candidate), "/", `\`)
+		rl := strings.ToLower(strings.TrimRight(r, `\`))
+		cl := strings.ToLower(c)
+		if cl == rl {
+			return "."
+		}
+		prefix := rl + `\`
+		if strings.HasPrefix(cl, prefix) {
+			return strings.ReplaceAll(c[len(prefix):], `\`, "/")
+		}
+		return strings.ReplaceAll(c, `\`, "/")
+	}
+	if rel, err := filepath.Rel(root, candidate); err == nil {
+		return filepath.ToSlash(rel)
+	}
+	return candidate
 }

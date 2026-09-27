@@ -1,48 +1,49 @@
 # Compatibility contract
 
-`compatibility.json` is the machine-readable source for versioned software contracts. Documentation must match it; historical release notes must not be rewritten to look current.
-
-## Current 1.4.0 release contracts
+## Current candidate
 
 | Contract | Value |
 | --- | --- |
-| Gateway | `1.4.0` |
-| Core API | `1` |
-| Bridge API | `1` |
-| Tool catalog | `4` |
-| Registry schema | `4` |
-| MCP SDK | Go SDK `1.7.0` |
-| MCP protocol | `2026-07-28` |
-| Legacy MCP protocol | `2025-11-25` |
-| Python | `3.11+` |
-| Declared architectures | `armv6l`, `aarch64`, `x86_64` |
+| Gateway | 1.5.0-rc.1 |
+| Runtime | Go-only |
+| Core API | 1 |
+| Bridge API | 1 |
+| Tool catalog | 4 / 21 tools |
+| Registry schema | 5 |
+| Fresh schema | 5 |
+| Direct upgrade input | 4 or 5 |
+| MCP protocol | 2026-07-28 |
+| MCP Go SDK | 1.7.0 |
+| Build toolchain contract | Go 1.27.1 |
 
-The current deterministic Core catalog contains **21 tools**. Catalog v4 keeps the same names but extends the `run_command` input contract with the explicit `privilege=standard|required` field, so schema-aware clients can distinguish it from v3. Client-visible `tools/list` may contain fewer because policy/grants filter the catalog.
+compatibility.json and manifest.json are checked against the Go build metadata and Registry constants by Go tests.
 
 ## Fail-closed compatibility
 
-The Go adapter checks the Python bridge contract. Incompatible API/runtime state marks readiness unavailable instead of routing requests optimistically.
+The server is ready only when the in-process Go Core and Registry initialize and their API/catalog/protocol contract matches the adapter build. Missing or incompatible state does not route through a fallback runtime.
 
-```mermaid
-flowchart LR
-    A[Adapter starts] --> B[Bridge version probe]
-    B --> C{Core/Bridge compatible?}
-    C -->|yes| R[/ready = 200]
-    C -->|no| F[/ready = 503 + deny tool routing]
-```
+## Tool catalog
 
-## Architecture declaration versus appliance validation
+The canonical Core catalog contains 21 tools. Client-visible tools/list can contain fewer because grants/policy filter the catalog.
 
-The software contract declares several Linux architectures, but hardware acceptance is a separate claim. The reference production appliance is ARMv6. A new architecture should pass installation, Doctor, protocol and security acceptance before being described as equally production-verified.
-
-## Protocol security
-
-The HTTP adapter is loopback-first and validates Host/Origin semantics. Authentication tokens are read from private runtime files/environment rather than committed configuration.
-
-## Catalog metadata
-
-The Gateway exposes deterministic metadata including tool count, catalog version and catalog hash so client projection problems can be distinguished from server catalog drift.
+No-argument administrative tools reject undeclared properties. gateway_doctor declares check_targets and verbose explicitly.
 
 ## Registry schema
 
-SQLite uses `PRAGMA user_version=4`. Schema v1 migrates through the privilege-policy changes to v4; `privilege_policy` defaults safely to `never`, temporary approvals are scoped to client/project, and schema v4 adds optional `privilege_user` with an empty default. Schema v2 existed only on the privilege-policy feature branch, so its unscoped approvals are intentionally discarded during migration; schema v3 approvals remain scoped while v3→v4 only adds the privileged SSH username field. Backup/restore accepts v1..v4, migrates older supported databases immediately to v4, and clears temporary privilege approvals after restore so authorization state cannot be resurrected. Newer-than-runtime schemas fail closed. Application updates must back up the Registry before schema-changing work.
+Schema 5 is canonical. A fresh Registry is created directly at v5. The current Go migration path supports v4 to v5 and already-current v5.
+
+Older schemas are not claimed as directly supported by this candidate. They must first be upgraded using a release that explicitly supports them. Newer-than-runtime schemas fail closed.
+
+Before schema-changing install/deploy work, MCP-Pi creates a verified SQLite online backup.
+
+## Architecture declaration versus appliance validation
+
+Metadata declares supported artifact architectures, but real release acceptance still requires the reference ARMv6 appliance. A successful cross-build does not prove production readiness.
+
+## Protocol security
+
+Authorization remains independent of transport. Authentication, client identity, grants, Target/Project scope, kill switches and Target privilege policy are evaluated in the Go Core/Registry path.
+
+## Release identity
+
+Do not reuse an immutable published version number for changed software. 1.5.0-rc.1 is a prerelease candidate until later validation justifies promotion.

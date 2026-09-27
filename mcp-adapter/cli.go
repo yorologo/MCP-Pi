@@ -3,15 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
@@ -21,10 +20,14 @@ import (
 	"time"
 
 	"mcp-gateway-adapter/internal/admin"
+	"mcp-gateway-adapter/internal/buildinfo"
 	"mcp-gateway-adapter/internal/core"
 	"mcp-gateway-adapter/internal/discovery"
 	"mcp-gateway-adapter/internal/registry"
 	"mcp-gateway-adapter/internal/remote"
+	"mcp-gateway-adapter/internal/sqliteutil"
+
+	"golang.org/x/term"
 )
 
 func resolveDBPath(flagVal string) string {
@@ -59,14 +62,52 @@ func initStoreAndCore(dbPath string) (*registry.Store, *core.Core, error) {
 	transport := remote.NewSSHTransport()
 	backupDir := filepath.Join(filepath.Dir(dbPath), "backups")
 	c := core.NewWithRemote(store, core.Config{
-		GatewayVersion:     "1.4.0",
-		CoreAPIVersion:     1,
-		ToolCatalogVersion: 4,
-		MCPProtocol:        "2026-07-28",
+		GatewayVersion:     buildinfo.GatewayVersion,
+		CoreAPIVersion:     buildinfo.CoreAPIVersion,
+		ToolCatalogVersion: buildinfo.ToolCatalogVersion,
+		MCPProtocol:        buildinfo.MCPProtocol,
 		DBPath:             dbPath,
 		BackupDir:          backupDir,
 	}, transport)
 	return store, c, nil
+}
+
+func cmdVersion(args []string) int {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	jsonFlag := fs.Bool("json", false, "Print version contract as JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	info := buildinfo.Current()
+	if *jsonFlag {
+		payload := map[string]any{
+			"gateway_version":         info.GatewayVersion,
+			"core_api_version":        info.CoreAPIVersion,
+			"bridge_api_version":      info.BridgeAPIVersion,
+			"tool_catalog_version":    info.ToolCatalogVersion,
+			"registry_schema_version": registry.SchemaVersion,
+			"mcp_protocol":            info.MCPProtocol,
+			"go_version":              info.GoVersion,
+			"commit":                  info.Commit,
+			"build_date":              info.BuildDate,
+			"modified":                info.Modified,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(payload); err != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Could not encode version contract: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	fmt.Printf(
+		"mcp-gateway v%s (Core API v%d, MCP Protocol %s, Registry Schema v%d)\n",
+		info.GatewayVersion,
+		info.CoreAPIVersion,
+		info.MCPProtocol,
+		registry.SchemaVersion,
+	)
+	return 0
 }
 
 func cmdStatus(args []string) int {
@@ -113,7 +154,7 @@ func cmdStatus(args []string) int {
 		}
 		return "DISABLED"
 	}())
-	fmt.Printf("Targets:     %v configured\n", res["target_count"])
+	fmt.Printf("Targets:     %v configured\n", res["configured_targets"])
 	fmt.Println("==================================================")
 	return 0
 }
@@ -220,9 +261,7 @@ func cmdMaintenance(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	resp := c.Invoke(ctx, core.Invocation{ClientID: "local"}, "gateway_maintenance", map[string]any{
-		"action": "vacuum",
-	})
+	resp := c.Invoke(ctx, core.Invocation{ClientID: "local"}, "gateway_maintenance", map[string]any{})
 	if ok, _ := resp["ok"].(bool); !ok {
 		fmt.Fprintf(os.Stderr, "[ERROR] Maintenance failed: %v\n", resp["error"])
 		return 1
@@ -251,35 +290,52 @@ func cmdBackup(args []string) int {
 		return 2
 	}
 
+	dbPath := resolveDBPath(*dbFlag)
 	destPath := ""
 	if fs.NArg() > 0 {
 		destPath = fs.Arg(0)
-	}
-
-	dbPath := resolveDBPath(*dbFlag)
-	_, c, err := initStoreAndCore(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Could not initialize gateway core: %v\n", err)
-		return 1
+	} else {
+		destPath = filepath.Join(
+			filepath.Dir(dbPath),
+			"backups",
+			fmt.Sprintf("gateway_backup_%s.db", time.Now().UTC().Format("20060102_150405.000000000")),
+		)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	params := map[string]any{}
-	if destPath != "" {
-		params["destination"] = destPath
-	}
-
-	resp := c.Invoke(ctx, core.Invocation{ClientID: "local"}, "gateway_backup", params)
-	if ok, _ := resp["ok"].(bool); !ok {
-		fmt.Fprintf(os.Stderr, "[ERROR] Backup failed: %v\n", resp["error"])
+	db, err := sqliteutil.OpenRaw(ctx, dbPath, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Could not open source database without migration: %v\n", err)
 		return 1
 	}
+	defer db.Close()
 
-	res, _ := resp["result"].(map[string]any)
-	fmt.Printf("[OK] Database backed up successfully to: %v\n", res["backup_path"])
+	info, err := sqliteutil.Backup(ctx, db, destPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Backup failed: %v\n", err)
+		return 1
+	}
+	fmt.Printf("[OK] Database backed up successfully to: %s\n", destPath)
+	fmt.Printf("[OK] SQLite integrity: %s; schema: %d; sha256: %s\n", info.Integrity, info.SchemaVersion, info.SHA256)
 	return 0
+}
+
+func activeGatewayServices() []string {
+	if _, err := os.Stat("/run/systemd/system"); err != nil {
+		return nil
+	}
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return nil
+	}
+	var active []string
+	for _, svc := range []string{"mcp-gateway-admin.service", "mcp-gateway-mcp.service"} {
+		if err := exec.Command("systemctl", "is-active", "--quiet", svc).Run(); err == nil {
+			active = append(active, svc)
+		}
+	}
+	return active
 }
 
 func cmdRestore(args []string) int {
@@ -288,56 +344,93 @@ func cmdRestore(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: mcp-gateway restore <backup_file>")
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "Usage: mcp-gateway restore [-db path] <backup_file>")
 		return 2
 	}
-	backupFile := fs.Arg(0)
-	if _, err := os.Stat(backupFile); err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Backup file does not exist: %s\n", backupFile)
-		return 1
-	}
 
-	// Verify SQLite integrity of candidate backup before restoration
-	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(backupFile)}
-	db, err := sql.Open("sqlite", u.String())
+	backupFile := fs.Arg(0)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	sourceInfo, err := sqliteutil.Inspect(ctx, backupFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Cannot open backup file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[ERROR] Backup inspection failed: %v\n", err)
 		return 1
 	}
-	var integrity string
-	err = db.QueryRowContext(context.Background(), "PRAGMA integrity_check;").Scan(&integrity)
-	db.Close()
-	if err != nil || integrity != "ok" {
-		fmt.Fprintf(os.Stderr, "[ERROR] Backup file failed SQLite integrity check: %s (%v)\n", integrity, err)
+	if sourceInfo.Integrity != "ok" {
+		fmt.Fprintf(os.Stderr, "[ERROR] Backup integrity is not ok: %s\n", sourceInfo.Integrity)
+		return 1
+	}
+	if sourceInfo.SchemaVersion != 4 && sourceInfo.SchemaVersion != registry.SchemaVersion {
+		fmt.Fprintf(os.Stderr, "[ERROR] Unsupported backup schema %d; Go-only restore supports schema 4 or %d\n", sourceInfo.SchemaVersion, registry.SchemaVersion)
+		return 1
+	}
+	if active := activeGatewayServices(); len(active) > 0 {
+		fmt.Fprintf(os.Stderr, "[ERROR] Refusing restore while database users are active: %s\n", strings.Join(active, ", "))
+		fmt.Fprintln(os.Stderr, "Stop Admin/MCP services first, then retry restore.")
 		return 1
 	}
 
 	dbPath := resolveDBPath(*dbFlag)
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Could not create target db directory: %v\n", err)
+	if fi, err := os.Stat(dbPath); err == nil && fi.Size() > 0 {
+		preRestore := filepath.Join(
+			filepath.Dir(dbPath),
+			"backups",
+			fmt.Sprintf("pre_restore_%s.db", time.Now().UTC().Format("20060102_150405.000000000")),
+		)
+		current, err := sqliteutil.OpenRaw(ctx, dbPath, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Could not open current database for pre-restore backup: %v\n", err)
+			return 1
+		}
+		_, backupErr := sqliteutil.Backup(ctx, current, preRestore)
+		closeErr := current.Close()
+		if backupErr != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Pre-restore backup failed: %v\n", backupErr)
+			return 1
+		}
+		if closeErr != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Closing current database after backup failed: %v\n", closeErr)
+			return 1
+		}
+		fmt.Printf("[OK] Pre-restore rollback backup: %s\n", preRestore)
+	} else if err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "[ERROR] Could not inspect target database: %v\n", err)
 		return 1
 	}
 
-	// Copy backup file atomically
-	data, err := os.ReadFile(backupFile)
+	target, err := sqliteutil.OpenRaw(ctx, dbPath, true)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Failed to read backup file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[ERROR] Could not open restore destination: %v\n", err)
 		return 1
 	}
-	tmpDst := dbPath + ".tmp_restore"
-	if err := os.WriteFile(tmpDst, data, 0600); err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Failed to write restore tmp: %v\n", err)
+	if err := sqliteutil.Restore(ctx, target, backupFile); err != nil {
+		_ = target.Close()
+		fmt.Fprintf(os.Stderr, "[ERROR] SQLite restore failed: %v\n", err)
 		return 1
 	}
-	if err := os.Rename(tmpDst, dbPath); err != nil {
-		_ = os.Remove(tmpDst)
-		fmt.Fprintf(os.Stderr, "[ERROR] Failed to atomically replace database: %v\n", err)
+	if err := target.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Closing restored database failed: %v\n", err)
 		return 1
 	}
 
-	fmt.Printf("[OK] Database restored successfully from: %s\n", backupFile)
+	store, err := registry.OpenStore(ctx, dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Restored database migration/validation failed: %v\n", err)
+		return 1
+	}
+	if err := store.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Closing validated Registry failed: %v\n", err)
+		return 1
+	}
+
+	restoredInfo, err := sqliteutil.Inspect(ctx, dbPath)
+	if err != nil || restoredInfo.Integrity != "ok" || restoredInfo.SchemaVersion != registry.SchemaVersion {
+		fmt.Fprintf(os.Stderr, "[ERROR] Post-restore verification failed: integrity=%s schema=%d err=%v\n", restoredInfo.Integrity, restoredInfo.SchemaVersion, err)
+		return 1
+	}
+	fmt.Printf("[OK] Restore verified: schema=%d sha256=%s\n", restoredInfo.SchemaVersion, restoredInfo.SHA256)
 	return cmdDoctor([]string{"-db", dbPath})
 }
 
@@ -359,9 +452,7 @@ func cmdRepair(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	resp := c.Invoke(ctx, core.Invocation{ClientID: "local"}, "gateway_maintenance", map[string]any{
-		"action": "vacuum",
-	})
+	resp := c.Invoke(ctx, core.Invocation{ClientID: "local"}, "gateway_maintenance", map[string]any{})
 	if ok, _ := resp["ok"].(bool); ok {
 		fmt.Println("- Database VACUUM and schema repair completed.")
 	} else {
@@ -385,7 +476,7 @@ func cmdSetup(args []string) int {
 	fmt.Println("==================================================")
 	fmt.Println("=== MCP Gateway Initial Setup                  ===")
 	fmt.Println("==================================================")
-	fmt.Println("Contract: Gateway v1.4.0, MCP Protocol 2026-07-28 (Go-Only)")
+	fmt.Printf("Contract: Gateway v%s, MCP Protocol %s (Go-Only)\n", buildinfo.GatewayVersion, buildinfo.MCPProtocol)
 
 	dbPath := resolveDBPath(*dbFlag)
 	store, _, err := initStoreAndCore(dbPath)
@@ -403,13 +494,24 @@ func cmdSetup(args []string) int {
 			var password string
 			if *passwordStdin {
 				reader := bufio.NewReader(os.Stdin)
-				line, _ := reader.ReadString('\n')
+				line, err := reader.ReadString('\n')
+				if err != nil && len(line) == 0 {
+					fmt.Fprintf(os.Stderr, "[ERROR] Failed to read password from stdin: %v\n", err)
+					return 1
+				}
 				password = strings.TrimSpace(line)
-			} else {
+			} else if term.IsTerminal(int(os.Stdin.Fd())) {
 				fmt.Printf("Enter new password for '%s': ", *adminUser)
-				reader := bufio.NewReader(os.Stdin)
-				line, _ := reader.ReadString('\n')
-				password = strings.TrimSpace(line)
+				raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Println()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[ERROR] Failed to read password: %v\n", err)
+					return 1
+				}
+				password = strings.TrimSpace(string(raw))
+			} else {
+				fmt.Fprintln(os.Stderr, "[ERROR] Interactive password setup requires a terminal; use --password-stdin for automation.")
+				return 2
 			}
 			if password == "" {
 				fmt.Fprintln(os.Stderr, "[ERROR] Password cannot be empty.")
@@ -507,10 +609,6 @@ func cmdBenchmark(args []string) int {
 	fmt.Printf("  p95:  %10.3f ms\n", float64(p95.Microseconds())/1000.0)
 	fmt.Printf("  p99:  %10.3f ms\n", float64(p99.Microseconds())/1000.0)
 	fmt.Printf("  Max:  %10.3f ms\n", float64(max.Microseconds())/1000.0)
-	fmt.Println("--------------------------------------------------")
-	fmt.Println("ARMv6 Baseline Comparison:")
-	fmt.Println("  Python subprocess bridge: ~3349 ms p50")
-	fmt.Printf("  Go-only in-process Core:  ~%.2f ms p50 (latency reduction >99%%)\n", float64(p50.Microseconds())/1000.0)
 	fmt.Println("==================================================")
 	return 0
 }
@@ -559,18 +657,17 @@ func cmdServeAdmin(args []string) int {
 		allowedHosts = []string{"127.0.0.1", "localhost", host}
 	}
 
-	secretDir := *secretDirFlag
-	if secretDir == "" {
-		if secFile := os.Getenv("MCP_ADMIN_SECRET_FILE"); secFile != "" {
-			secretDir = filepath.Dir(secFile)
+	secretFile := strings.TrimSpace(os.Getenv("MCP_ADMIN_SECRET_FILE"))
+	if secretFile == "" {
+		secretDir := strings.TrimSpace(*secretDirFlag)
+		if secretDir == "" {
+			home := os.Getenv("MCP_GATEWAY_HOME")
+			if home == "" {
+				home = "/home/mcp-gateway"
+			}
+			secretDir = filepath.Join(home, ".config", "mcp-gateway")
 		}
-	}
-	if secretDir == "" {
-		home := os.Getenv("MCP_GATEWAY_HOME")
-		if home == "" {
-			home = "/home/mcp-gateway"
-		}
-		secretDir = filepath.Join(home, ".config", "mcp-gateway")
+		secretFile = filepath.Join(secretDir, "admin-secret")
 	}
 
 	dbPath := resolveDBPath(*dbFlag)
@@ -585,11 +682,11 @@ func cmdServeAdmin(args []string) int {
 		Host:         host,
 		Port:         port,
 		AllowedHosts: allowedHosts,
-		SecretDir:    secretDir,
+		SecretFile:   secretFile,
 		Store:        store,
 		Core:         c,
 		Discovery:    targetDisc,
-		Version:      "1.4.0",
+		Version:      buildinfo.GatewayVersion,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create admin server: %v", err)

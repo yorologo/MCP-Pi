@@ -1,88 +1,68 @@
 # Current project state
 
-This document tracks the **source/integration state**, not a cached copy of live production. Detailed historical evidence belongs in `docs/releases/`, `docs/archive/` and Git history.
+This file tracks source/integration state, not live production. The current candidate is MCP-Pi Gateway 1.5.0-rc.1 on go-only-migration.
 
-**Source baseline:** MCP-Pi Gateway 1.4.0
-**Development branch:** `develop`
-**Stable branch:** `main`
-**Latest immutable tag:** `v1.4.0`
-**Current integration work:** Admin Console hardening, auditability and operator UX improvements are being validated on `develop`. They are not production state until an exact commit is deployed and accepted.
+main remains stable release history; production is not assumed to match this branch until exact-commit deployment and acceptance. Historical releases remain under docs/releases and Git tags.
 
 ## Live production authority
 
-Do not duplicate the deployed version, SHA, Registry schema or live kill-switch values in tracked prose. Those values change independently of this file.
+For a running appliance, use:
+- gateway_status;
+- .deployment.json;
+- .deployed-git-sha;
+- the live Registry/schema/settings;
+- systemd and endpoint checks.
 
-For a running appliance, the authoritative evidence is:
-
-- `gateway_status` for runtime version, services, resources and deployment provenance;
-- `.deployment.json` for verified deployment metadata;
-- `.deployed-git-sha` for the exact deployed Git commit;
-- the live Registry for schema and persisted policy values.
-
-A successful source or CI validation does **not** imply that production is running the same commit.
+Do not copy a mutable production version or SHA into this file and then treat prose as authority.
 
 ## Current source contract
 
-```text
-Gateway source baseline: 1.4.0
-Core API: 1
-Bridge API: 1
-Tool catalog: 4 / 21 tools
-Registry schema: 4
-MCP protocol: 2026-07-28
-Python: 3.11+
-```
+    Gateway candidate: 1.5.0-rc.1
+    Runtime: Go-only
+    Core API: 1
+    Bridge API: 1
+    Tool catalog: 4 / 21 tools
+    Registry schema: 5
+    Direct schema upgrade: 4 -> 5
+    MCP protocol: 2026-07-28
 
-Schema 4 supports migrations from the earlier supported schemas. Temporary privilege approvals remain scoped operational state and are not configuration to be restored blindly.
+The old runtime implementation and its active test/tooling tree have been removed. Frozen JSON fixtures remain only where they protect compatibility behavior in Go tests.
 
-## Reference production appliance
+## Reference appliance
 
-```text
-Role: MCP-Pi Gateway
-Hardware: Raspberry Pi Model A+ Rev 1.1
-Architecture: ARMv6
-OS baseline: Debian/Raspberry Pi OS 13 Trixie
-Service user: mcp-gateway (no general sudo)
-Admin: private trusted LAN or loopback according to admin.env
-MCP: loopback 127.0.0.1:8090
-```
+    Hardware: Raspberry Pi Model A+ Rev 1.1
+    Architecture: ARMv6
+    Service user: mcp-gateway
+    Admin default: loopback
+    MCP default: loopback 127.0.0.1:8090
 
-The separate Pi-hole appliance is outside project scope.
+The appliance runtime is intentionally small; build/test work belongs on a development host.
 
-## Canonical Target used for dogfooding
+## Canonical dogfood Target
 
-```text
-Target ID: termux-main
-Platform: Android / Termux
-Transport: SSH with strict host-key pinning
-Project: MCP_Local
-```
+    Target ID: termux-main
+    Platform: Android / Termux
+    Transport: SSH with strict host-key pinning
+    Project: MCP_Local
 
-Target IP is mutable endpoint state, not identity; the pinned SSH host key is authoritative.
+The Target address may change; pinned SSH identity remains authoritative.
 
-## Fresh-install security defaults
+## Fresh-install defaults
 
-A fresh Registry starts with:
-
-```text
-gateway_enabled=true
-writes_enabled=false
-shell_enabled=false
-```
-
-These are defaults only. Query `gateway_status` / the live Registry before making claims about an installed appliance.
+    gateway_enabled=true
+    writes_enabled=false
+    shell_enabled=false
 
 ## Current validation objective
 
-Before these integration changes may be promoted:
+This implementation phase must not deploy production. Before a later promotion decision:
+1. review the complete diff;
+2. pass all Go, frontend, shell, module and Go-only gates;
+3. cross-build ARMv6;
+4. build and inspect the canonical release bundle from a clean exact commit;
+5. verify documentation and remove redundant legacy paths;
+6. only in the later deployment phase, promote that exact commit;
+7. run real ARMv6 service, recovery, Target and security acceptance;
+8. compare measured runtime behavior without presenting historical baselines as current measurements.
 
-1. review the complete diff and remove accidental complexity;
-2. pass focused and full Python, Go and JavaScript tests;
-3. pass installer, documentation and build gates;
-4. validate the declared Python minimum independently of the reference runtime;
-5. commit and push the exact validated state to `develop`;
-6. only in the later deployment phase, deploy that exact commit to the reference ARMv6 appliance and run functional/security acceptance plus `scripts/benchmark_runtime.py`;
-7. use the ARMv6 benchmark to quantify the current Go-to-Python process boundary before approving any Python-to-Go Core migration;
-8. keep `main` unchanged until release promotion is explicitly justified.
-
-Evidence from the later appliance acceptance, not this document, determines whether deployment is PASS.
+Source validation does not equal deployment PASS.

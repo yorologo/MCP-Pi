@@ -23,6 +23,39 @@ import (
 	"mcp-gateway-adapter/internal/registry"
 )
 
+func (s *Server) failStoreMutation(w http.ResponseWriter, r *http.Request, action, targetID, projectID string, err error) bool {
+	if err == nil {
+		return false
+	}
+	s.RecordAudit(r, action, targetID, projectID, false, "STORE_ERROR", err.Error(), false)
+	http.Error(w, "Failed to persist requested change.", http.StatusInternalServerError)
+	return true
+}
+
+func parseBoundedFormInt(r *http.Request, key string, minValue, maxValue int) (int, error) {
+	raw := strings.TrimSpace(r.FormValue(key))
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", key)
+	}
+	if value < minValue || value > maxValue {
+		return 0, fmt.Errorf("%s must be between %d and %d", key, minValue, maxValue)
+	}
+	return value, nil
+}
+
+func getIntSetting(ctx context.Context, store *registry.Store, key string, defaultValue int) (int, error) {
+	raw, err := store.GetSetting(ctx, key, strconv.Itoa(defaultValue))
+	if err != nil {
+		return 0, err
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("setting %s has invalid integer value %q", key, raw)
+	}
+	return value, nil
+}
+
 func getUptimeSec() int {
 	data, err := os.ReadFile("/proc/uptime")
 	if err != nil {
@@ -146,7 +179,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	sess.LastActive = time.Now()
 	sess.CSRFToken = GenerateCSRFToken()
 
-	_ = s.cfg.Store.UpdateAdminLogin(r.Context(), username)
+	if err := s.cfg.Store.UpdateAdminLogin(r.Context(), username); err != nil {
+		s.RecordAudit(r, "admin_login_metadata", "", "", false, "STORE_ERROR", err.Error(), false)
+	}
 	s.RecordAudit(r, "admin_login_success", "", "", true, "", fmt.Sprintf("Admin '%s' logged in", username), false)
 
 	http.Redirect(w, r, safeLocalRedirect(next), http.StatusFound)
@@ -512,7 +547,9 @@ func (s *Server) handleTargetToggle(w http.ResponseWriter, r *http.Request, targ
 		return
 	}
 	target.Enabled = !target.Enabled
-	_ = s.cfg.Store.UpdateTarget(r.Context(), target)
+	if s.failStoreMutation(w, r, "toggle_target", targetID, "", s.cfg.Store.UpdateTarget(r.Context(), target)) {
+		return
+	}
 
 	action := "enabled"
 	if !target.Enabled {
@@ -630,7 +667,9 @@ func (s *Server) handleTargetPrivilegeApprove(w http.ResponseWriter, r *http.Req
 	clientID := pair[0]
 	projectID := pair[1]
 
-	_ = s.cfg.Store.SetPrivilegeApproval(r.Context(), targetID, "ask_always", clientID, projectID, "")
+	if s.failStoreMutation(w, r, "approve_target_privilege", targetID, projectID, s.cfg.Store.SetPrivilegeApproval(r.Context(), targetID, "ask_always", clientID, projectID, "")) {
+		return
+	}
 	s.RecordAudit(r, "approve_target_privilege", targetID, projectID, true, "", fmt.Sprintf("Approved privilege lease for client %s", clientID), false)
 
 	sess := getSession(r)
@@ -643,7 +682,9 @@ func (s *Server) handleTargetPrivilegeRevoke(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	_ = s.cfg.Store.ClearPrivilegeApproval(r.Context(), targetID)
+	if s.failStoreMutation(w, r, "revoke_target_privilege", targetID, "", s.cfg.Store.ClearPrivilegeApproval(r.Context(), targetID)) {
+		return
+	}
 	s.RecordAudit(r, "revoke_target_privilege", targetID, "", true, "", "Revoked cached privilege approval", false)
 	sess := getSession(r)
 	sess.Flash("Cached privilege approval revoked.", "info")
@@ -692,7 +733,9 @@ func (s *Server) handleTargetPrivilegeAlwaysAllow(w http.ResponseWriter, r *http
 	s.RecordAudit(r, "target_privilege_policy_change_attempt", targetID, "", true, "", fmt.Sprintf("{\"new_policy\":\"always_allow\",\"old_policy\":\"%s\"}", target.PrivilegePolicy), true)
 
 	target.PrivilegePolicy = "always_allow"
-	_ = s.cfg.Store.UpdateTarget(r.Context(), target)
+	if s.failStoreMutation(w, r, "target_privilege_policy_change", targetID, "", s.cfg.Store.UpdateTarget(r.Context(), target)) {
+		return
+	}
 
 	s.RecordAudit(r, "target_privilege_policy_change", targetID, "", true, "", "Enabled always_allow with re-authentication", false)
 	sess.Flash(fmt.Sprintf("Privilege policy set to always_allow for Target '%s'.", targetID), "warning")
@@ -802,7 +845,9 @@ func (s *Server) handleProjectSubroutes(w http.ResponseWriter, r *http.Request) 
 		project.Write = r.FormValue("write") == "on"
 		project.Enabled = r.FormValue("enabled") == "on"
 
-		_ = s.cfg.Store.UpdateProject(r.Context(), project)
+		if s.failStoreMutation(w, r, "update_project", targetID, projectID, s.cfg.Store.UpdateProject(r.Context(), project)) {
+			return
+		}
 		s.RecordAudit(r, "update_project", targetID, projectID, true, "", fmt.Sprintf("Updated project '%s'", projectID), false)
 		sess.Flash(fmt.Sprintf("Project '%s' updated.", projectID), "success")
 		http.Redirect(w, r, "/projects", http.StatusFound)
@@ -811,7 +856,9 @@ func (s *Server) handleProjectSubroutes(w http.ResponseWriter, r *http.Request) 
 
 	if action == "toggle" && r.Method == http.MethodPost {
 		project.Enabled = !project.Enabled
-		_ = s.cfg.Store.UpdateProject(r.Context(), project)
+		if s.failStoreMutation(w, r, "toggle_project", targetID, projectID, s.cfg.Store.UpdateProject(r.Context(), project)) {
+			return
+		}
 		s.RecordAudit(r, "toggle_project", targetID, projectID, true, "", fmt.Sprintf("Project enabled=%v", project.Enabled), false)
 		sess.Flash(fmt.Sprintf("Project '%s' enabled=%v.", projectID, project.Enabled), "success")
 		http.Redirect(w, r, "/projects", http.StatusFound)
@@ -820,7 +867,9 @@ func (s *Server) handleProjectSubroutes(w http.ResponseWriter, r *http.Request) 
 
 	if action == "toggle-write" && r.Method == http.MethodPost {
 		project.Write = !project.Write
-		_ = s.cfg.Store.UpdateProject(r.Context(), project)
+		if s.failStoreMutation(w, r, "toggle_project_write", targetID, projectID, s.cfg.Store.UpdateProject(r.Context(), project)) {
+			return
+		}
 		s.RecordAudit(r, "toggle_project_write", targetID, projectID, true, "", fmt.Sprintf("Project write=%v", project.Write), false)
 		sess.Flash(fmt.Sprintf("Project '%s' write capability set to %v.", projectID, project.Write), "success")
 		http.Redirect(w, r, "/projects", http.StatusFound)
@@ -969,7 +1018,9 @@ func (s *Server) handleClientSubroutes(w http.ResponseWriter, r *http.Request) {
 		client.Notes = strings.TrimSpace(r.FormValue("notes"))
 		client.Enabled = r.FormValue("enabled") == "on"
 
-		_ = s.cfg.Store.UpdateClient(r.Context(), client)
+		if s.failStoreMutation(w, r, "update_client", "", "", s.cfg.Store.UpdateClient(r.Context(), client)) {
+			return
+		}
 		s.RecordAudit(r, "update_client", "", "", true, "", fmt.Sprintf("Updated client '%s'", clientID), false)
 		sess.Flash(fmt.Sprintf("Client '%s' updated.", clientID), "success")
 		http.Redirect(w, r, "/clients", http.StatusFound)
@@ -978,7 +1029,9 @@ func (s *Server) handleClientSubroutes(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) == 2 && parts[1] == "toggle" && r.Method == http.MethodPost {
 		client.Enabled = !client.Enabled
-		_ = s.cfg.Store.UpdateClient(r.Context(), client)
+		if s.failStoreMutation(w, r, "toggle_client", "", "", s.cfg.Store.UpdateClient(r.Context(), client)) {
+			return
+		}
 		s.RecordAudit(r, "toggle_client", "", "", true, "", fmt.Sprintf("Client enabled=%v", client.Enabled), false)
 		sess.Flash(fmt.Sprintf("Client '%s' enabled=%v.", clientID, client.Enabled), "success")
 		http.Redirect(w, r, "/clients", http.StatusFound)
@@ -1013,7 +1066,10 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 			Capability: cap,
 			Enabled:    true,
 		}
-		_, _ = s.cfg.Store.AddGrant(r.Context(), grant)
+		_, err := s.cfg.Store.AddGrant(r.Context(), grant)
+		if s.failStoreMutation(w, r, "add_grant", targetID, projectID, err) {
+			return
+		}
 		s.RecordAudit(r, "add_grant", targetID, projectID, true, "", fmt.Sprintf("Added grant '%s' for client '%s'", cap, client.ID), false)
 		sess.Flash("Grant added successfully.", "success")
 		http.Redirect(w, r, fmt.Sprintf("/clients/%s/grants", client.ID), http.StatusFound)
@@ -1054,7 +1110,9 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 			grant, err := s.cfg.Store.GetGrant(r.Context(), grantID)
 			if err == nil {
 				grant.Enabled = !grant.Enabled
-				_ = s.cfg.Store.UpdateGrant(r.Context(), grant)
+				if s.failStoreMutation(w, r, "toggle_grant", grant.TargetID, grant.ProjectID, s.cfg.Store.UpdateGrant(r.Context(), grant)) {
+					return
+				}
 				s.RecordAudit(r, "toggle_grant", grant.TargetID, grant.ProjectID, true, "", fmt.Sprintf("Grant %d enabled=%v", grantID, grant.Enabled), false)
 				sess.Flash("Grant status updated.", "success")
 			}
@@ -1063,7 +1121,9 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 		}
 
 		if action == "delete" {
-			_ = s.cfg.Store.DeleteGrant(r.Context(), grantID)
+			if s.failStoreMutation(w, r, "delete_grant", "", "", s.cfg.Store.DeleteGrant(r.Context(), grantID)) {
+				return
+			}
 			s.RecordAudit(r, "delete_grant", "", "", true, "", fmt.Sprintf("Deleted grant %d for client %s", grantID, client.ID), false)
 			sess.Flash("Grant deleted.", "info")
 			http.Redirect(w, r, fmt.Sprintf("/clients/%s/grants", client.ID), http.StatusFound)
@@ -1159,29 +1219,110 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	if r.Method == http.MethodPost {
-		_ = r.ParseForm()
-		timeout := r.FormValue("admin_session_timeout")
-		if timeout != "" {
-			_ = s.cfg.Store.SetSetting(r.Context(), "admin_session_timeout", timeout)
-			s.RecordAudit(r, "update_settings", "", "", true, "", fmt.Sprintf("Updated admin_session_timeout to %s", timeout), false)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid form data.", http.StatusBadRequest)
+			return
 		}
-		sess := getSession(r)
-		sess.Flash("Settings updated successfully.", "success")
+		timeout, err := parseBoundedFormInt(r, "default_timeout", 5, 300)
+		if err != nil {
+			getSession(r).Flash(err.Error(), "danger")
+			http.Redirect(w, r, "/settings", http.StatusFound)
+			return
+		}
+		maxOutput, err := parseBoundedFormInt(r, "max_output_bytes", 1024, 10485760)
+		if err != nil {
+			getSession(r).Flash(err.Error(), "danger")
+			http.Redirect(w, r, "/settings", http.StatusFound)
+			return
+		}
+		maxRead, err := parseBoundedFormInt(r, "max_file_read_bytes", 1024, 10485760)
+		if err != nil {
+			getSession(r).Flash(err.Error(), "danger")
+			http.Redirect(w, r, "/settings", http.StatusFound)
+			return
+		}
+		maxWrite, err := parseBoundedFormInt(r, "max_write_bytes", 1024, 10485760)
+		if err != nil {
+			getSession(r).Flash(err.Error(), "danger")
+			http.Redirect(w, r, "/settings", http.StatusFound)
+			return
+		}
+		retention, err := parseBoundedFormInt(r, "activity_retention", 100, 50000)
+		if err != nil {
+			getSession(r).Flash(err.Error(), "danger")
+			http.Redirect(w, r, "/settings", http.StatusFound)
+			return
+		}
+
+		s.RecordAudit(r, "update_settings_attempt", "", "", true, "", "Update operational limits", true)
+		values := map[string]string{
+			"default_timeout":     strconv.Itoa(timeout),
+			"max_output_bytes":    strconv.Itoa(maxOutput),
+			"max_file_read_bytes": strconv.Itoa(maxRead),
+			"max_write_bytes":     strconv.Itoa(maxWrite),
+			"activity_retention":  strconv.Itoa(retention),
+		}
+		if s.failStoreMutation(w, r, "update_settings", "", "", s.cfg.Store.SetSettings(ctx, values)) {
+			return
+		}
+		s.RecordAudit(r, "update_settings", "", "", true, "", "Updated configuration settings", false)
+		getSession(r).Flash("Settings saved successfully.", "success")
 		http.Redirect(w, r, "/settings", http.StatusFound)
 		return
 	}
 
-	gwEnabled, _ := s.cfg.Store.GetSetting(r.Context(), "gateway_enabled", "true")
-	writesEnabled, _ := s.cfg.Store.GetSetting(r.Context(), "writes_enabled", "false")
-	shellEnabled, _ := s.cfg.Store.GetSetting(r.Context(), "shell_enabled", "false")
-	timeout, _ := s.cfg.Store.GetSetting(r.Context(), "admin_session_timeout", "1800")
+	gwEnabled, err := s.cfg.Store.GetSetting(ctx, "gateway_enabled", "true")
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
+	writesEnabled, err := s.cfg.Store.GetSetting(ctx, "writes_enabled", "false")
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
+	shellEnabled, err := s.cfg.Store.GetSetting(ctx, "shell_enabled", "false")
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
+	defaultTimeout, err := getIntSetting(ctx, s.cfg.Store, "default_timeout", 30)
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
+	maxOutput, err := getIntSetting(ctx, s.cfg.Store, "max_output_bytes", 262144)
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
+	maxRead, err := getIntSetting(ctx, s.cfg.Store, "max_file_read_bytes", 1048576)
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
+	maxWrite, err := getIntSetting(ctx, s.cfg.Store, "max_write_bytes", 262144)
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
+	retention, err := getIntSetting(ctx, s.cfg.Store, "activity_retention", 5000)
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
 
 	settings := map[string]interface{}{
-		"gateway_enabled":       gwEnabled == "true",
-		"writes_enabled":        writesEnabled == "true",
-		"shell_enabled":         shellEnabled == "true",
-		"admin_session_timeout": timeout,
+		"gateway_enabled":     gwEnabled == "true",
+		"writes_enabled":      writesEnabled == "true",
+		"shell_enabled":       shellEnabled == "true",
+		"default_timeout":     defaultTimeout,
+		"max_output_bytes":    maxOutput,
+		"max_file_read_bytes": maxRead,
+		"max_write_bytes":     maxWrite,
+		"activity_retention":  retention,
 	}
 
 	s.render(w, r, "settings.html", pongo2.Context{
@@ -1195,14 +1336,20 @@ func (s *Server) handleSettingsKillSwitch(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	currStr, _ := s.cfg.Store.GetSetting(r.Context(), "gateway_enabled", "true")
-	curr := currStr == "true"
+	currStr, err := s.cfg.Store.GetSetting(r.Context(), "gateway_enabled", "true")
+	if err != nil {
+		http.Error(w, "Failed to load gateway state.", http.StatusInternalServerError)
+		return
+	}
 	newVal := "true"
-	if curr {
+	if currStr == "true" {
 		newVal = "false"
 	}
-	s.RecordAudit(r, "kill_switch_toggle", "", "", true, "", fmt.Sprintf("gateway_enabled set to %s", newVal), true)
-	_ = s.cfg.Store.SetSetting(r.Context(), "gateway_enabled", newVal)
+	s.RecordAudit(r, "kill_switch_toggle_attempt", "", "", true, "", fmt.Sprintf("gateway_enabled -> %s", newVal), true)
+	if s.failStoreMutation(w, r, "kill_switch_toggle", "", "", s.cfg.Store.SetSetting(r.Context(), "gateway_enabled", newVal)) {
+		return
+	}
+	s.RecordAudit(r, "kill_switch_toggle", "", "", true, "", fmt.Sprintf("gateway_enabled set to %s", newVal), false)
 
 	sess := getSession(r)
 	if newVal == "true" {
@@ -1218,14 +1365,20 @@ func (s *Server) handleSettingsToggleWrites(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	currStr, _ := s.cfg.Store.GetSetting(r.Context(), "writes_enabled", "false")
-	curr := currStr == "true"
+	currStr, err := s.cfg.Store.GetSetting(r.Context(), "writes_enabled", "false")
+	if err != nil {
+		http.Error(w, "Failed to load writes state.", http.StatusInternalServerError)
+		return
+	}
 	newVal := "true"
-	if curr {
+	if currStr == "true" {
 		newVal = "false"
 	}
-	s.RecordAudit(r, "toggle_writes", "", "", true, "", fmt.Sprintf("writes_enabled set to %s", newVal), true)
-	_ = s.cfg.Store.SetSetting(r.Context(), "writes_enabled", newVal)
+	s.RecordAudit(r, "toggle_writes_attempt", "", "", true, "", fmt.Sprintf("writes_enabled -> %s", newVal), true)
+	if s.failStoreMutation(w, r, "toggle_writes", "", "", s.cfg.Store.SetSetting(r.Context(), "writes_enabled", newVal)) {
+		return
+	}
+	s.RecordAudit(r, "toggle_writes", "", "", true, "", fmt.Sprintf("writes_enabled set to %s", newVal), false)
 
 	sess := getSession(r)
 	if newVal == "true" {
@@ -1241,11 +1394,12 @@ func (s *Server) handleSettingsDisableWrites(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	_ = s.cfg.Store.SetSetting(r.Context(), "writes_enabled", "false")
-	s.RecordAudit(r, "disable_writes", "", "", true, "", "writes_enabled set to false", true)
-
-	sess := getSession(r)
-	sess.Flash("Filesystem writes disabled.", "info")
+	s.RecordAudit(r, "disable_writes_attempt", "", "", true, "", "writes_enabled -> false", true)
+	if s.failStoreMutation(w, r, "disable_writes", "", "", s.cfg.Store.SetSetting(r.Context(), "writes_enabled", "false")) {
+		return
+	}
+	s.RecordAudit(r, "disable_writes", "", "", true, "", "writes_enabled set to false", false)
+	getSession(r).Flash("Filesystem writes disabled.", "info")
 	http.Redirect(w, r, "/settings", http.StatusFound)
 }
 
@@ -1254,14 +1408,20 @@ func (s *Server) handleSettingsToggleShell(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	currStr, _ := s.cfg.Store.GetSetting(r.Context(), "shell_enabled", "false")
-	curr := currStr == "true"
+	currStr, err := s.cfg.Store.GetSetting(r.Context(), "shell_enabled", "false")
+	if err != nil {
+		http.Error(w, "Failed to load shell state.", http.StatusInternalServerError)
+		return
+	}
 	newVal := "true"
-	if curr {
+	if currStr == "true" {
 		newVal = "false"
 	}
-	s.RecordAudit(r, "toggle_shell", "", "", true, "", fmt.Sprintf("shell_enabled set to %s", newVal), true)
-	_ = s.cfg.Store.SetSetting(r.Context(), "shell_enabled", newVal)
+	s.RecordAudit(r, "toggle_shell_attempt", "", "", true, "", fmt.Sprintf("shell_enabled -> %s", newVal), true)
+	if s.failStoreMutation(w, r, "toggle_shell", "", "", s.cfg.Store.SetSetting(r.Context(), "shell_enabled", newVal)) {
+		return
+	}
+	s.RecordAudit(r, "toggle_shell", "", "", true, "", fmt.Sprintf("shell_enabled set to %s", newVal), false)
 
 	sess := getSession(r)
 	if newVal == "true" {
@@ -1271,10 +1431,6 @@ func (s *Server) handleSettingsToggleShell(w http.ResponseWriter, r *http.Reques
 	}
 	http.Redirect(w, r, "/settings", http.StatusFound)
 }
-
-// ---------------------------------------------------------------------------
-// Maintenance & Diagnostics
-// ---------------------------------------------------------------------------
 
 func (s *Server) handleMaintenance(w http.ResponseWriter, r *http.Request) {
 	home, _ := os.UserHomeDir()

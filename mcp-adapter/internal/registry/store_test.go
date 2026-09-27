@@ -336,3 +336,36 @@ func TestStoreCRUD(t *testing.T) {
 		t.Fatalf("PruneActivity: %v", err)
 	}
 }
+
+func TestSetSettingsAtomic(t *testing.T) {
+	store, ctx := seededStore(t)
+
+	values := map[string]string{
+		"default_timeout":    "45",
+		"max_output_bytes":   "524288",
+		"activity_retention": "6000",
+	}
+	if err := store.SetSettings(ctx, values); err != nil {
+		t.Fatalf("SetSettings failed: %v", err)
+	}
+	for key, want := range values {
+		got, err := store.GetSetting(ctx, key, "")
+		if err != nil {
+			t.Fatalf("GetSetting(%s): %v", key, err)
+		}
+		if got != want {
+			t.Fatalf("setting %s=%q want %q", key, got, want)
+		}
+	}
+
+	if err := store.SetSettings(ctx, map[string]string{"default_timeout": "60", "": "bad"}); err == nil {
+		t.Fatal("expected empty setting key to fail")
+	}
+	got, err := store.GetSetting(ctx, "default_timeout", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "45" {
+		t.Fatalf("transaction was not atomic: default_timeout=%q want 45", got)
+	}
+}

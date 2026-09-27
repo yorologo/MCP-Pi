@@ -143,7 +143,7 @@ func TestStructuredMutationHelpersFailClosedOnSymlinkEscapes(t *testing.T) {
 	_, err := transport.ResolveSafeDestination(
 		context.Background(), localTarget(), root, filepath.Join(root, "safe", "escape", "new.txt"), false, 5*time.Second,
 	)
-	if ErrorCode(err) != "PATH_OUTSIDE_ALLOWED_ROOT" {
+	if ErrorCode(err) != "SYMLINK_WRITE_DENIED" {
 		t.Fatalf("nested symlink err=%v code=%q", err, ErrorCode(err))
 	}
 

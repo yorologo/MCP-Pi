@@ -29,10 +29,6 @@ func (f *fakeRemote) RunCommand(_ context.Context, _ registry.Target, command st
 	return remote.CommandResult{ExitCode: 1, Stderr: "unexpected command"}, nil
 }
 
-func (f *fakeRemote) RunPython(_ context.Context, _ registry.Target, _ string, _ []string, _ []byte, _ time.Duration) (remote.CommandResult, error) {
-	return remote.CommandResult{ExitCode: 0}, nil
-}
-
 func (f *fakeRemote) ProbeFacts(_ context.Context, _ registry.Target, _ bool, _ time.Duration) (map[string]any, error) {
 	return map[string]any{"probe_status": "ok", "arch": "armv6l"}, nil
 }
@@ -114,6 +110,23 @@ func (f *fakeRemote) WriteFileAtomic(_ context.Context, _ registry.Target, _ str
 		BytesWritten: len(content),
 		Atomic:       true,
 	}, nil
+}
+
+func (f *fakeRemote) AppendFile(_ context.Context, _ registry.Target, _ string, content []byte, _ int, _ time.Duration) (string, error) {
+	sum := sha256.Sum256(content)
+	return fmt.Sprintf("%x", sum), nil
+}
+
+func (f *fakeRemote) DeletePath(_ context.Context, _ registry.Target, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (f *fakeRemote) CopyMovePath(_ context.Context, _ registry.Target, _, _ string, _ bool, _ time.Duration) error {
+	return nil
+}
+
+func (f *fakeRemote) Mkdir(_ context.Context, _ registry.Target, _ string, _ bool, _ time.Duration) error {
+	return nil
 }
 
 func loadReadOnlyFixture(t *testing.T) map[string]any {

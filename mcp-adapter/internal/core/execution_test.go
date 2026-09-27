@@ -11,6 +11,7 @@ import (
 )
 
 type executionFakeRemote struct {
+	fakeRemote
 	lastCommand string
 	lastCWD     string
 	lastEnv     map[string]string
@@ -28,10 +29,6 @@ func (f *executionFakeRemote) RunCommand(_ context.Context, _ registry.Target, c
 		return remote.CommandResult{}, f.runErr
 	}
 	return f.runResult, nil
-}
-
-func (f *executionFakeRemote) RunPython(_ context.Context, _ registry.Target, _ string, _ []string, _ []byte, _ time.Duration) (remote.CommandResult, error) {
-	return remote.CommandResult{ExitCode: 0}, nil
 }
 
 func (f *executionFakeRemote) ProbeFacts(_ context.Context, _ registry.Target, _ bool, _ time.Duration) (map[string]any, error) {

@@ -24,11 +24,11 @@ import (
 )
 
 const (
-	SessionTimeout          = 30 * time.Minute
-	MaxLoginFailedAttempts  = 5
-	LoginFailureWindow      = 5 * time.Minute
-	LoginLockoutDuration    = 1 * time.Minute
-	DefaultSessionCookie    = "mcp_admin_session"
+	SessionTimeout         = 30 * time.Minute
+	MaxLoginFailedAttempts = 5
+	LoginFailureWindow     = 5 * time.Minute
+	LoginLockoutDuration   = 1 * time.Minute
+	DefaultSessionCookie   = "mcp_admin_session"
 )
 
 // CheckPasswordHash verifies passwords formatted by Werkzeug (scrypt:32768:8:1$... or pbkdf2:sha256:...).
@@ -210,31 +210,41 @@ type SessionManager struct {
 	secretPath string
 }
 
-func NewSessionManager(secretDir string) (*SessionManager, error) {
-	if secretDir == "" {
+func NewSessionManager(secretFile string) (*SessionManager, error) {
+	if secretFile == "" {
 		home := os.Getenv("MCP_GATEWAY_HOME")
 		if home == "" {
 			home = "/home/mcp-gateway"
 		}
-		secretDir = filepath.Join(home, ".config", "mcp-gateway")
+		secretFile = filepath.Join(home, ".config", "mcp-gateway", "admin-secret")
 	}
-	if err := os.MkdirAll(secretDir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(secretFile), 0o700); err != nil {
 		return nil, fmt.Errorf("create secret directory: %w", err)
 	}
-	secretFile := filepath.Join(secretDir, "admin_session_secret")
 
 	var hashKey, blockKey []byte
-	if data, err := os.ReadFile(secretFile); err == nil && len(data) == 64 {
-		hashKey = data[:32]
-		blockKey = data[32:64]
-	} else {
+	data, err := os.ReadFile(secretFile)
+	switch {
+	case err == nil:
+		if len(data) != 64 {
+			return nil, fmt.Errorf("session secret %s has invalid length %d; expected 64 bytes", secretFile, len(data))
+		}
+		hashKey = append([]byte(nil), data[:32]...)
+		blockKey = append([]byte(nil), data[32:]...)
+	case errors.Is(err, os.ErrNotExist):
 		hashKey = securecookie.GenerateRandomKey(32)
 		blockKey = securecookie.GenerateRandomKey(32)
 		if hashKey == nil || blockKey == nil {
 			return nil, errors.New("failed to generate secure cookie keys")
 		}
-		combined := append(hashKey, blockKey...)
-		_ = os.WriteFile(secretFile, combined, 0o600)
+		combined := make([]byte, 0, 64)
+		combined = append(combined, hashKey...)
+		combined = append(combined, blockKey...)
+		if err := os.WriteFile(secretFile, combined, 0o600); err != nil {
+			return nil, fmt.Errorf("write session secret: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("read session secret: %w", err)
 	}
 
 	sc := securecookie.New(hashKey, blockKey)
@@ -271,7 +281,7 @@ func (sm *SessionManager) SetCookie(w http.ResponseWriter, r *http.Request, data
 		MaxAge:   int(SessionTimeout.Seconds()),
 		HttpOnly: true,
 		Secure:   isSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 	})
 	return nil
 }
@@ -283,7 +293,7 @@ func (sm *SessionManager) ClearCookie(w http.ResponseWriter) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 	})
 }
 

@@ -3,11 +3,8 @@ package core
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -21,6 +18,7 @@ import (
 
 	"mcp-gateway-adapter/internal/registry"
 	"mcp-gateway-adapter/internal/remote"
+	"mcp-gateway-adapter/internal/sqliteutil"
 )
 
 func (c *Core) dbPath() string {
@@ -116,36 +114,22 @@ func (c *Core) GatewayBackup(ctx context.Context, requestID, actor, destPath str
 
 	if strings.TrimSpace(destPath) == "" {
 		backupDir := c.backupDir()
-		if err := os.MkdirAll(backupDir, 0o750); err != nil {
-			return errorResponse("gateway_backup", "INTERNAL_ERROR", "Failed to create backup directory: "+err.Error(), requestID, "", "", started)
+		destPath = filepath.Join(backupDir, fmt.Sprintf("gateway_backup_%s.db", time.Now().UTC().Format("20060102_150405.000000000")))
+	}
+	info, err := sqliteutil.Backup(ctx, c.store.DB(), destPath)
+	if err != nil {
+		code := "INTERNAL_ERROR"
+		if strings.Contains(err.Error(), "already exists") {
+			code = "ALREADY_EXISTS"
 		}
-		destPath = filepath.Join(backupDir, fmt.Sprintf("gateway_backup_%s.db", time.Now().UTC().Format("20060102_150405")))
-	} else {
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
-			return errorResponse("gateway_backup", "INTERNAL_ERROR", "Failed to create destination directory: "+err.Error(), requestID, "", "", started)
-		}
+		return errorResponse("gateway_backup", code, "Failed to backup database: "+err.Error(), requestID, "", "", started)
+	}
+	if info.Integrity != "ok" {
+		_ = os.Remove(destPath)
+		return errorResponse("gateway_backup", "BACKUP_INTEGRITY_FAILED", "Backup integrity check failed: "+info.Integrity, requestID, "", "", started)
 	}
 
-	_ = os.Remove(destPath)
-
-	_, err := c.store.DB().ExecContext(ctx, "VACUUM INTO ?", destPath)
-	if err != nil {
-		return errorResponse("gateway_backup", "INTERNAL_ERROR", "Failed to backup database: "+err.Error(), requestID, "", "", started)
-	}
-
-	f, err := os.Open(destPath)
-	if err != nil {
-		return errorResponse("gateway_backup", "INTERNAL_ERROR", "Failed to open backup file: "+err.Error(), requestID, "", "", started)
-	}
-	defer f.Close()
-
-	h := sha256.New()
-	size, err := io.Copy(h, f)
-	if err != nil {
-		return errorResponse("gateway_backup", "INTERNAL_ERROR", "Failed to hash backup file: "+err.Error(), requestID, "", "", started)
-	}
-	shaHex := hex.EncodeToString(h.Sum(nil))
-
+	size := info.SizeBytes
 	durMS := time.Since(started).Milliseconds()
 	_ = c.store.RecordActivity(ctx, registry.Activity{
 		Actor:            nonEmpty(actor, "mcp-local"),
@@ -153,16 +137,23 @@ func (c *Core) GatewayBackup(ctx context.Context, requestID, actor, destPath str
 		DurationMS:       &durMS,
 		Success:          true,
 		BytesTransferred: &size,
-		Detail:           mustJSON(map[string]any{"backup_path": destPath, "sha256": shaHex}),
+		Detail:           mustJSON(map[string]any{"backup_path": destPath, "sha256": info.SHA256, "schema_version": info.SchemaVersion}),
 	})
 
 	res := map[string]any{
-		"backup_path": destPath,
-		"sha256":      shaHex,
-		"size_bytes":  size,
-		"created_at":  time.Now().UTC().Format(time.RFC3339),
+		"backup_path":    destPath,
+		"sha256":         info.SHA256,
+		"size_bytes":     info.SizeBytes,
+		"schema_version": info.SchemaVersion,
+		"integrity":      info.Integrity,
+		"created_at":     time.Now().UTC().Format(time.RFC3339),
 	}
 	return successResponse("gateway_backup", res, requestID, "", "", started)
+}
+
+type DoctorOptions struct {
+	CheckTargets bool `json:"check_targets"`
+	Verbose      bool `json:"verbose"`
 }
 
 type DoctorCheck struct {
@@ -170,38 +161,34 @@ type DoctorCheck struct {
 	Passed   bool   `json:"passed"`
 	Message  string `json:"message"`
 	Severity string `json:"severity"`
+	Required bool   `json:"required"`
 }
 
-func (c *Core) GatewayDoctor(ctx context.Context, requestID string) Response {
+func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorOptions) Response {
 	started := time.Now()
 	if blocked := c.operationalGate(ctx, "gateway_doctor", requestID, "", ""); blocked != nil {
 		return responseFromMap(blocked)
 	}
 
-	var checks []DoctorCheck
-
-	// 1. Gateway Core
-	checks = append(checks, DoctorCheck{
+	checks := []DoctorCheck{{
 		Name:     "Gateway Core Health",
 		Passed:   true,
 		Message:  "Core is initialized and responding",
 		Severity: "error",
-	})
+		Required: true,
+	}}
 
-	// 2. Database Connection
 	dbHealthy := c.store != nil && c.store.DB() != nil
 	checks = append(checks, DoctorCheck{
-		Name:     "Database Connection",
-		Passed:   dbHealthy,
-		Message:  "SQLite registry store connected",
-		Severity: "error",
+		Name: "Database Connection", Passed: dbHealthy,
+		Message: "SQLite registry store connected", Severity: "error", Required: true,
 	})
 
-	// 3. Database Integrity
-	var integrity string
+	integrity := ""
 	if dbHealthy {
-		row := c.store.DB().QueryRowContext(ctx, "PRAGMA integrity_check;")
-		_ = row.Scan(&integrity)
+		if err := c.store.DB().QueryRowContext(ctx, "PRAGMA integrity_check;").Scan(&integrity); err != nil {
+			integrity = "query failed: " + err.Error()
+		}
 	}
 	integrityPassed := integrity == "ok"
 	integMsg := "PRAGMA integrity_check passed: ok"
@@ -209,13 +196,10 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string) Response {
 		integMsg = "Database integrity check failed: " + integrity
 	}
 	checks = append(checks, DoctorCheck{
-		Name:     "Database Integrity",
-		Passed:   integrityPassed,
-		Message:  integMsg,
-		Severity: "error",
+		Name: "Database Integrity", Passed: integrityPassed,
+		Message: integMsg, Severity: "error", Required: true,
 	})
 
-	// 4. Root Storage
 	disk := getDiskInfo("/")
 	diskPassed := true
 	diskMsg := fmt.Sprintf("Root storage available: %v GB free (%.1f%% used)", disk["root_free_gb"], disk["root_used_pct"])
@@ -224,13 +208,9 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string) Response {
 		diskMsg = fmt.Sprintf("Low root disk space: %v GB free", free)
 	}
 	checks = append(checks, DoctorCheck{
-		Name:     "Storage Space",
-		Passed:   diskPassed,
-		Message:  diskMsg,
-		Severity: "warning",
+		Name: "Storage Space", Passed: diskPassed, Message: diskMsg, Severity: "warning", Required: true,
 	})
 
-	// 5. Memory
 	mem := getMemoryInfo()
 	memPassed := true
 	memMsg := fmt.Sprintf("Memory available: %v MB", mem["available_mb"])
@@ -239,33 +219,70 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string) Response {
 		memMsg = fmt.Sprintf("Low available memory: %v MB", avail)
 	}
 	checks = append(checks, DoctorCheck{
-		Name:     "Memory Resources",
-		Passed:   memPassed,
-		Message:  memMsg,
-		Severity: "warning",
+		Name: "Memory Resources", Passed: memPassed, Message: memMsg, Severity: "warning", Required: true,
 	})
 
-	// Control path probe
-	targets, _ := c.store.ListTargets(ctx)
-	targetTransportStatus := "SKIP"
-	targetTransportMsg := "No configured target probe attempted"
 	targetStatus := "SKIP"
-	targetMsg := "No configured target probe attempted"
-
-	if len(targets) > 0 && c.remote != nil {
-		firstTarget, err := c.store.GetTarget(ctx, targets[0].ID, false)
-		if err == nil {
-			res, err := c.remote.RunCommand(ctx, firstTarget, "hostname", remote.CommandOptions{Timeout: 5 * time.Second})
-			if err == nil && res.OK() {
-				targetTransportStatus = "PASS"
-				targetTransportMsg = "SSH target transport reachable"
-				targetStatus = "PASS"
-				targetMsg = "Target responded: " + strings.TrimSpace(res.Stdout)
-			} else {
-				targetTransportStatus = "FAIL"
-				targetTransportMsg = "Target probe failed"
-				targetStatus = "FAIL"
-				targetMsg = "Target unreachable"
+	targetMsg := "Target probes not requested"
+	if opts.CheckTargets {
+		targets, err := c.store.ListTargets(ctx)
+		if err != nil {
+			checks = append(checks, DoctorCheck{
+				Name: "Target Registry", Passed: false, Message: err.Error(), Severity: "error", Required: true,
+			})
+			targetStatus, targetMsg = "FAIL", "Unable to enumerate targets"
+		} else {
+			probed := 0
+			failed := 0
+			for _, summary := range targets {
+				if !summary.Enabled {
+					continue
+				}
+				probed++
+				target, err := c.store.GetTarget(ctx, summary.ID, false)
+				if err != nil {
+					failed++
+					checks = append(checks, DoctorCheck{
+						Name: "Target " + summary.ID, Passed: false, Message: err.Error(), Severity: "error", Required: true,
+					})
+					continue
+				}
+				if c.remote == nil {
+					failed++
+					checks = append(checks, DoctorCheck{
+						Name: "Target " + summary.ID, Passed: false, Message: "remote transport unavailable", Severity: "error", Required: true,
+					})
+					continue
+				}
+				res, err := c.remote.RunCommand(ctx, target, "hostname", remote.CommandOptions{Timeout: 5 * time.Second})
+				if err != nil || !res.OK() {
+					failed++
+					msg := "target probe failed"
+					if err != nil {
+						msg = err.Error()
+					} else if strings.TrimSpace(res.Stderr) != "" {
+						msg = strings.TrimSpace(res.Stderr)
+					}
+					checks = append(checks, DoctorCheck{
+						Name: "Target " + summary.ID, Passed: false, Message: msg, Severity: "error", Required: true,
+					})
+					continue
+				}
+				checks = append(checks, DoctorCheck{
+					Name: "Target " + summary.ID, Passed: true,
+					Message: "reachable: " + strings.TrimSpace(res.Stdout), Severity: "error", Required: true,
+				})
+			}
+			switch {
+			case probed == 0:
+				targetStatus, targetMsg = "WARN", "No enabled targets configured"
+				checks = append(checks, DoctorCheck{
+					Name: "Target Connectivity", Passed: false, Message: targetMsg, Severity: "warning", Required: true,
+				})
+			case failed > 0:
+				targetStatus, targetMsg = "FAIL", fmt.Sprintf("%d of %d target probes failed", failed, probed)
+			default:
+				targetStatus, targetMsg = "PASS", fmt.Sprintf("%d target(s) reachable", probed)
 			}
 		}
 	}
@@ -275,20 +292,19 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string) Response {
 	tunnelMsg := "systemd tunnel probe unavailable on this platform"
 	if t, ok := services["mcp-gateway-tunnel"]; ok && t != "unknown" {
 		if t == "active" {
-			tunnelStatus = "PASS"
-			tunnelMsg = "active"
+			tunnelStatus, tunnelMsg = "PASS", "active"
 		} else {
-			tunnelStatus = "WARN"
-			tunnelMsg = "tunnel service status: " + t
+			tunnelStatus, tunnelMsg = "WARN", "tunnel service status: "+t
 		}
 	}
 
-	clients, _ := c.store.ListClients(ctx)
+	clients, err := c.store.ListClients(ctx)
 	clientStatus := "SKIP"
-	clientMsg := "No registered clients to probe"
-	if len(clients) > 0 {
-		clientStatus = "PASS"
-		clientMsg = "Registered client entrypoint available"
+	clientMsg := "No registered clients"
+	if err != nil {
+		clientStatus, clientMsg = "FAIL", err.Error()
+	} else if len(clients) > 0 {
+		clientStatus, clientMsg = "PASS", "Registered client entrypoint available"
 	}
 
 	controlPath := map[string]any{
@@ -296,38 +312,39 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string) Response {
 		"tunnel":            map[string]string{"status": tunnelStatus, "message": tunnelMsg},
 		"mcp_adapter":       map[string]string{"status": "PASS", "message": "Go-only in-process MCP adapter active"},
 		"gateway_core":      map[string]string{"status": "PASS", "message": "Derived from Gateway Core Doctor check"},
-		"target_transport":  map[string]string{"status": targetTransportStatus, "message": targetTransportMsg},
-		"target":            map[string]string{"status": targetStatus, "message": targetMsg},
+		"targets":           map[string]string{"status": targetStatus, "message": targetMsg},
 	}
 
-	passedCnt := 0
-	failedCnt := 0
-	warnCnt := 0
+	passedCnt, failedCnt, warnCnt := 0, 0, 0
 	for _, ch := range checks {
 		if ch.Passed {
 			passedCnt++
 		} else if ch.Severity == "warning" {
 			warnCnt++
-		} else {
+		} else if ch.Required {
 			failedCnt++
 		}
 	}
 
-	doctorOverall := "HEALTHY"
+	overall := "HEALTHY"
 	if failedCnt > 0 {
-		doctorOverall = "ERROR"
+		overall = "ERROR"
 	} else if warnCnt > 0 {
-		doctorOverall = "WARNING"
+		overall = "WARNING"
 	}
 
 	res := map[string]any{
 		"control_path": controlPath,
-		"status":       doctorOverall,
+		"status":       overall,
 		"checks_count": len(checks),
 		"passed":       passedCnt,
 		"failed":       failedCnt,
 		"warnings":     warnCnt,
 		"checks":       checks,
+	}
+	if opts.Verbose {
+		res["database_path"] = c.dbPath()
+		res["backup_dir"] = c.backupDir()
 	}
 
 	durMS := time.Since(started).Milliseconds()
@@ -336,7 +353,7 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string) Response {
 		Action:     "DOCTOR_CHECK",
 		DurationMS: &durMS,
 		Success:    failedCnt == 0,
-		Detail:     mustJSON(map[string]any{"status": doctorOverall, "passed": passedCnt, "failed": failedCnt}),
+		Detail:     mustJSON(map[string]any{"status": overall, "passed": passedCnt, "failed": failedCnt, "warnings": warnCnt}),
 	})
 
 	return successResponse("gateway_doctor", res, requestID, "", "", started)
@@ -347,7 +364,6 @@ func (c *Core) GatewayMaintenance(ctx context.Context, requestID, actor string) 
 	if blocked := c.operationalGate(ctx, "gateway_maintenance", requestID, "", ""); blocked != nil {
 		return responseFromMap(blocked)
 	}
-
 	if err := c.recordAuditRequired(ctx, actor, "MAINTENANCE_ATTEMPT", "", "", map[string]any{}, started); err != nil {
 		return errorResponse("gateway_maintenance", "AUDIT_UNAVAILABLE", "Audit sink is unavailable for a critical operation", requestID, "", "", started)
 	}
@@ -360,7 +376,6 @@ func (c *Core) GatewayMaintenance(ctx context.Context, requestID, actor string) 
 	bakPath, _ := bakResult["backup_path"].(string)
 	bakSize, _ := bakResult["size_bytes"].(int64)
 
-	// Prune backups keeping last 5
 	backupsDir := c.backupDir()
 	prunedCount := 0
 	if entries, err := os.ReadDir(backupsDir); err == nil {
@@ -378,36 +393,38 @@ func (c *Core) GatewayMaintenance(ctx context.Context, requestID, actor string) 
 			}
 			return fi.ModTime().Before(fj.ModTime())
 		})
-		if len(backupFiles) > 5 {
-			for _, old := range backupFiles[:len(backupFiles)-5] {
-				if err := os.Remove(old); err == nil {
-					prunedCount++
-				}
+		for _, old := range backupFiles[:max(0, len(backupFiles)-5)] {
+			if err := os.Remove(old); err != nil {
+				return errorResponse("gateway_maintenance", "BACKUP_PRUNE_FAILED", "Failed to prune old backup: "+err.Error(), requestID, "", "", started)
 			}
+			prunedCount++
 		}
 	}
 
 	var integrity string
-	row := c.store.DB().QueryRowContext(ctx, "PRAGMA integrity_check;")
-	_ = row.Scan(&integrity)
-	if integrity == "" {
-		integrity = "unknown"
+	if err := c.store.DB().QueryRowContext(ctx, "PRAGMA integrity_check;").Scan(&integrity); err != nil {
+		return errorResponse("gateway_maintenance", "DATABASE_INTEGRITY_FAILED", "SQLite integrity check failed to execute: "+err.Error(), requestID, "", "", started)
+	}
+	if integrity != "ok" {
+		return errorResponse("gateway_maintenance", "DATABASE_INTEGRITY_FAILED", "SQLite integrity check failed: "+integrity, requestID, "", "", started)
 	}
 
-	docResp := c.GatewayDoctor(ctx, requestID)
-	docStatus := "UNKNOWN"
-	if docResp.OK {
-		if dr, ok := docResp.Result.(map[string]any); ok {
-			if s, ok := dr["status"].(string); ok {
-				docStatus = s
-			}
-		}
+	docResp := c.GatewayDoctor(ctx, requestID, DoctorOptions{})
+	if !docResp.OK {
+		return errorResponse("gateway_maintenance", "DOCTOR_FAILED", "Doctor execution failed", requestID, "", "", started)
+	}
+	docResult, ok := docResp.Result.(map[string]any)
+	if !ok {
+		return errorResponse("gateway_maintenance", "DOCTOR_FAILED", "Doctor returned an invalid result", requestID, "", "", started)
+	}
+	docStatus, _ := docResult["status"].(string)
+	if docStatus == "" || docStatus == "ERROR" {
+		return errorResponse("gateway_maintenance", "DOCTOR_FAILED", "Doctor reported "+nonEmpty(docStatus, "UNKNOWN"), requestID, "", "", started)
 	}
 
 	disk := getDiskInfo("/")
 	mem := getMemoryInfo()
 	secStatus := getSecurityUpdatesStatus()
-
 	res := map[string]any{
 		"message":              "Appliance maintenance executed successfully",
 		"backup_created":       bakPath,
@@ -431,8 +448,39 @@ func (c *Core) GatewayMaintenance(ctx context.Context, requestID, actor string) 
 		Success:    true,
 		Detail:     mustJSON(map[string]any{"doctor_status": docStatus, "pruned": prunedCount}),
 	})
-
 	return successResponse("gateway_maintenance", res, requestID, "", "", started)
+}
+
+var scheduleReboot = scheduleRebootWithLogind
+
+func scheduleRebootWithLogind(ctx context.Context, when time.Time) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("controlled appliance reboot is supported only on Linux")
+	}
+	if _, err := exec.LookPath("busctl"); err != nil {
+		return fmt.Errorf("systemd busctl is unavailable: %w", err)
+	}
+	cmd := exec.CommandContext(
+		ctx,
+		"busctl",
+		"call",
+		"org.freedesktop.login1",
+		"/org/freedesktop/login1",
+		"org.freedesktop.login1.Manager",
+		"ScheduleShutdown",
+		"st",
+		"reboot",
+		strconv.FormatInt(when.UnixMicro(), 10),
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = err.Error()
+		}
+		return fmt.Errorf("logind rejected reboot scheduling: %s", message)
+	}
+	return nil
 }
 
 func (c *Core) GatewayReboot(ctx context.Context, requestID, actor string, confirm bool) Response {
@@ -440,39 +488,24 @@ func (c *Core) GatewayReboot(ctx context.Context, requestID, actor string, confi
 	if blocked := c.operationalGate(ctx, "gateway_reboot", requestID, "", ""); blocked != nil {
 		return responseFromMap(blocked)
 	}
-
 	if !confirm {
-		return errorResponse("gateway_reboot", "INVALID_ARGUMENTS", "Appliance reboot requires explicit confirmation parameter 'confirm=True'", requestID, "", "", started)
+		return errorResponse("gateway_reboot", "INVALID_ARGUMENTS", "Appliance reboot requires explicit confirmation parameter 'confirm=true'", requestID, "", "", started)
 	}
-
 	if err := c.recordAuditRequired(ctx, actor, "REBOOT_REQUESTED", "", "", map[string]any{"actor": actor, "tool": "gateway_reboot"}, started); err != nil {
 		return errorResponse("gateway_reboot", "AUDIT_UNAVAILABLE", "Audit sink is unavailable for a critical operation", requestID, "", "", started)
 	}
 
-	helperPath := "/usr/local/bin/mcp-gateway-reboot"
-	rebootScheduled := false
-	msg := fmt.Sprintf("Reboot helper %s not found", helperPath)
-
-	if fi, err := os.Stat(helperPath); err == nil && !fi.IsDir() && runtime.GOOS == "linux" {
-		cmd := exec.Command("sh", "-c", "sleep 2 && sudo /usr/local/bin/mcp-gateway-reboot")
-		cmd.Stdin = nil
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		_ = cmd.Start()
-		rebootScheduled = true
-		msg = "Controlled appliance reboot scheduled in 2 seconds"
-	} else if runtime.GOOS == "windows" {
-		rebootScheduled = false
-		msg = "Reboot requested (simulated on Windows development platform)"
+	when := time.Now().Add(2 * time.Second)
+	if err := scheduleReboot(ctx, when); err != nil {
+		return errorResponse("gateway_reboot", "REBOOT_SCHEDULE_FAILED", err.Error(), requestID, "", "", started)
 	}
 
-	res := map[string]any{
-		"reboot_scheduled": rebootScheduled,
-		"message":          msg,
+	return successResponse("gateway_reboot", map[string]any{
+		"reboot_scheduled": true,
+		"message":          "Controlled appliance reboot accepted by systemd-logind",
 		"requested_by":     actor,
 		"timestamp":        time.Now().UTC().Format(time.RFC3339),
-	}
-	return successResponse("gateway_reboot", res, requestID, "", "", started)
+	}, requestID, "", "", started)
 }
 
 func getUptimeSeconds() int {

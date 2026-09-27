@@ -16,7 +16,7 @@ type Invocation struct {
 	RequestID string
 }
 
-// Invoke is the in-process replacement boundary for mcp_gateway.bridge invoke.
+// Invoke is the in-process MCP tool dispatch boundary.
 // It preserves bridge authorization precedence and dispatches only tools that
 // have already demonstrated Go parity. Unported tools fail closed.
 func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName string, args map[string]any) map[string]any {
@@ -124,8 +124,8 @@ func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName strin
 			Path:           relativePath,
 			Content:        content,
 			ExpectedSHA256: expectedSHA,
-			DryRun:         pythonTruthy(args["dry_run"]),
-			Create:         pythonTruthy(args["create"]),
+			DryRun:         argTruthy(args["dry_run"]),
+			Create:         argTruthy(args["create"]),
 		}))
 
 	case "append_file":
@@ -169,7 +169,7 @@ func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName strin
 		}
 		parents := true
 		if raw, exists := args["parents"]; exists {
-			parents = pythonTruthy(raw)
+			parents = argTruthy(raw)
 		}
 		return responseMap(c.Mkdir(ctx, invocation.RequestID, clientID, target, project, path, parents))
 
@@ -181,7 +181,7 @@ func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName strin
 			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target', 'project', and 'pattern' are required")
 		}
 		relativePath := "."
-		if raw, exists := args["relative_path"]; exists && pythonTruthy(raw) {
+		if raw, exists := args["relative_path"]; exists && argTruthy(raw) {
 			if value, ok := raw.(string); ok {
 				relativePath = value
 			}
@@ -190,7 +190,7 @@ func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName strin
 				relativePath = value
 			}
 		}
-		isRegex := pythonTruthy(args["is_regex"])
+		isRegex := argTruthy(args["is_regex"])
 		if blocked := c.operationalGate(ctx, toolName, invocation.RequestID, target, project); blocked != nil {
 			return blocked
 		}
@@ -243,23 +243,30 @@ func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName strin
 		return responseMap(c.GatewayStatus(ctx, invocation.RequestID))
 
 	case "gateway_doctor":
-		return responseMap(c.GatewayDoctor(ctx, invocation.RequestID))
+		checkTargets, _ := args["check_targets"].(bool)
+		verbose, _ := args["verbose"].(bool)
+		return responseMap(c.GatewayDoctor(ctx, invocation.RequestID, DoctorOptions{
+			CheckTargets: checkTargets,
+			Verbose:      verbose,
+		}))
 
 	case "gateway_backup":
-		destPath, _ := args["dest_path"].(string)
-		if destPath == "" {
-			destPath, _ = args["destination"].(string)
+		if len(args) != 0 {
+			return directError(toolName, "INVALID_ARGUMENTS", "gateway_backup does not accept a destination over MCP")
 		}
-		if destPath == "" {
-			destPath, _ = args["path"].(string)
-		}
-		return responseMap(c.GatewayBackup(ctx, invocation.RequestID, clientID, destPath))
+		return responseMap(c.GatewayBackup(ctx, invocation.RequestID, clientID, ""))
 
 	case "gateway_maintenance":
+		if len(args) != 0 {
+			return directError(toolName, "INVALID_ARGUMENTS", "gateway_maintenance does not accept arguments")
+		}
 		return responseMap(c.GatewayMaintenance(ctx, invocation.RequestID, clientID))
 
 	case "gateway_reboot":
-		confirm := pythonTruthy(args["confirm"])
+		confirm, ok := args["confirm"].(bool)
+		if !ok {
+			return directError(toolName, "INVALID_ARGUMENTS", "confirm must be a boolean")
+		}
 		return responseMap(c.GatewayReboot(ctx, invocation.RequestID, clientID, confirm))
 
 	default:
@@ -337,7 +344,7 @@ func requiredString(args map[string]any, key string) (string, bool) {
 	return value, true
 }
 
-func pythonTruthy(value any) bool {
+func argTruthy(value any) bool {
 	switch v := value.(type) {
 	case nil:
 		return false

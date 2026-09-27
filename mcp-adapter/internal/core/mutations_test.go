@@ -45,6 +45,23 @@ func (f *mutationRemote) WriteFileAtomic(
 	}, nil
 }
 
+func (f *mutationRemote) AppendFile(
+	_ context.Context,
+	_ registry.Target,
+	_ string,
+	content []byte,
+	_ int,
+	_ time.Duration,
+) (string, error) {
+	existing := []byte("hello existing\n")
+	sum := sha256.Sum256(append(existing, content...))
+	return fmt.Sprintf("%x", sum), nil
+}
+
+func (f *mutationRemote) ReadFile(_ context.Context, _ registry.Target, _ string, _ int64, _ time.Duration) (string, error) {
+	return "hello existing\n", nil
+}
+
 func (f *mutationRemote) ProbePath(_ context.Context, _ registry.Target, candidatePath string, _ time.Duration) (remote.PathProbe, error) {
 	parent := filepath.Dir(candidatePath)
 	if strings.Contains(candidatePath, "symlink_file.txt") {
@@ -55,7 +72,7 @@ func (f *mutationRemote) ProbePath(_ context.Context, _ registry.Target, candida
 		sum := sha256.Sum256([]byte(content))
 		return remote.PathProbe{
 			Exists: true, IsFile: true, CanonicalPath: candidatePath, ParentExists: true,
-			ParentCanonicalPath: parent, SHA256: fmt.Sprintf("%x", sum), Size: int64(len(content)), Content: content,
+			ParentCanonicalPath: parent, SHA256: fmt.Sprintf("%x", sum), Size: int64(len(content)),
 		}, nil
 	}
 	return remote.PathProbe{CanonicalPath: candidatePath, ParentExists: true, ParentCanonicalPath: parent}, nil
@@ -125,7 +142,7 @@ func seededMutationCore(t *testing.T) (*Core, *mutationRemote, *sql.DB) {
 	}, fake), fake, db
 }
 
-func TestStructuredMutationsMatchFrozenPythonOutputs(t *testing.T) {
+func TestStructuredMutationsMatchFrozenLegacyOutputs(t *testing.T) {
 	fixture := loadMutationFixture(t)
 	c, _, _ := seededMutationCore(t)
 	ctx := context.Background()
@@ -146,7 +163,7 @@ func TestStructuredMutationsMatchFrozenPythonOutputs(t *testing.T) {
 			want := fixture[tc.name].(map[string]any)
 			got := normalizedResponse(t, tc.got)
 			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("%s mismatch\nGo: %#v\nPython: %#v", tc.name, got, want)
+				t.Fatalf("%s mismatch\nGo: %#v\nLegacy: %#v", tc.name, got, want)
 			}
 		})
 	}
@@ -216,7 +233,7 @@ func TestStructuredMutationErrorsMatchFrozenPythonOutputs(t *testing.T) {
 			want := errorsFixture[tc.name].(map[string]any)
 			got := normalizedResponse(t, tc.run(c, db))
 			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("%s mismatch\nGo: %#v\nPython: %#v", tc.name, got, want)
+				t.Fatalf("%s mismatch\nGo: %#v\nLegacy: %#v", tc.name, got, want)
 			}
 		})
 	}

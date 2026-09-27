@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop, main, go-only-migration]
   pull_request:
     branches: [develop, main]
 
@@ -10,38 +10,34 @@ permissions:
   contents: read
 
 jobs:
-  python-minimum:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-      - name: Install Python dependencies
-        run: python -m pip install -r requirements.txt
-      - name: Python 3.11 compatibility tests
-        run: PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py'
-
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-          cache: pip
-      - name: Install Python dependencies
-        run: python -m pip install -r requirements.txt
-      - name: Python tests
-        run: PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py'
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: mcp-adapter/go.mod
           cache-dependency-path: mcp-adapter/go.sum
+
       - name: Go tests
         working-directory: mcp-adapter
         run: go test -count=1 ./...
+
+      - name: Go vet
+        working-directory: mcp-adapter
+        run: go vet ./...
+
+      - name: Go module hygiene
+        working-directory: mcp-adapter
+        run: go mod tidy -diff
+
+      - name: Go vulnerability reachability
+        working-directory: mcp-adapter
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          govulncheck ./...
+
       - name: ARMv6 cross-build
         working-directory: mcp-adapter
         env:
@@ -50,29 +46,37 @@ jobs:
           GOARM: '6'
           CGO_ENABLED: '0'
         run: go build -trimpath -o "$RUNNER_TEMP/mcp-gateway-adapter-armv6" .
+
+      - name: Go-only product invariant
+        run: scripts/verify-go-only.sh
+
       - name: Shell static analysis
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
           shellcheck --severity=warning install.sh scripts/*.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: tailwind/package-lock.json
+
       - name: Frontend dependencies
         working-directory: tailwind
         run: npm ci
+
       - name: JavaScript tests
-        run: node tests/test_app_js.mjs
+        run: node mcp-adapter/internal/admin/app_js_test.mjs
+
       - name: Tailwind build
         working-directory: tailwind
         run: npm run build
-      - name: Documentation audit
-        run: PYTHONPATH=src python scripts/audit-docs.py
+
       - name: Diff hygiene
         run: git diff --check && git diff --exit-code
-      - name: Build beginner ARMv6 release bundle
+
+      - name: Build and inspect ARMv6 release bundle
         run: |
           mkdir -p "$RUNNER_TEMP/release"
           scripts/build-release-package.sh "$GITHUB_SHA" "$RUNNER_TEMP/release"
@@ -80,16 +84,8 @@ jobs:
           test -n "$pkg"
           tar -tzf "$pkg" | grep -q '/bin/mcp-gateway-adapter$'
           tar -tzf "$pkg" | grep -q '/install.sh$'
+          if tar -tzf "$pkg" | grep -E '/(src/mcp_gateway|requirements\.txt|[^/]+\.py)$'; then
+            echo "Python payload found in release bundle" >&2
+            exit 1
+          fi
           sha256sum "$pkg"
-
-  windows-transport:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - name: Windows transport tests
-        env:
-          PYTHONPATH: src
-        run: python -m unittest discover -s tests -p "test_windows_transport.py" -v

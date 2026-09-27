@@ -78,7 +78,7 @@ func seededCore(t *testing.T) (*Core, *sql.DB) {
 	}), db
 }
 
-func TestHealthMatchesFrozenPythonSemanticsWithGoRuntimeIdentity(t *testing.T) {
+func TestHealthMatchesFrozenLegacySemanticsWithGoRuntimeIdentity(t *testing.T) {
 	fixture := loadCoreFixture(t)
 	core, _ := seededCore(t)
 
@@ -117,7 +117,7 @@ func TestHealthMatchesFrozenPythonSemanticsWithGoRuntimeIdentity(t *testing.T) {
 	}
 }
 
-func TestListTargetsMatchesFrozenPythonOutput(t *testing.T) {
+func TestListTargetsMatchesFrozenLegacyOutput(t *testing.T) {
 	fixture := loadCoreFixture(t)
 	core, _ := seededCore(t)
 
@@ -126,7 +126,7 @@ func TestListTargetsMatchesFrozenPythonOutput(t *testing.T) {
 	delete(gotMap, "duration_ms")
 
 	if !reflect.DeepEqual(gotMap, fixture.ListTargets) {
-		t.Fatalf("list_targets mismatch\nGo: %#v\nPython: %#v", gotMap, fixture.ListTargets)
+		t.Fatalf("list_targets mismatch\nGo: %#v\nLegacy: %#v", gotMap, fixture.ListTargets)
 	}
 }
 

@@ -1,125 +1,89 @@
 # Installation
 
-`install.sh` is the canonical **user installation/reinstallation entrypoint**. It is intentionally separate from `scripts/deploy-pi.sh`, which is a maintainer exact-commit promotion tool.
+install.sh is the canonical user install/reinstall/rollback entrypoint for the 1.5.0-rc.1 Go-only candidate. scripts/deploy-pi.sh is a separate maintainer exact-commit promotion path.
 
 ## Supported path
 
-```mermaid
-flowchart TD
-    S[Release bundle / source tree] --> C[./install.sh --check]
-    C -->|PASS| I[sudo ./install.sh]
-    I --> D[Dependencies + service user]
-    D --> ST[Stage application tree]
-    ST --> P[Persistent config + Registry]
-    P --> U[Install systemd units]
-    U --> H[Start Admin → MCP → optional Tunnel]
-    H --> DOC[Doctor]
-    DOC --> SETUP[mcp-gateway setup]
-    SETUP --> UI[Admin Console]
-```
+Recommended appliance path:
+
+    release bundle
+      -> ./install.sh --check
+      -> sudo ./install.sh
+      -> mcp-gateway setup
+      -> Admin Console
+      -> status / doctor
 
 ## Release bundle versus source checkout
 
-### Recommended: official release bundle
+An official release bundle contains:
+- the prebuilt Linux ARMv6 Go gateway binary;
+- thin CLI wrappers;
+- systemd units and the narrow reboot polkit rule;
+- manifest/compatibility metadata;
+- install.sh;
+- selected CURRENT operational documentation;
+- immutable file checksums.
 
-The release bundle contains:
+It does not contain a second runtime implementation.
 
-- Python Gateway source;
-- systemd configuration;
-- CLI wrappers;
-- `manifest.json` / `compatibility.json`;
-- prebuilt Linux ARMv6 MCP adapter;
-- checksums.
-
-Therefore constrained ARMv6 appliances do not need Go to install.
-
-### Source checkout
-
-A source checkout can run:
-
-```bash
-./install.sh --check
-```
-
-If `bin/mcp-gateway-adapter` is absent, the script will only build an adapter when Go is already installed. It does **not** install Go on a constrained appliance. Maintainers should build release artifacts on a development host.
+A source checkout can run ./install.sh --check. If no compatible prebuilt binary exists, it builds only when Go is already installed. The installer does not install a compiler.
 
 ## Preflight
 
-```bash
-./install.sh --check
-```
+    ./install.sh --check
 
-This performs no system mutation. It validates required files, Python/dependencies and an adapter usable for the detected architecture.
+Preflight is non-mutating. It validates required assets and executes the candidate binary's version contract for the current architecture.
 
 ## Install or reinstall
 
-```bash
-sudo ./install.sh
-```
+    sudo ./install.sh
 
 The installer:
+1. verifies required system tools;
+2. creates/reuses the mcp-gateway service account;
+3. stages only the Go runtime/configuration;
+4. generates local secrets from /dev/urandom when absent;
+5. defaults Admin to 127.0.0.1;
+6. creates an online SQLite backup before schema-changing work;
+7. initializes/migrates the Registry with the Go binary;
+8. saves the previous runtime and system assets;
+9. activates the new runtime as root:root;
+10. installs systemd units and least-privilege reboot policy;
+11. starts Admin, MCP, maintenance timer and postboot checks;
+12. restarts the tunnel only when it was deliberately provisioned;
+13. runs Doctor;
+14. optionally runs interactive setup.
 
-1. verifies root/system prerequisites;
-2. installs Flask/Werkzeug from the Debian package manager if they are missing;
-3. creates the `mcp-gateway` system user if needed;
-4. stages the application from the directory containing `install.sh`;
-5. generates the private MCP adapter token if absent;
-6. creates `admin.env` if absent, using the detected hostname/LAN address;
-7. initializes or preserves the SQLite Registry;
-8. preserves the previous installer-managed runtime and systemd units;
-9. activates the candidate application tree;
-10. restarts Admin → MCP → optional Tunnel in dependency order;
-11. requires Doctor to pass;
-12. launches setup only when stdin is interactive.
+Persistent state remains outside the runtime tree:
 
-Persistent state is separate from application code:
+    /home/mcp-gateway/mcp-gateway/               root-owned application
+    /home/mcp-gateway/.local/share/mcp-gateway/ Registry and backups
+    /home/mcp-gateway/.config/mcp-gateway/       private local config/secrets
 
-```text
-/home/mcp-gateway/mcp-gateway/                  application
-/home/mcp-gateway/.local/share/mcp-gateway/    Registry + backups
-/home/mcp-gateway/.config/mcp-gateway/          secrets + local runtime config
-```
+## Registry compatibility
 
-The installer never expects secrets to be committed to Git.
+Fresh install creates schema 5. The Go migration path directly supports schema 4 to 5 and current schema 5. Older Registries are not silently guessed or rewritten; upgrade them through a supported older release first.
 
-## Security defaults on a new Registry
+## Security defaults
 
-```text
-gateway_enabled = true
-writes_enabled  = false
-shell_enabled   = false
-```
+    gateway_enabled = true
+    writes_enabled  = false
+    shell_enabled   = false
 
-Existing Registries preserve their values during reinstall/update.
+Existing settings are preserved through normal update.
 
 ## Setup
 
-```bash
-sudo -u mcp-gateway mcp-gateway setup
-```
+    sudo -u mcp-gateway mcp-gateway setup
 
-Setup has one deliberately small responsibility: establish Admin access and run Doctor. Target/Project/client/grant configuration stays in Admin Console instead of duplicating the entire Admin UI in a CLI wizard.
+For non-interactive automation use password-stdin. Do not store passwords in Git or shell arguments.
 
-For automation, the Admin password can be supplied once on stdin:
+## Rollback
 
-```bash
-printf '%s\n' "$ADMIN_PASSWORD" | sudo -u mcp-gateway mcp-gateway setup --password-stdin
-```
+    sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
 
-Do not put the password in shell history or Git.
+Rollback stops the control plane, restores the pre-install Registry with the Go restore path, restores previous runtime/system assets, restarts services and requires Doctor before reporting ROLLBACK_VERIFIED.
 
-## Installer rollback
+## Tunnel
 
-If the new installer-managed runtime is unhealthy during activation, the installer attempts to restore the previous runtime and units. A retained previous runtime can also be restored explicitly:
-
-```bash
-sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
-```
-
-Successful rollback prints `ROLLBACK_VERIFIED` only after services and Doctor recover.
-
-## OpenAI Secure MCP Tunnel
-
-The base Gateway works without a cloud tunnel. If an official tunnel client and `tunnel.env` are already provisioned, the installer preserves that private configuration and can restart the service. Tunnel credentials are not created or guessed by the installer.
-
-See [configuration.md](configuration.md) and [security.md](security.md).
+The base gateway works without a cloud tunnel. Existing private tunnel credentials are preserved; the installer does not invent or enable a new external path automatically.

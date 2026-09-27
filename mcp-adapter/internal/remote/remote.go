@@ -28,10 +28,11 @@ func ErrorCode(err error) string {
 }
 
 type CommandOptions struct {
-	CWD     string
-	Env     map[string]string
-	Stdin   []byte
-	Timeout time.Duration
+	CWD            string
+	Env            map[string]string
+	Stdin          []byte
+	Timeout        time.Duration
+	MaxOutputBytes int
 }
 
 type CommandResult struct {
@@ -96,7 +97,6 @@ type AtomicWriteResult struct {
 // Production uses system OpenSSH; tests use deterministic fakes.
 type Transport interface {
 	RunCommand(ctx context.Context, target registry.Target, command string, options CommandOptions) (CommandResult, error)
-	RunPython(ctx context.Context, target registry.Target, script string, argv []string, stdin []byte, timeout time.Duration) (CommandResult, error)
 	ProbeFacts(ctx context.Context, target registry.Target, includeBootID bool, timeout time.Duration) (map[string]any, error)
 	ResolveCanonicalPath(ctx context.Context, target registry.Target, candidatePath string, timeout time.Duration) (string, error)
 	ListDirectory(ctx context.Context, target registry.Target, canonicalPath string, limit int, timeout time.Duration) ([]DirectoryEntry, error)
@@ -107,6 +107,10 @@ type Transport interface {
 	ProbePath(ctx context.Context, target registry.Target, candidatePath string, timeout time.Duration) (PathProbe, error)
 	ResolveSafeDestination(ctx context.Context, target registry.Target, projectRoot, candidatePath string, allowMissingParents bool, timeout time.Duration) (SafeDestination, error)
 	WriteFileAtomic(ctx context.Context, target registry.Target, destPath string, content []byte, create bool, expectedSHA256 string, maxWriteBytes int, timeout time.Duration) (AtomicWriteResult, error)
+	AppendFile(ctx context.Context, target registry.Target, destPath string, content []byte, maxWriteBytes int, timeout time.Duration) (string, error)
+	DeletePath(ctx context.Context, target registry.Target, path string, timeout time.Duration) error
+	CopyMovePath(ctx context.Context, target registry.Target, sourcePath, destPath string, move bool, timeout time.Duration) error
+	Mkdir(ctx context.Context, target registry.Target, path string, parents bool, timeout time.Duration) error
 }
 
 func Required(t Transport) (Transport, error) {

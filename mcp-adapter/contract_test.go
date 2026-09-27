@@ -22,7 +22,7 @@ type frozenToolContract struct {
 	Annotations *mcp.ToolAnnotations `json:"annotations,omitempty"`
 }
 
-type frozenPythonCatalog struct {
+type frozenLegacyCatalog struct {
 	OK                 bool     `json:"ok"`
 	Tools              []string `json:"tools"`
 	ToolCount          int      `json:"tool_count"`
@@ -67,30 +67,30 @@ func listFrozenToolContracts(t *testing.T) []frozenToolContract {
 	return out
 }
 
-func TestFrozenPythonCatalogMatchesGoAdapter(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("testdata", "contracts", "python_catalog.json"))
+func TestFrozenLegacyCatalogMatchesGoAdapter(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "contracts", "legacy_tool_catalog.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var oracle frozenPythonCatalog
+	var oracle frozenLegacyCatalog
 	if err := json.Unmarshal(data, &oracle); err != nil {
-		t.Fatalf("decode Python catalog fixture: %v", err)
+		t.Fatalf("decode Legacy catalog fixture: %v", err)
 	}
 	if !oracle.OK {
-		t.Fatal("Python catalog fixture is not an OK response")
+		t.Fatal("Legacy catalog fixture is not an OK response")
 	}
 	if oracle.ToolCount != 21 || len(oracle.Tools) != 21 {
-		t.Fatalf("Python catalog count=%d tools=%d want 21", oracle.ToolCount, len(oracle.Tools))
+		t.Fatalf("Legacy catalog count=%d tools=%d want 21", oracle.ToolCount, len(oracle.Tools))
 	}
 	if oracle.ToolCatalogVersion != 4 {
-		t.Fatalf("Python tool_catalog_version=%d want frozen version 4", oracle.ToolCatalogVersion)
+		t.Fatalf("Legacy tool_catalog_version=%d want frozen version 4", oracle.ToolCatalogVersion)
 	}
 	if oracle.CatalogHash != frozenToolCatalogHash {
-		t.Fatalf("Python catalog hash=%q want=%q", oracle.CatalogHash, frozenToolCatalogHash)
+		t.Fatalf("Legacy catalog hash=%q want=%q", oracle.CatalogHash, frozenToolCatalogHash)
 	}
 	if !reflect.DeepEqual(oracle.Tools, allKnownTools) {
-		t.Fatalf("Go/Python tool catalog mismatch\nGo:     %v\nPython: %v", allKnownTools, oracle.Tools)
+		t.Fatalf("Go/legacy tool catalog mismatch\nGo:     %v\nPython: %v", allKnownTools, oracle.Tools)
 	}
 
 	encoded, err := json.Marshal(allKnownTools)

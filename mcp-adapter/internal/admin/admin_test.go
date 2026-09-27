@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"mcp-gateway-adapter/internal/buildinfo"
 	"mcp-gateway-adapter/internal/core"
 	"mcp-gateway-adapter/internal/registry"
 )
@@ -37,10 +38,10 @@ func setupTestAdminServer(t *testing.T) (*Server, *registry.Store) {
 	_, _ = store.DB().ExecContext(ctx, `INSERT INTO ai_clients(id, display_name, enabled) VALUES ('test-client', 'Test AI Client', 1)`)
 
 	coreInstance := core.New(store, core.Config{
-		GatewayVersion:     "1.4.0",
-		CoreAPIVersion:     1,
-		ToolCatalogVersion: 4,
-		MCPProtocol:        "2026-07-28",
+		GatewayVersion:     buildinfo.GatewayVersion,
+		CoreAPIVersion:     buildinfo.CoreAPIVersion,
+		ToolCatalogVersion: buildinfo.ToolCatalogVersion,
+		MCPProtocol:        buildinfo.MCPProtocol,
 		DBPath:             dbPath,
 		BackupDir:          filepath.Join(tempDir, "backups"),
 	})
@@ -49,10 +50,10 @@ func setupTestAdminServer(t *testing.T) (*Server, *registry.Store) {
 		Host:         "127.0.0.1",
 		Port:         8080,
 		AllowedHosts: []string{"127.0.0.1", "localhost", "testserver"},
-		SecretDir:    tempDir,
+		SecretFile:   filepath.Join(tempDir, "admin-secret"),
 		Store:        store,
 		Core:         coreInstance,
-		Version:      "1.4.0",
+		Version:      buildinfo.GatewayVersion,
 	})
 	if err != nil {
 		t.Fatalf("failed to create admin server: %v", err)

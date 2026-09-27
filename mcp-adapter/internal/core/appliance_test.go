@@ -2,10 +2,13 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"mcp-gateway-adapter/internal/buildinfo"
 	"mcp-gateway-adapter/internal/registry"
 )
 
@@ -23,10 +26,10 @@ func seededApplianceCore(t *testing.T) (*Core, context.Context, string, string) 
 
 	store := registry.NewStore(db)
 	core := New(store, Config{
-		GatewayVersion:     "1.4.0",
-		CoreAPIVersion:     1,
-		ToolCatalogVersion: 4,
-		MCPProtocol:        "2026-07-28",
+		GatewayVersion:     buildinfo.GatewayVersion,
+		CoreAPIVersion:     buildinfo.CoreAPIVersion,
+		ToolCatalogVersion: buildinfo.ToolCatalogVersion,
+		MCPProtocol:        buildinfo.MCPProtocol,
 		DBPath:             dbPath,
 		BackupDir:          backupDir,
 	})
@@ -47,7 +50,7 @@ func TestGatewayStatus(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected map result, got %T", resp.Result)
 	}
-	if resMap["gateway_status"] != "ok" || resMap["gateway_version"] != "1.4.0" {
+	if resMap["gateway_status"] != "ok" || resMap["gateway_version"] != buildinfo.GatewayVersion {
 		t.Fatalf("unexpected status result: %+v", resMap)
 	}
 	dbInfo, ok := resMap["database"].(map[string]any)
@@ -84,7 +87,7 @@ func TestGatewayBackup(t *testing.T) {
 func TestGatewayDoctor(t *testing.T) {
 	core, ctx, _, _ := seededApplianceCore(t)
 
-	resp := core.GatewayDoctor(ctx, "req-doc")
+	resp := core.GatewayDoctor(ctx, "req-doc", DoctorOptions{})
 	if !resp.OK {
 		t.Fatalf("GatewayDoctor failed: %+v", resp.Error)
 	}
@@ -135,13 +138,22 @@ func TestGatewayReboot(t *testing.T) {
 		t.Fatalf("expected INVALID_ARGUMENTS without confirm, got: %+v", resp)
 	}
 
-	// Accepted with confirm=true
+	previous := scheduleReboot
+	t.Cleanup(func() { scheduleReboot = previous })
+	scheduleReboot = func(context.Context, time.Time) error { return nil }
+
 	resp = core.GatewayReboot(ctx, "req-reboot-2", "test-admin", true)
 	if !resp.OK {
-		t.Fatalf("expected OK with confirm=true, got: %+v", resp.Error)
+		t.Fatalf("expected accepted scheduled reboot, got: %+v", resp.Error)
 	}
 	resMap := resp.Result.(map[string]any)
-	if resMap["requested_by"] != "test-admin" {
-		t.Fatalf("unexpected requested_by: %+v", resMap)
+	if resMap["reboot_scheduled"] != true || resMap["requested_by"] != "test-admin" {
+		t.Fatalf("unexpected reboot result: %+v", resMap)
+	}
+
+	scheduleReboot = func(context.Context, time.Time) error { return fmt.Errorf("denied") }
+	resp = core.GatewayReboot(ctx, "req-reboot-3", "test-admin", true)
+	if resp.OK || resp.Error.Code != "REBOOT_SCHEDULE_FAILED" {
+		t.Fatalf("expected REBOOT_SCHEDULE_FAILED, got: %+v", resp)
 	}
 }

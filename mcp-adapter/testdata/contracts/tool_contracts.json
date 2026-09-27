@@ -139,8 +139,9 @@
   },
   {
     "name": "gateway_backup",
-    "description": "Generate safe online SQLite backup of gateway registry database",
+    "description": "Generate a safe online SQLite backup in the configured gateway backup directory",
     "input_schema": {
+      "additionalProperties": false,
       "type": "object"
     },
     "annotations": {
@@ -152,8 +153,19 @@
   },
   {
     "name": "gateway_doctor",
-    "description": "Execute unified 19-point system health and integrity check",
+    "description": "Execute gateway health and integrity checks",
     "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "check_targets": {
+          "description": "Include enabled Target reachability checks in the overall verdict",
+          "type": "boolean"
+        },
+        "verbose": {
+          "description": "Include local diagnostic paths",
+          "type": "boolean"
+        }
+      },
       "type": "object"
     },
     "annotations": {
@@ -165,8 +177,9 @@
   },
   {
     "name": "gateway_maintenance",
-    "description": "Perform safe automated maintenance (disk check, backup rotation, registry integrity, update preview)",
+    "description": "Perform safe maintenance with backup, integrity validation, rotation and Doctor verification",
     "input_schema": {
+      "additionalProperties": false,
       "type": "object"
     },
     "annotations": {
@@ -180,6 +193,7 @@
     "name": "gateway_reboot",
     "description": "Request controlled reboot of the MCP-Pi appliance",
     "input_schema": {
+      "additionalProperties": false,
       "properties": {
         "confirm": {
           "description": "Explicit confirmation to reboot appliance (must be true)",

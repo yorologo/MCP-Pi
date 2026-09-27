@@ -3,7 +3,7 @@ package remote
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"mcp-gateway-adapter/internal/registry"
@@ -64,27 +65,38 @@ func (s *SSHTransport) RunCommand(
 	if sshBinary == "" {
 		sshBinary = "ssh"
 	}
-	maxOutput := s.MaxOutputBytes
+	maxOutput := options.MaxOutputBytes
+	if maxOutput <= 0 {
+		maxOutput = s.MaxOutputBytes
+	}
 	if maxOutput <= 0 {
 		maxOutput = defaultMaxOutput
 	}
 
 	fullCommand := command
-	if strings.EqualFold(strings.TrimSpace(target.Platform), "windows") {
+	if isWindowsTarget(target) {
 		if strings.TrimSpace(options.CWD) != "" || len(options.Env) > 0 {
-			envJSON, _ := json.Marshal(options.Env)
-			bootstrap := "import json, os, subprocess, sys\n" +
-				"command = sys.argv[1]\n" +
-				"cwd = sys.argv[2]\n" +
-				"env = json.loads(sys.argv[3])\n" +
-				"if cwd:\n    os.chdir(cwd)\n" +
-				"if env:\n    os.environ.update(env)\n" +
-				"sys.exit(subprocess.run(command, shell=True).returncode)\n"
-			var err error
-			fullCommand, err = buildRemotePythonCommand(bootstrap, []string{command, options.CWD, string(envJSON)})
-			if err != nil {
-				return CommandResult{}, err
+			var script strings.Builder
+			script.WriteString("$ErrorActionPreference='Stop';")
+			if strings.TrimSpace(options.CWD) != "" {
+				script.WriteString("Set-Location -LiteralPath ")
+				script.WriteString(powerShellQuote(options.CWD))
+				script.WriteString(";")
 			}
+			for k, v := range options.Env {
+				if !isSafeEnvIdentifier(k) {
+					continue
+				}
+				script.WriteString("$env:")
+				script.WriteString(k)
+				script.WriteString("=")
+				script.WriteString(powerShellQuote(v))
+				script.WriteString(";")
+			}
+			script.WriteString("$cmd=")
+			script.WriteString(powerShellQuote(command))
+			script.WriteString(";& cmd.exe /d /s /c $cmd; exit $LASTEXITCODE")
+			fullCommand = buildPowerShellCommand(script.String())
 		}
 	} else {
 		var prefixes []string
@@ -204,6 +216,24 @@ func (s *SSHTransport) buildSSHArgs(target registry.Target, timeout time.Duratio
 	}
 	args = append(args, destination)
 	return args, nil
+}
+
+func isWindowsTarget(target registry.Target) bool {
+	return strings.EqualFold(strings.TrimSpace(target.Platform), "windows")
+}
+
+func powerShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func buildPowerShellCommand(script string) string {
+	runes := utf16.Encode([]rune(script))
+	raw := make([]byte, len(runes)*2)
+	for i, r := range runes {
+		raw[i*2] = byte(r)
+		raw[i*2+1] = byte(r >> 8)
+	}
+	return "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand " + base64.StdEncoding.EncodeToString(raw)
 }
 
 func shellQuote(value string) string {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -11,25 +10,18 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcp-gateway-adapter/internal/buildinfo"
 	"mcp-gateway-adapter/internal/core"
 	"mcp-gateway-adapter/internal/policy"
-	"mcp-gateway-adapter/internal/registry"
-	"mcp-gateway-adapter/internal/remote"
 )
 
-// ExpectedBridgeAPIVersion specifies the required bridge API contract.
-const ExpectedBridgeAPIVersion = 1
+const ExpectedBridgeAPIVersion = buildinfo.BridgeAPIVersion
 
-// BridgeVersionInfo models the version payload from 'mcp_gateway.bridge version'.
 type BridgeVersionInfo struct {
 	OK                    bool   `json:"ok"`
 	GatewayVersion        string `json:"gateway_version"`
@@ -41,7 +33,6 @@ type BridgeVersionInfo struct {
 	Error                 string `json:"error,omitempty"`
 }
 
-// AdapterState maintains lifecycle readiness and contract version status.
 type AdapterState struct {
 	mu          sync.RWMutex
 	ready       bool
@@ -50,7 +41,6 @@ type AdapterState struct {
 	startTime   time.Time
 }
 
-// NewAdapterState initializes an AdapterState instance.
 func NewAdapterState() *AdapterState {
 	return &AdapterState{
 		ready:       false,
@@ -90,238 +80,102 @@ func adapterVersion(state *AdapterState) string {
 	return strings.TrimSpace(info.GatewayVersion)
 }
 
-// BridgeConfig holds configuration for invoking the Gateway Core (in-process or bridge).
+// BridgeConfig keeps the historical boundary name to avoid a broad rename.
+// It intentionally contains no subprocess or Python fallback configuration.
 type BridgeConfig struct {
-	Core       *core.Core
-	PythonBin  string
-	PythonPath string
-	DBPath     string
-	ClientID   string
-	AuthToken  string
-	Timeout    time.Duration
+	Core      *core.Core
+	DBPath    string
+	ClientID  string
+	AuthToken string
 }
 
-// DefaultBridgeConfig returns reasonable defaults for development and Pi runtime.
 func DefaultBridgeConfig() *BridgeConfig {
-	pyBin := "python3"
-	if runtime.GOOS == "windows" {
-		pyBin = "python"
-	}
-	if _, err := os.Stat("/usr/bin/python3"); err == nil {
-		pyBin = "/usr/bin/python3"
-	}
-
-	pyPath := "src"
-	if _, err := os.Stat("/home/mcp-gateway/mcp-gateway/src"); err == nil {
-		pyPath = "/home/mcp-gateway/mcp-gateway/src"
-	}
-
-	return &BridgeConfig{
-		PythonBin:  pyBin,
-		PythonPath: pyPath,
-		Timeout:    35 * time.Second,
-	}
+	return &BridgeConfig{}
 }
 
-func (b *BridgeConfig) buildEnv() []string {
-	env := os.Environ()
-	if b.PythonPath != "" {
-		absPath, err := filepath.Abs(b.PythonPath)
-		if err == nil {
-			env = append(env, fmt.Sprintf("PYTHONPATH=%s", absPath))
-		} else {
-			env = append(env, fmt.Sprintf("PYTHONPATH=%s", b.PythonPath))
-		}
+func (b *BridgeConfig) requireCore() (*core.Core, error) {
+	if b == nil || b.Core == nil {
+		return nil, fmt.Errorf("gateway core is unavailable")
 	}
-	if b.DBPath != "" {
-		env = append(env, fmt.Sprintf("MCP_GATEWAY_DB=%s", b.DBPath))
-	}
-	if b.ClientID != "" {
-		env = append(env, fmt.Sprintf("MCP_CLIENT_ID=%s", b.ClientID))
-	}
-	return env
+	return b.Core, nil
 }
 
-func (b *BridgeConfig) ensureCore(ctx context.Context) {
-	if b.Core != nil {
-		return
+// CheckBridgeCompatibility reports the in-process Go Core contract.
+// Missing Core is a hard readiness failure.
+func (b *BridgeConfig) CheckBridgeCompatibility(_ context.Context) (*BridgeVersionInfo, error) {
+	c, err := b.requireCore()
+	if err != nil {
+		return &BridgeVersionInfo{OK: false, Error: err.Error()}, err
 	}
-	dbPath := b.DBPath
-	if dbPath == "" {
-		dbPath = os.Getenv("MCP_GATEWAY_DB")
-	}
-	if dbPath == "" {
-		dbPath = resolveDBPath("")
-	}
-	if dbPath != "" {
-		if store, err := registry.OpenStore(ctx, dbPath); err == nil {
-			transport := remote.NewSSHTransport()
-			b.Core = core.NewWithRemote(store, core.Config{
-				GatewayVersion:     "1.4.0",
-				CoreAPIVersion:     1,
-				ToolCatalogVersion: 4,
-				MCPProtocol:        "2026-07-28",
-				DBPath:             dbPath,
-				BackupDir:          filepath.Join(filepath.Dir(dbPath), "backups"),
-			}, transport)
-		}
-	}
-}
-
-// CheckBridgeCompatibility queries the Gateway Core for its version contract.
-func (b *BridgeConfig) CheckBridgeCompatibility(ctx context.Context) (*BridgeVersionInfo, error) {
-	b.ensureCore(ctx)
-	if b.Core != nil {
-		v := b.Core.Version()
-		return &BridgeVersionInfo{
-			OK:                    true,
-			GatewayVersion:        v.GatewayVersion,
-			CoreAPIVersion:        v.CoreAPIVersion,
-			BridgeAPIVersion:      ExpectedBridgeAPIVersion,
-			ToolCatalogVersion:    v.ToolCatalogVersion,
-			RegistrySchemaVersion: v.RegistrySchemaVersion,
-			MCPProtocol:           v.MCPProtocol,
-		}, nil
-	}
-
-	return &BridgeVersionInfo{
+	v := c.Version()
+	info := &BridgeVersionInfo{
 		OK:                    true,
-		GatewayVersion:        "1.4.0",
-		CoreAPIVersion:        1,
+		GatewayVersion:        v.GatewayVersion,
+		CoreAPIVersion:        v.CoreAPIVersion,
 		BridgeAPIVersion:      ExpectedBridgeAPIVersion,
-		ToolCatalogVersion:    4,
-		RegistrySchemaVersion: 5,
-		MCPProtocol:           "2026-07-28",
-	}, nil
+		ToolCatalogVersion:    v.ToolCatalogVersion,
+		RegistrySchemaVersion: v.RegistrySchemaVersion,
+		MCPProtocol:           v.MCPProtocol,
+	}
+	if info.CoreAPIVersion != buildinfo.CoreAPIVersion ||
+		info.ToolCatalogVersion != buildinfo.ToolCatalogVersion ||
+		info.MCPProtocol != buildinfo.MCPProtocol {
+		info.OK = false
+		info.Error = "gateway core contract does not match adapter build"
+		return info, fmt.Errorf("%s", info.Error)
+	}
+	return info, nil
 }
 
-// CallBridge invokes Gateway Core in-process (or fallback python bridge subprocess).
+// CallBridge invokes the in-process Go Core. The legacy method name remains
+// internal only; there is no external bridge process.
 func (b *BridgeConfig) CallBridge(ctx context.Context, toolName string, argsJSON []byte, requestID string) ([]byte, bool, error) {
+	c, err := b.requireCore()
+	if err != nil {
+		return nil, true, err
+	}
 	if len(argsJSON) == 0 {
 		argsJSON = []byte("{}")
 	}
-
-	b.ensureCore(ctx)
-	if b.Core != nil {
-		var args map[string]any
-		_ = json.Unmarshal(argsJSON, &args)
-		resp := b.Core.Invoke(ctx, core.Invocation{
-			ClientID:  b.ClientID,
-			RequestID: requestID,
-		}, toolName, args)
-		outBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, true, err
-		}
-		ok, _ := resp["ok"].(bool)
-		return outBytes, !ok, nil
+	var args map[string]any
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return nil, true, fmt.Errorf("invalid tool arguments JSON: %w", err)
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, b.Timeout)
-	defer cancel()
-
-	args := []string{"-m", "mcp_gateway.bridge", "invoke", toolName, string(argsJSON)}
-	if requestID != "" {
-		args = append(args, "--request-id", requestID)
-	}
-	if b.ClientID != "" {
-		args = append(args, "--client-id", b.ClientID)
-	}
-
-	cmd := exec.CommandContext(ctx, b.PythonBin, args...)
-	cmd.Env = b.buildEnv()
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	outBytes := stdout.Bytes()
-
-	// Parse JSON to determine Core-level success
-	var resp struct {
-		OK    bool           `json:"ok"`
-		Tool  string         `json:"tool"`
-		Error map[string]any `json:"error"`
-	}
-
-	if jsonErr := json.Unmarshal(outBytes, &resp); jsonErr == nil {
-		return outBytes, !resp.OK, nil
-	}
-
-	// If not JSON, it was a process error
+	resp := c.Invoke(ctx, core.Invocation{
+		ClientID:  b.ClientID,
+		RequestID: requestID,
+	}, toolName, args)
+	outBytes, err := json.Marshal(resp)
 	if err != nil {
-		errResp, _ := json.Marshal(map[string]any{
-			"ok":   false,
-			"tool": toolName,
-			"error": map[string]any{
-				"code":    "BRIDGE_EXEC_ERROR",
-				"message": fmt.Sprintf("Subprocess error: %v, stderr: %s", err, stderr.String()),
-			},
-		})
-		return errResp, true, nil
+		return nil, true, err
 	}
-
-	return outBytes, false, nil
+	ok, _ := resp["ok"].(bool)
+	return outBytes, !ok, nil
 }
 
-// GetAllowedTools returns a set of allowlisted tool names for the configured ClientID.
-// If ClientID is empty, "local", or "admin", returns nil (all tools allowed).
-// If client has no grants or is invalid, returns an empty map (no tools allowed).
+// GetAllowedTools returns the tools authorized for the configured client.
+// Missing Core always fails closed to an empty catalog in NewGatewayServer.
 func (b *BridgeConfig) GetAllowedTools(ctx context.Context) (map[string]bool, error) {
+	c, err := b.requireCore()
+	if err != nil {
+		return nil, err
+	}
 	if b.ClientID == "" || b.ClientID == "local" || b.ClientID == "admin" {
 		return nil, nil
 	}
-
-	b.ensureCore(ctx)
-	if b.Core != nil {
-		var allTools []string
-		for t := range policy.ToolCapabilities {
-			allTools = append(allTools, t)
-		}
-		allowed, err := b.Core.Catalog(ctx, b.ClientID, allTools)
-		if err != nil {
-			return nil, err
-		}
-		res := make(map[string]bool, len(allowed))
-		for _, t := range allowed {
-			res[t] = true
-		}
-		return res, nil
+	var allTools []string
+	for t := range policy.ToolCapabilities {
+		allTools = append(allTools, t)
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, b.PythonBin, "-m", "mcp_gateway.bridge", "tools", "--client-id", b.ClientID)
-	cmd.Env = b.buildEnv()
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("bridge tools failed for client %s: %w, stderr: %s", b.ClientID, err, stderr.String())
+	allowed, err := c.Catalog(ctx, b.ClientID, allTools)
+	if err != nil {
+		return nil, err
 	}
-
-	var resp struct {
-		OK    bool     `json:"ok"`
-		Tools []string `json:"tools"`
-		Error string   `json:"error,omitempty"`
+	res := make(map[string]bool, len(allowed))
+	for _, t := range allowed {
+		res[t] = true
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
-		return nil, fmt.Errorf("invalid json from bridge tools: %w", err)
-	}
-
-	if !resp.OK {
-		return nil, fmt.Errorf("bridge tools error: %s", resp.Error)
-	}
-
-	allowed := make(map[string]bool)
-	for _, t := range resp.Tools {
-		allowed[t] = true
-	}
-	return allowed, nil
+	return res, nil
 }
 
 func generateRequestID() string {
@@ -574,25 +428,32 @@ func registerToolByName(server *mcp.Server, toolName string, bridge *BridgeConfi
 	case "gateway_backup":
 		addGatewayTool(server, &mcp.Tool{
 			Name:        "gateway_backup",
-			Description: "Generate safe online SQLite backup of gateway registry database",
+			Description: "Generate a safe online SQLite backup in the configured gateway backup directory",
 			InputSchema: map[string]any{
-				"type": "object",
+				"type":                 "object",
+				"additionalProperties": false,
 			},
 		}, handler)
 	case "gateway_doctor":
 		addGatewayTool(server, &mcp.Tool{
 			Name:        "gateway_doctor",
-			Description: "Execute unified 19-point system health and integrity check",
+			Description: "Execute gateway health and integrity checks",
 			InputSchema: map[string]any{
 				"type": "object",
+				"properties": map[string]any{
+					"check_targets": map[string]any{"type": "boolean", "description": "Include enabled Target reachability checks in the overall verdict"},
+					"verbose":       map[string]any{"type": "boolean", "description": "Include local diagnostic paths"},
+				},
+				"additionalProperties": false,
 			},
 		}, handler)
 	case "gateway_maintenance":
 		addGatewayTool(server, &mcp.Tool{
 			Name:        "gateway_maintenance",
-			Description: "Perform safe automated maintenance (disk check, backup rotation, registry integrity, update preview)",
+			Description: "Perform safe maintenance with backup, integrity validation, rotation and Doctor verification",
 			InputSchema: map[string]any{
-				"type": "object",
+				"type":                 "object",
+				"additionalProperties": false,
 			},
 		}, handler)
 	case "gateway_reboot":
@@ -607,7 +468,8 @@ func registerToolByName(server *mcp.Server, toolName string, bridge *BridgeConfi
 						"description": "Explicit confirmation to reboot appliance (must be true)",
 					},
 				},
-				"required": []string{"confirm"},
+				"required":             []string{"confirm"},
+				"additionalProperties": false,
 			},
 		}, handler)
 	case "gateway_status":

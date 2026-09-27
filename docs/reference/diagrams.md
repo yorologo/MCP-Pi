@@ -1,76 +1,50 @@
-# Architecture Diagrams
-
-These diagrams describe the current production architecture, not historical phase snapshots.
+# Architecture diagrams
 
 ## System architecture
 
-```mermaid
-flowchart LR
-    U[User] --> C[ChatGPT / MCP client]
-    C --> TUN[OpenAI Secure MCP Tunnel]
-    TUN --> MCP[Go MCP Adapter\n127.0.0.1:8090]
-    MCP --> B[Python Bridge]
-    B --> CORE[Gateway Core / Policy]
-    CORE --> REG[(SQLite Registry)]
-    CORE --> SSH[SSH Transport]
-    SSH --> TERM[termux-main\nAndroid / Termux]
-    TERM --> PRJ[MCP_Local]
-    WEB[Admin Browser\n192.168.68.55:80] --> ADMIN[Flask Admin Console]
-    ADMIN --> REG
-    ADMIN --> CORE
-```
+    MCP client ---> Go MCP server ----+
+                                      |
+    Admin browser -> Go Admin --------+-> Go Core -> Policy/Registry -> SSH -> Target
+                                                     |
+                                                     +-> Audit
 
 ## Component boundaries
 
-```mermaid
-flowchart TB
-    subgraph MCPPi[MCP-Pi / Raspberry Pi]
-      ADMIN[Admin Console]
-      ADAPTER[Go MCP Adapter]
-      BRIDGE[Python Bridge]
-      CORE[GatewayTools + Policy]
-      REG[(Registry)]
-      TRANS[SSH Transport]
-      ADMIN --> CORE
-      ADAPTER --> BRIDGE --> CORE
-      CORE --> REG
-      CORE --> TRANS
-    end
-    TRANS --> TARGET[Authorized Target]
-    TARGET --> PROJECT[Authorized Project Root]
-```
+    one Go process
+      MCP transports
+      Core / policy
+      Admin
+      Registry migrations
+      Doctor
+      backup/restore
+      maintenance
+
+    OS boundaries
+      systemd -> services/timer/postboot
+      logind + polkit -> controlled reboot
+      OpenSSH -> pinned Targets
 
 ## MCP tool-call sequence
 
-```mermaid
-sequenceDiagram
-    participant C as ChatGPT
-    participant T as Secure Tunnel
-    participant A as Go Adapter
-    participant B as Python Bridge
-    participant P as Policy/Core
-    participant W as Target Worker
-    C->>T: tools/call
-    T->>A: MCP request
-    A->>B: invoke(tool,args,client_id,request_id)
-    B->>P: authorize + execute
-    P->>P: grants / kill switches / project scope
-    P->>W: SSH operation when required
-    W-->>P: result
-    P-->>B: structured response
-    B-->>A: JSON result
-    A-->>T: MCP response
-    T-->>C: tool result
-```
+    Client -> MCP server: tools/call
+    MCP server -> Core: bound client + tool + args
+    Core -> Registry: authorization/settings
+    Registry -> Core: allow/deny
+    Core -> Target: bounded remote operation when allowed
+    Core -> Registry: audit
+    Core -> MCP server: result/error
+    MCP server -> Client: MCP response
 
 ## Deployment topology
 
-```mermaid
-flowchart LR
-    DEV[Termux development checkout] -->|run-resumable.sh + deploy-pi.sh / SSH| PI[MCP-Pi\n192.168.68.55]
-    PI --> ADMIN[Admin Console\n:80 LAN]
-    PI --> MCP[MCP Adapter\n:8090 loopback]
-    MCP --> TUN[OpenAI Secure MCP Tunnel]
-    PI -->|SSH :8022| PHONE[termux-main]
-    PHONE --> REPO[MCP_Local]
-```
+    Git exact SHA
+      -> canonical ARMv6 release bundle
+      -> remote candidate validation
+      -> Registry online backup
+      -> controlled service stop
+      -> root-owned runtime activation
+      -> Go Registry migration/Doctor
+      -> service acceptance
+      -> verified provenance
+
+Rollback restores Registry and previous runtime/system assets before service acceptance.

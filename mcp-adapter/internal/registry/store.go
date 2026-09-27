@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -732,4 +733,36 @@ WHERE target_id = ?
 	}
 
 	return false, nil
+}
+
+func (s *Store) SetSettings(ctx context.Context, values map[string]string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin settings transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("setting key cannot be empty")
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO settings (key, value) VALUES (?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+`, key, values[key]); err != nil {
+			return fmt.Errorf("set setting %q: %w", key, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit settings transaction: %w", err)
+	}
+	return nil
 }

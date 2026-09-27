@@ -1,9 +1,14 @@
 {
-  "gateway_version": "1.4.0",
+  "gateway_version": "1.5.0-rc.1",
   "core_api_version": 1,
   "bridge_api_version": 1,
   "tool_catalog_version": 4,
-  "registry_schema_version": 4,
+  "registry_schema_version": 5,
+  "registry_upgrade_from": [
+    4,
+    5
+  ],
+  "fresh_install_schema_version": 5,
   "mcp": {
     "sdk": "go-sdk",
     "version": "1.7.0",
@@ -11,7 +16,9 @@
     "protocol_legacy": "2025-11-25"
   },
   "runtime": {
-    "python": "3.11+",
+    "implementation": "go",
+    "go_build_version": "1.27.1",
+    "static_binary": true,
     "architecture": [
       "armv6l",
       "aarch64",

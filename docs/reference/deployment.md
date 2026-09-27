@@ -1,75 +1,59 @@
-# Deployment Guide
+# Deployment guide
+
+This is the maintainer path for promoting an exact 1.5.0-rc.1 Go-only candidate. It is not the normal user installer.
 
 ## Production target
 
-Current MCP-Pi production endpoint:
-
-- Host: `192.168.68.55`
-- SSH user: configured locally through `.mcp-pi.local.env`
-- Admin Console: `http://192.168.68.55`
-- Admin bind: `0.0.0.0:80` (all IPv4 interfaces; access uses the real host IP, never `0.0.0.0`)
-- MCP adapter: `127.0.0.1:8090/mcp` (loopback only; exposed to OpenAI only through the Secure MCP Tunnel)
-
-The Admin Console LAN binding is deliberate. The service remains `User=mcp-gateway`; systemd grants only `CAP_NET_BIND_SERVICE` so it can bind TCP/80 without running as root. Authentication, CSRF, strict security headers, and an explicit Host allowlist remain enforced. No reverse proxy or external tunnel is required for LAN access. On an untrusted network, use an SSH tunnel instead of direct LAN HTTP.
+Reference acceptance target: Raspberry Pi Model A+ / Linux ARMv6.
 
 ## Local prerequisites
 
-- Python 3.11+
-- Node.js/npm only for rebuilding Tailwind CSS
-- `ssh`, `scp`, `tar`, `sha256sum` and an authorized SSH key (default: `~/.ssh/id_rsa`)
-- Go only when rebuilding the MCP adapter
-- `config/targets.local.json`
-- local `.mcp-pi.local.env` with deployment credentials; never commit this file
+- clean Git worktree;
+- named branch;
+- exact requested SHA equal to local HEAD and origin branch;
+- Go toolchain matching go.mod;
+- OpenSSH/scp;
+- tar/gzip/sha256sum;
+- Node only when rebuilding frontend assets.
 
 ## Build and verification
 
-```bash
-python -m unittest discover -s tests -p 'test_*.py' -v
-node tests/test_app_js.mjs
-cd tailwind && npm run build
-cd ..
-git diff --check
-```
+Before deployment:
+
+    cd mcp-adapter
+    go test -count=1 ./...
+    go vet ./...
+    go mod tidy -diff
+    cd ..
+    scripts/verify-go-only.sh
+    ./install.sh --check
+    git diff --check
+
+Cross-build ARMv6 and build the canonical release bundle. The bundle must contain no legacy runtime payload.
 
 ## Deploy
 
-```bash
-SHA="$(git rev-parse HEAD)"
-JOB="deploy-${SHA:0:12}"
-scripts/run-resumable.sh start --expect-marker DEPLOYMENT_VERIFIED "$JOB" -- scripts/deploy-pi.sh "$SHA"
-```
+Use the resumable runner:
 
-The deploy script refuses direct execution outside the resumable runner (except explicit `MCP_DEPLOY_ALLOW_DIRECT=1` break-glass recovery), refuses dirty trees and requires the requested SHA to equal both local `HEAD` and `origin/<branch>`. It packages that exact commit with `git archive`, builds/validates an ARMv6 candidate from the archive, creates a rollback copy of the active runtime and systemd units, activates the candidate, restarts Admin → MCP → Tunnel in control-plane-safe order, runs lightweight production acceptance and Doctor, then writes `.deployment.json` with commit/branch/timestamp/package+adapter hashes. `verified=true` is written only after acceptance. `MCP_DEPLOY_INJECT_FAILURE=after-activation` is reserved for a controlled rollback test and must restore the previous known-good runtime.
+    scripts/run-resumable.sh start --expect-marker DEPLOYMENT_VERIFIED -- scripts/deploy-pi.sh <exact-sha>
+
+The deployer reuses scripts/build-release-package.sh, uploads the immutable bundle, validates the candidate on ARMv6, creates a Go online Registry backup, saves system assets, performs controlled service restart/activation and writes verified provenance only after production acceptance.
+
+## Rollback
+
+A failure after the activation boundary triggers rollback. Registry restore occurs while Admin/MCP are stopped, then previous runtime/system assets are restored and Doctor must pass.
 
 ## Post-deployment checks
 
-From MCP-Pi itself:
+A later validation phase must verify:
+- exact deployed SHA and binary hash;
+- root-owned runtime;
+- Admin/MCP service health;
+- /live and /ready;
+- Registry schema/integrity;
+- Doctor and Target checks;
+- optional tunnel state;
+- critical security behavior;
+- measured ARMv6 benchmark.
 
-```bash
-curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1/login
-```
-
-From any other device on the same LAN:
-
-```bash
-curl -fsS -o /dev/null -w '%{http_code}\n' http://192.168.68.55/login
-```
-
-For the MCP adapter:
-
-```bash
-curl -fsS -H 'Host: 127.0.0.1' http://127.0.0.1:8090/live
-```
-
-On MCP-Pi also verify:
-
-```bash
-systemctl is-enabled mcp-gateway-admin
-systemctl is-active mcp-gateway-admin mcp-gateway-mcp mcp-gateway-tunnel
-sudo ss -lntp | grep ':80 '
-sudo -u mcp-gateway /home/mcp-gateway/mcp-gateway/bin/mcp-gateway doctor
-```
-
-Expected Admin listener: `0.0.0.0:80` (shown by `ss` as an IPv4 wildcard listener).
-
-Acceptance requires `.deployment.json.commit == local HEAD == origin/develop`, matching adapter SHA256, healthy services/endpoints/Doctor and successful Target checks. The Raspberry Pi intentionally does not run the full development suite because of its constrained RAM; the full gate runs on the development workstation before push/deploy.
+Source validation alone is not a deployment PASS.

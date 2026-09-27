@@ -28,7 +28,7 @@ globalThis.document = {
   querySelectorAll: () => [],
 };
 
-await import('../src/mcp_gateway/web/static/app.js');
+await import('./static/app.js');
 listeners.DOMContentLoaded();
 listeners.keydown({ key: 'Escape' });
 

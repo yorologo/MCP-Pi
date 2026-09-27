@@ -1,82 +1,50 @@
 # Getting started
 
-This is the shortest supported path from a release bundle to a working MCP-Pi appliance.
+The current source candidate is MCP-Pi 1.5.0-rc.1 and uses a Go-only appliance runtime.
 
 ## 1. Requirements
 
-Recommended/validated appliance:
+For a release-bundle install:
+- supported Linux appliance and systemd;
+- OpenSSH client;
+- curl and standard Unix utilities;
+- root access for installation.
 
-- Linux with `systemd`;
-- Python 3.11+;
-- administrative account with `sudo`/root access;
-- network access to the Target(s) you intend to manage.
-
-The primary production validation is Raspberry Pi OS / Debian 13 on ARMv6. The compatibility contract also declares `aarch64` and `x86_64`; those architectures still require their own hardware acceptance before claiming equivalent appliance certification.
+Python is not required. Go is not required when the release bundle contains the matching prebuilt gateway binary.
 
 ## 2. Install
 
-Extract the official release bundle, then:
+    ./install.sh --check
+    sudo ./install.sh
 
-```bash
-sudo ./install.sh --check
-sudo ./install.sh
-```
-
-The release bundle includes the Linux ARMv6 MCP adapter so a Raspberry Pi A+ does not need Go.
+The installer creates or reuses the mcp-gateway service account, preserves persistent state, installs root-owned runtime files and starts the Go Admin/MCP services.
 
 ## 3. Configure Admin access
 
-If the installer was non-interactive:
+Run:
 
-```bash
-sudo -u mcp-gateway mcp-gateway setup
-```
+    sudo -u mcp-gateway mcp-gateway setup
 
-Set the Admin password when prompted. The setup command then runs Doctor and prints the next action.
+Interactive password input is not echoed. For automation, use the documented password-stdin option instead of placing secrets in command arguments.
 
-## 4. Open Admin Console
+Admin binds to 127.0.0.1 by default. Access it through an SSH port forward unless you deliberately configure another trusted exposure.
 
-Use the appliance LAN address, for example:
-
-```text
-http://<gateway-ip>/
-```
-
-The installer records LAN binding/Host allowlist in the private file:
-
-```text
-/home/mcp-gateway/.config/mcp-gateway/admin.env
-```
-
-## 5. Add the first Target and Project
+## 4. Add the first Target and Project
 
 In Admin Console:
+1. add a Target and verify its SSH identity;
+2. add a Project root for that Target;
+3. add an AI client;
+4. grant only the required capabilities;
+5. use Check Effective Access before enabling broader operations.
 
-1. **Targets → Add Target** — ID, host, port, user and SSH alias if used.
-2. Open **Targets → Edit Target**, compare the presented SHA256 host fingerprint with the fingerprint obtained independently on the Target, then choose **Trust Host Key**. Changed fingerprints stay blocked until explicitly replaced.
-3. **Projects → Add Project** — select Target and define the allowed root.
-4. **AI Clients → Grants** — create the client identity, open its Grants page and grant only the Target/Project capabilities it needs; use **Check Effective Access** before relying on the permission.
-5. Enable structured writes or trusted Target shell only if required.
+## 5. Verify
 
-Fresh security defaults are:
+    sudo -u mcp-gateway mcp-gateway status
+    sudo -u mcp-gateway mcp-gateway doctor
 
-```text
-gateway_enabled = true
-writes_enabled  = false
-shell_enabled   = false
-```
-
-## 6. Verify
-
-```bash
-sudo -u mcp-gateway mcp-gateway status
-sudo -u mcp-gateway mcp-gateway doctor --check-targets
-```
-
-The exact number of Doctor checks may evolve with the release; success is the reported healthy/degraded status with no error-severity failures and the expected current contracts.
+A fresh Registry starts with writes and trusted shell disabled.
 
 ## What you should not need
 
-A normal first install must not require manually editing SQLite, setting `PYTHONPATH`, copying source into `/home/mcp-gateway`, or hand-editing systemd units.
-
-For details see [installation.md](installation.md). For failures see [troubleshooting.md](troubleshooting.md).
+A normal release install should not require a compiler, container engine, reverse proxy, separate database server or language runtime.

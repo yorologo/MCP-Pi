@@ -8,56 +8,65 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcp-gateway-adapter/internal/buildinfo"
 	"mcp-gateway-adapter/internal/core"
 	"mcp-gateway-adapter/internal/registry"
 )
 
-func getTestBridgeConfig() *BridgeConfig {
-	pyPath, _ := filepath.Abs("../src")
-	pyBin := "python3"
-	if runtime.GOOS == "windows" {
-		pyBin = "python"
+func getTestBridgeConfig(t *testing.T) *BridgeConfig {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	store, err := registry.OpenStore(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("open test registry: %v", err)
 	}
-	dbPath, _ := filepath.Abs("../gateway.db")
+	t.Cleanup(func() { _ = store.Close() })
+	coreInstance := core.New(store, core.Config{
+		GatewayVersion:     buildinfo.GatewayVersion,
+		CoreAPIVersion:     buildinfo.CoreAPIVersion,
+		ToolCatalogVersion: buildinfo.ToolCatalogVersion,
+		MCPProtocol:        buildinfo.MCPProtocol,
+		DBPath:             dbPath,
+		BackupDir:          filepath.Join(filepath.Dir(dbPath), "backups"),
+	})
 	return &BridgeConfig{
-		PythonBin:  pyBin,
-		PythonPath: pyPath,
-		DBPath:     dbPath,
-		Timeout:    10 * time.Second,
+		Core:   coreInstance,
+		DBPath: dbPath,
 	}
 }
 
 func getSeededClientBridgeConfig(t *testing.T, clientID, capability string, enabled bool) *BridgeConfig {
 	t.Helper()
-	bridge := getTestBridgeConfig()
-	bridge.DBPath = filepath.Join(t.TempDir(), "gateway.db")
-	enabledArg := "0"
-	if enabled {
-		enabledArg = "1"
+	bridge := getTestBridgeConfig(t)
+	store, err := registry.OpenStore(context.Background(), bridge.DBPath)
+	if err != nil {
+		t.Fatalf("open seeded test registry: %v", err)
 	}
-	seed := `
-from mcp_gateway.registry import SQLiteRegistry
-import sys
-r = SQLiteRegistry(sys.argv[1])
-client_id = sys.argv[2]
-capability = sys.argv[3]
-enabled = sys.argv[4] == "1"
-r.add_client({"id": client_id, "display_name": client_id, "enabled": enabled})
-if enabled and capability:
-    r.add_grant({"client_id": client_id, "target_id": "*", "project_id": "*", "capability": capability, "enabled": True})
-`
-	cmd := exec.Command(bridge.PythonBin, "-c", seed, bridge.DBPath, clientID, capability, enabledArg)
-	cmd.Env = bridge.buildEnv()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("seed client registry failed: %v: %s", err, string(out))
+	defer store.Close()
+
+	if err := store.AddClient(context.Background(), registry.Client{
+		ID:          clientID,
+		DisplayName: clientID,
+		Enabled:     enabled,
+	}); err != nil {
+		t.Fatalf("seed client registry: %v", err)
+	}
+	if enabled && capability != "" {
+		if _, err := store.AddGrant(context.Background(), registry.Grant{
+			ClientID:   clientID,
+			TargetID:   "*",
+			ProjectID:  "*",
+			Capability: capability,
+			Enabled:    true,
+		}); err != nil {
+			t.Fatalf("seed client grant: %v", err)
+		}
 	}
 	bridge.ClientID = clientID
 	return bridge
@@ -65,7 +74,7 @@ if enabled and capability:
 
 func TestServerToolDiscovery(t *testing.T) {
 	ctx := context.Background()
-	bridge := getTestBridgeConfig()
+	bridge := getTestBridgeConfig(t)
 	state := NewAdapterState()
 	state.SetReady(true, "ready", nil)
 	server := NewGatewayServer(bridge, state)
@@ -129,7 +138,7 @@ func TestServerToolDiscovery(t *testing.T) {
 
 func TestRunCommandSchemaIncludesPrivilegeIntent(t *testing.T) {
 	ctx := context.Background()
-	bridge := getTestBridgeConfig()
+	bridge := getTestBridgeConfig(t)
 	state := NewAdapterState()
 	state.SetReady(true, "ready", nil)
 	server := NewGatewayServer(bridge, state)
@@ -172,7 +181,7 @@ func TestRunCommandSchemaIncludesPrivilegeIntent(t *testing.T) {
 
 func TestServerHealthCall(t *testing.T) {
 	ctx := context.Background()
-	bridge := getTestBridgeConfig()
+	bridge := getTestBridgeConfig(t)
 	state := NewAdapterState()
 	state.SetReady(true, "ready", nil)
 	server := NewGatewayServer(bridge, state)
@@ -225,7 +234,7 @@ func TestServerHealthCall(t *testing.T) {
 
 func TestFailClosedWhenNotReady(t *testing.T) {
 	ctx := context.Background()
-	bridge := getTestBridgeConfig()
+	bridge := getTestBridgeConfig(t)
 	state := NewAdapterState()
 	state.SetReady(false, "ADAPTER_NOT_READY: simulated incompatibility", nil)
 	server := NewGatewayServer(bridge, state)
@@ -276,7 +285,7 @@ func TestAdapterVersionUsesBridgeState(t *testing.T) {
 }
 
 func TestHealthEndpoints(t *testing.T) {
-	bridge := getTestBridgeConfig()
+	bridge := getTestBridgeConfig(t)
 	state := NewAdapterState()
 	state.SetReady(true, "ready", &BridgeVersionInfo{
 		BridgeAPIVersion: 1,
@@ -441,7 +450,7 @@ func TestHostAndOriginSecurity(t *testing.T) {
 }
 
 func TestStatelessMCPNegativeSessions(t *testing.T) {
-	bridge := getTestBridgeConfig()
+	bridge := getTestBridgeConfig(t)
 	state := NewAdapterState()
 	state.SetReady(true, "ready", nil)
 	server := NewGatewayServer(bridge, state)
@@ -468,7 +477,7 @@ func TestStatelessMCPNegativeSessions(t *testing.T) {
 
 func TestClientToolFiltering(t *testing.T) {
 	ctx := context.Background()
-	bridge := getTestBridgeConfig()
+	bridge := getTestBridgeConfig(t)
 	bridge.ClientID = "NONE" // Deny all anonymous tools
 	state := NewAdapterState()
 	state.SetReady(true, "ready", nil)
@@ -832,19 +841,17 @@ func TestInProcessCoreExecution(t *testing.T) {
 
 	store := registry.NewStore(db)
 	coreInstance := core.New(store, core.Config{
-		GatewayVersion:     "1.4.0",
-		CoreAPIVersion:     1,
-		ToolCatalogVersion: 4,
-		MCPProtocol:        "2026-07-28",
+		GatewayVersion:     buildinfo.GatewayVersion,
+		CoreAPIVersion:     buildinfo.CoreAPIVersion,
+		ToolCatalogVersion: buildinfo.ToolCatalogVersion,
+		MCPProtocol:        buildinfo.MCPProtocol,
 		DBPath:             dbPath,
 	})
 
 	bridge := &BridgeConfig{
-		Core:      coreInstance,
-		DBPath:    dbPath,
-		ClientID:  "local",
-		Timeout:   5 * time.Second,
-		PythonBin: "/invalid/nonexistent/python", // Proves python is NOT invoked!
+		Core:     coreInstance,
+		DBPath:   dbPath,
+		ClientID: "local",
 	}
 
 	state := NewAdapterState()
@@ -852,7 +859,7 @@ func TestInProcessCoreExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("in-process compatibility check failed: %v", err)
 	}
-	if info.GatewayVersion != "1.4.0" || !info.OK {
+	if info.GatewayVersion != buildinfo.GatewayVersion || !info.OK {
 		t.Fatalf("unexpected version info: %+v", info)
 	}
 	state.SetReady(true, "ready", info)

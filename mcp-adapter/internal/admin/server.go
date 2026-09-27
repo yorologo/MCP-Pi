@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/flosch/pongo2/v6"
+	"mcp-gateway-adapter/internal/buildinfo"
 	"mcp-gateway-adapter/internal/core"
 	"mcp-gateway-adapter/internal/discovery"
 	"mcp-gateway-adapter/internal/registry"
@@ -24,7 +25,7 @@ type ServerConfig struct {
 	Host         string
 	Port         int
 	AllowedHosts []string
-	SecretDir    string
+	SecretFile   string
 	Store        *registry.Store
 	Core         *core.Core
 	Discovery    *discovery.TargetDiscovery
@@ -57,10 +58,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		cfg.Discovery = discovery.NewTargetDiscovery("")
 	}
 	if cfg.Version == "" {
-		cfg.Version = "1.4.0"
+		cfg.Version = buildinfo.GatewayVersion
 	}
 
-	sessionMgr, err := NewSessionManager(cfg.SecretDir)
+	sessionMgr, err := NewSessionManager(cfg.SecretFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize session manager: %w", err)
 	}

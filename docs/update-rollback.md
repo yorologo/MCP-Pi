@@ -1,115 +1,63 @@
 # Update and rollback
 
-MCP-Pi deliberately separates **user release updates** from **maintainer exact-commit deployments**.
+The 1.5.0-rc.1 candidate has one release artifact path and two consumers: user installation and maintainer exact-commit deployment.
 
 ## User update
 
-Obtain and extract the new official release bundle on the appliance, then:
+Extract an official bundle and run:
 
-```bash
-./install.sh --check
-sudo ./install.sh
-```
+    ./install.sh --check
+    sudo ./install.sh
 
-The installer preserves persistent Registry/config/secrets, stages the application, retains the previous installer-managed runtime and verifies services/Doctor before declaring success.
-
-If the source is only being inspected, `--check` makes no system changes.
+The previous installer-managed runtime and a pre-install online Registry backup are retained until successful completion.
 
 ## User rollback
 
-When an installer-managed previous runtime exists:
+    sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
 
-```bash
-sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
-```
+Rollback restores Registry and system assets before restarting services and requiring Doctor.
 
-A successful rollback prints:
+## Candidate validation
 
-```text
-ROLLBACK_VERIFIED
-```
+Before promotion:
 
-only after previous runtime/units are restored and health checks recover.
+    cd mcp-adapter
+    go test -count=1 ./...
+    go vet ./...
+    go mod tidy -diff
+    cd ..
+    scripts/verify-go-only.sh
+    ./install.sh --check
+    git diff --check
 
-## Candidate validation from CLI
-
-`mcp-gateway update` no longer silently uses the old symlink lifecycle as production update logic. It can validate a candidate package/directory:
-
-```bash
-sudo -u mcp-gateway mcp-gateway update /path/to/candidate --check
-```
-
-Actual application replacement is a root-level operation handled by `install.sh`.
+Cross-build ARMv6 and inspect the final bundle as well.
 
 ## Maintainer exact-commit deployment
 
-Maintainers promoting a tested Git commit to a known appliance should launch the long operation through the resumable runner:
+Deployment requires a clean named branch whose HEAD equals origin/<branch> and the requested exact SHA.
 
-```bash
-SHA="$(git rev-parse HEAD)"
-JOB="deploy-${SHA:0:12}"
-scripts/run-resumable.sh start \
-  --expect-marker DEPLOYMENT_VERIFIED \
-  "$JOB" -- scripts/deploy-pi.sh "$SHA"
-```
+Run through the resumable wrapper:
 
-If the tool window disconnects, do not rerun the deploy. A normal self-restarting deployment logs `CONTROL_PLANE_RESTART=EXPECTED` before the outage and `CONTROL_PLANE_RESTORED` after MCP readiness and Tunnel recovery. Reconstruct state first:
+    scripts/run-resumable.sh start --expect-marker DEPLOYMENT_VERIFIED -- scripts/deploy-pi.sh <exact-sha>
 
-```bash
-scripts/run-resumable.sh status "$JOB"
-scripts/run-resumable.sh log "$JOB" 120
-```
+The deployer:
+- builds the canonical immutable release bundle;
+- verifies candidate binary/hash/schema/systemd files remotely;
+- creates an online Registry backup;
+- saves units/polkit state;
+- stops the control plane;
+- activates the root-owned candidate;
+- migrates/validates Registry with Go;
+- starts services and performs acceptance;
+- writes verified deployment provenance;
+- preserves one rollback set.
 
-Direct execution is intentionally rejected because this deploy restarts the same MCP/Tunnel control plane used by automation. Use the resumable runner even from an attached maintainer shell. `MCP_DEPLOY_ALLOW_DIRECT=1` is break-glass recovery only and must never be the normal release path.
+A failure after activation invokes rollback.
 
-This path requires:
+## Controlled rollback test
 
-- clean worktree;
-- requested SHA == local HEAD == `origin/<branch>`;
-- deterministic `git archive` package;
-- ARMv6 adapter built from that archive;
-- candidate validation on the real appliance;
-- runtime + unit + pre-deploy Registry rollback set;
-- control-plane-safe restart order;
-- lightweight production acceptance;
-- `.deployment.json` provenance with `verified=true` only after acceptance.
-
-This is a development/release engineering mechanism, **not** the first-install guide.
-
-If the same SHA is already recorded as verified and Admin/MCP/Tunnel are healthy, `deploy-pi.sh` returns `ALREADY_DEPLOYED` plus `DEPLOYMENT_VERIFIED` without mutating production. `MCP_DEPLOY_FORCE=1` bypasses that protection only for an intentional repair/redeployment; controlled failure injection also bypasses it so rollback tests remain meaningful.
-
-## Maintainer release bundle
-
-After a release candidate is committed and the worktree is clean:
-
-```bash
-scripts/build-release-package.sh "$(git rev-parse HEAD)"
-```
-
-The produced ARMv6 release bundle includes a prebuilt adapter plus `SHA256SUMS`, allowing a constrained appliance to install without Go.
-
-## Controlled deploy rollback test
-
-For maintainers only, `deploy-pi.sh` supports a deliberate failure injection to prove rollback. Do not use it as routine user rollback.
-
-```bash
-JOB="rollback-test-${SHA:0:12}"
-scripts/run-resumable.sh start "$JOB" -- \
-  env MCP_DEPLOY_INJECT_FAILURE=after-activation scripts/deploy-pi.sh "$SHA"
-```
-
-The test is successful only when the command fails by design **and** the previous runtime plus the matching pre-deploy Registry are independently verified healthy afterward.
+MCP_DEPLOY_INJECT_FAILURE=after-activation may be used only in an explicit deployment-validation exercise. Do not inject failures into production outside that test.
 
 ## Database backup versus application rollback
 
-These are separate concerns, but a schema-changing deployment must keep them compatible:
-
-```text
-Normal application rollback          -> previous runtime + units
-Schema-changing maintainer rollback  -> previous runtime + units + matching pre-deploy Registry snapshot
-Manual Registry recovery             -> explicitly selected trusted SQLite backup
-```
-
-`deploy-pi.sh` therefore creates and validates an online Registry backup before candidate activation. If automatic rollback is triggered, it restores that exact snapshot with the previous runtime **before** restarting services; this prevents an older runtime from opening a newer, unsupported schema. A successful deployment preserves the rollback runtime, unit set and `rollback_registry` path until external acceptance.
-
-Outside that deployment transaction, application rollback must not casually replace persistent user data. Manual Registry restore remains an explicit recovery operation; see [recovery.md](recovery.md).
+Application rollback and Registry restore are coordinated but distinct. Never replace a live SQLite file with an ordinary rename/copy while gateway processes are still using it.

@@ -153,7 +153,14 @@ func (c *Core) WriteFile(
 		var currentSHA any
 		sizeBefore := int64(0)
 		if probe.Exists {
-			current = probe.Content
+			maxReadBytes, err := c.intSetting(ctx, "max_file_read_bytes", 1048576)
+			if err != nil {
+				return errorResponse("write_file", "INTERNAL_ERROR", err.Error(), requestID, targetID, projectID, started)
+			}
+			current, err = transport.ReadFile(ctx, target, probe.CanonicalPath, int64(maxReadBytes), 15*time.Second)
+			if err != nil {
+				return corePolicyError("write_file", err, requestID, targetID, projectID, started)
+			}
 			currentSHA = probe.SHA256
 			sizeBefore = probe.Size
 		}
@@ -184,9 +191,19 @@ func (c *Core) WriteFile(
 
 	var backupPath any
 	if !req.Create && probe.Exists {
-		if path, err := c.backupExistingMutation(targetID, projectID, normPath, probe); err == nil && path != "" {
-			backupPath = path
+		maxReadBytes, err := c.intSetting(ctx, "max_file_read_bytes", 1048576)
+		if err != nil {
+			return errorResponse("write_file", "INTERNAL_ERROR", err.Error(), requestID, targetID, projectID, started)
 		}
+		current, err := transport.ReadFile(ctx, target, probe.CanonicalPath, int64(maxReadBytes), 15*time.Second)
+		if err != nil {
+			return corePolicyError("write_file", err, requestID, targetID, projectID, started)
+		}
+		path, err := c.backupExistingMutation(targetID, projectID, normPath, probe.SHA256, current)
+		if err != nil {
+			return errorResponse("write_file", "BACKUP_FAILED", "Failed to create pre-write backup: "+err.Error(), requestID, targetID, projectID, started)
+		}
+		backupPath = path
 	}
 	if err := c.auditMutationRequired(
 		ctx, actor, requestID, "WRITE_ATTEMPT", targetID, projectID,
@@ -274,23 +291,14 @@ func (c *Core) AppendFile(
 	); err != nil {
 		return errorResponse("append_file", "AUDIT_UNAVAILABLE", "Audit sink is unavailable for a critical operation", requestID, targetID, projectID, started)
 	}
-	script := `import sys, hashlib
-p = sys.argv[1]
-data = sys.stdin.buffer.read()
-open(p, 'ab').write(data)
-print(hashlib.sha256(open(p, 'rb').read()).hexdigest())
-`
-	run, err := transport.RunPython(ctx, target, script, []string{destCanonical}, content, 15*time.Second)
+	newSHA, err := transport.AppendFile(ctx, target, destCanonical, content, maxWriteBytes, 15*time.Second)
 	if err != nil {
 		return corePolicyError("append_file", err, requestID, targetID, projectID, started)
-	}
-	if !run.OK() {
-		return errorResponse("append_file", "WRITE_FAILED", "Append failed: "+run.Stderr, requestID, targetID, projectID, started)
 	}
 	result := map[string]any{
 		"path":           normPath,
 		"bytes_appended": len(content),
-		"new_sha256":     strings.TrimSpace(run.Stdout),
+		"new_sha256":     newSHA,
 	}
 	response := successResponse("append_file", result, requestID, targetID, projectID, started)
 	c.auditMutationBestEffort(ctx, actor, requestID, "APPEND_FILE", targetID, projectID, true, "", 0, map[string]any{"path": normPath, "bytes": len(content)}, response.DurationMS)
@@ -336,16 +344,8 @@ func (c *Core) DeleteFile(
 	if err := c.auditMutationRequired(ctx, actor, requestID, "DELETE_FILE_ATTEMPT", targetID, projectID, map[string]any{"path": normPath}, durationMS(started)); err != nil {
 		return errorResponse("delete_file", "AUDIT_UNAVAILABLE", "Audit sink is unavailable for a critical operation", requestID, targetID, projectID, started)
 	}
-	script := `import os, sys
-p = sys.argv[1]
-os.remove(p) if os.path.isfile(p) or os.path.islink(p) else os.rmdir(p)
-`
-	run, err := transport.RunPython(ctx, target, script, []string{destCanonical}, nil, 15*time.Second)
-	if err != nil {
+	if err := transport.DeletePath(ctx, target, destCanonical, 15*time.Second); err != nil {
 		return corePolicyError("delete_file", err, requestID, targetID, projectID, started)
-	}
-	if !run.OK() {
-		return errorResponse("delete_file", "DELETE_FAILED", "Delete failed: "+run.Stderr, requestID, targetID, projectID, started)
 	}
 	result := map[string]any{"path": normPath, "deleted": true}
 	response := successResponse("delete_file", result, requestID, targetID, projectID, started)
@@ -414,6 +414,9 @@ func (c *Core) copyOrMoveFile(
 		}
 		return errorResponse(tool, "SYMLINK_WRITE_DENIED", fmt.Sprintf("Source symlink is not accepted for structured %s: %s", action, sourcePath), requestID, targetID, projectID, started)
 	}
+	if sourceProbe.IsDir || !sourceProbe.IsFile {
+		return errorResponse(tool, "INVALID_PATH", fmt.Sprintf("Source is not a regular file: %s", sourcePath), requestID, targetID, projectID, started)
+	}
 	safe, err := transport.ResolveSafeDestination(ctx, target, rootCanonical, destFull, false, 10*time.Second)
 	if err != nil {
 		return corePolicyError(tool, err, requestID, targetID, projectID, started)
@@ -430,25 +433,8 @@ func (c *Core) copyOrMoveFile(
 		return errorResponse(tool, "AUDIT_UNAVAILABLE", "Audit sink is unavailable for a critical operation", requestID, targetID, projectID, started)
 	}
 
-	script := `import shutil, sys
-source = sys.argv[1]
-dest = sys.argv[2]
-shutil.move(source, dest) if sys.argv[3] == '1' else shutil.copy2(source, dest)
-`
-	moveFlag := "0"
-	if move {
-		moveFlag = "1"
-	}
-	run, err := transport.RunPython(ctx, target, script, []string{sourceCanonical, safe.DestinationPath, moveFlag}, nil, 15*time.Second)
-	if err != nil {
+	if err := transport.CopyMovePath(ctx, target, sourceCanonical, safe.DestinationPath, move, 15*time.Second); err != nil {
 		return corePolicyError(tool, err, requestID, targetID, projectID, started)
-	}
-	if !run.OK() {
-		label := "Copy"
-		if move {
-			label = "Move"
-		}
-		return errorResponse(tool, "WRITE_FAILED", label+" failed: "+run.Stderr, requestID, targetID, projectID, started)
 	}
 
 	result := map[string]any{"source": normSource, "dest": normDest}
@@ -495,19 +481,8 @@ func (c *Core) Mkdir(
 	if err := c.auditMutationRequired(ctx, actor, requestID, "MKDIR_ATTEMPT", targetID, projectID, detail, durationMS(started)); err != nil {
 		return errorResponse("mkdir", "AUDIT_UNAVAILABLE", "Audit sink is unavailable for a critical operation", requestID, targetID, projectID, started)
 	}
-	script := `import os, sys
-os.makedirs(sys.argv[1], exist_ok=(sys.argv[2] == '1'))
-`
-	parentsFlag := "0"
-	if parents {
-		parentsFlag = "1"
-	}
-	run, err := transport.RunPython(ctx, target, script, []string{safe.DestinationPath, parentsFlag}, nil, 15*time.Second)
-	if err != nil {
+	if err := transport.Mkdir(ctx, target, safe.DestinationPath, parents, 15*time.Second); err != nil {
 		return corePolicyError("mkdir", err, requestID, targetID, projectID, started)
-	}
-	if !run.OK() {
-		return errorResponse("mkdir", "WRITE_FAILED", "mkdir failed: "+run.Stderr, requestID, targetID, projectID, started)
 	}
 	result := map[string]any{"path": normPath, "created": true}
 	response := successResponse("mkdir", result, requestID, targetID, projectID, started)
@@ -686,8 +661,7 @@ func cloneDetail(detail map[string]any) map[string]any {
 }
 
 func (c *Core) backupExistingMutation(
-	targetID, projectID, normPath string,
-	probe remote.PathProbe,
+	targetID, projectID, normPath, sha256Hex, content string,
 ) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -703,10 +677,10 @@ func (c *Core) backupExistingMutation(
 	name := fmt.Sprintf(
 		"%s_%s.bak",
 		time.Now().Format("20060102_150405"),
-		prefix(probe.SHA256, 12),
+		prefix(sha256Hex, 12),
 	)
 	backupPath := filepath.Join(backupDir, name)
-	if err := os.WriteFile(backupPath, []byte(probe.Content), 0600); err != nil {
+	if err := os.WriteFile(backupPath, []byte(content), 0600); err != nil {
 		return "", err
 	}
 	entries, err := os.ReadDir(backupDir)

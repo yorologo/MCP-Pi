@@ -7,13 +7,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
-
-	"mcp-gateway-adapter/internal/core"
-	"mcp-gateway-adapter/internal/registry"
-	"mcp-gateway-adapter/internal/remote"
 )
 
 func main() {
@@ -44,13 +39,12 @@ func main() {
 			runMCPServer(os.Args[2:])
 			return
 		case "version":
-			fmt.Println("mcp-gateway v1.4.0 (Core API v1, MCP Protocol 2026-07-28, Registry Schema v5)")
-			return
+			os.Exit(cmdVersion(os.Args[2:]))
 		case "help", "-help", "--help":
 			printHelp()
 			return
 		default:
-			// If first arg starts with '-', run default MCP server with those flags (backwards compatibility)
+			// Preserve the original flag-only stdio invocation for existing clients.
 			if strings.HasPrefix(subcmd, "-") {
 				runMCPServer(os.Args[1:])
 				return
@@ -60,16 +54,14 @@ func main() {
 		}
 	}
 
-	// No arguments: default to MCP server (stdio mode)
-	runMCPServer(os.Args[1:])
+	// No arguments: default to MCP server (stdio mode).
+	runMCPServer(nil)
 }
 
 func runMCPServer(args []string) {
 	fs := flag.NewFlagSet("serve-mcp", flag.ContinueOnError)
 	transportFlag := fs.String("transport", "stdio", "Transport mode: stdio or http")
 	bindFlag := fs.String("bind", "127.0.0.1:8090", "Bind address for Streamable HTTP mode (default: 127.0.0.1:8090)")
-	pythonFlag := fs.String("python", "", "Path to python3 binary (legacy, unused in Go-only)")
-	pythonPathFlag := fs.String("pythonpath", "", "Path to Python source directory (legacy, unused in Go-only)")
 	dbFlag := fs.String("db", "", "Path to SQLite database file")
 	clientIDFlag := fs.String("client-id", "", "Authenticated AI client identifier")
 	authTokenFlag := fs.String("auth-token", "", "Shared secret Bearer auth token for authenticating HTTP clients")
@@ -79,40 +71,23 @@ func runMCPServer(args []string) {
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
-
-	bridgeConfig := DefaultBridgeConfig()
-	if *pythonFlag != "" {
-		bridgeConfig.PythonBin = *pythonFlag
-	}
-	if *pythonPathFlag != "" {
-		bridgeConfig.PythonPath = *pythonPathFlag
-	}
-	if *dbFlag != "" {
-		bridgeConfig.DBPath = *dbFlag
-	}
-
-	dbPath := resolveDBPath(bridgeConfig.DBPath)
-	bridgeConfig.DBPath = dbPath
-
-	if store, err := registry.OpenStore(context.Background(), dbPath); err == nil {
-		sshTransport := remote.NewSSHTransport()
-		coreInstance := core.NewWithRemote(store, core.Config{
-			GatewayVersion:     "1.4.0",
-			CoreAPIVersion:     1,
-			ToolCatalogVersion: 4,
-			MCPProtocol:        "2026-07-28",
-			DBPath:             dbPath,
-			BackupDir:          filepath.Join(filepath.Dir(dbPath), "backups"),
-		}, sshTransport)
-		bridgeConfig.Core = coreInstance
-	}
-
 	if *versionFlag {
-		fmt.Println("mcp-gateway-adapter v1.4.0 (MCP Protocol 2026-07-28)")
+		_ = cmdVersion(nil)
 		return
 	}
 
-	// Resolve shared auth token from file, flag, or environment
+	bridgeConfig := DefaultBridgeConfig()
+	dbPath := resolveDBPath(*dbFlag)
+	bridgeConfig.DBPath = dbPath
+
+	_, coreInstance, coreErr := initStoreAndCore(dbPath)
+	if coreErr != nil {
+		log.Printf("[ERROR] Gateway Core initialization failed: %v", coreErr)
+	} else {
+		bridgeConfig.Core = coreInstance
+	}
+
+	// Resolve shared auth token from file, flag, or environment.
 	var token string
 	if *authTokenFlag != "" {
 		token = *authTokenFlag
@@ -141,16 +116,20 @@ func runMCPServer(args []string) {
 		bridgeConfig.ClientID = "chatgpt-main"
 	}
 
+	if coreErr != nil && *transportFlag == "stdio" {
+		log.Fatalf("Gateway Core is required for stdio transport: %v", coreErr)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	state := NewAdapterState()
 	info, err := bridgeConfig.CheckBridgeCompatibility(ctx)
 	if err != nil {
-		log.Printf("[WARN] Bridge compatibility check failed: %v", err)
+		log.Printf("[WARN] Go Core compatibility/readiness check failed: %v", err)
 		state.SetReady(false, fmt.Sprintf("ADAPTER_NOT_READY: %v", err), info)
 	} else {
-		log.Printf("[INFO] Bridge compatibility verified (Core API v%d, Bridge API v%d, Gateway v%s)", info.CoreAPIVersion, info.BridgeAPIVersion, info.GatewayVersion)
+		log.Printf("[INFO] Go Core contract verified (Core API v%d, Bridge API v%d, Gateway v%s)", info.CoreAPIVersion, info.BridgeAPIVersion, info.GatewayVersion)
 		state.SetReady(true, "ready", info)
 	}
 

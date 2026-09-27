@@ -1,57 +1,45 @@
 # Documentation
 
-The documentation is deliberately split into **CURRENT**, **REFERENCE** and **ARCHIVE** so an operator never has to guess whether an old command still applies.
+MCP-Pi documentation is split by authority.
 
 ## CURRENT — authoritative operational guidance
 
-Use these documents for the current 1.4.0 release:
+- [Getting started](getting-started.md)
+- [Installation](installation.md)
+- [Configuration](configuration.md)
+- [Operations](operations.md)
+- [Update and rollback](update-rollback.md)
+- [Recovery](recovery.md)
+- [Troubleshooting](troubleshooting.md)
+- [Architecture](architecture.md)
+- [Security](security.md)
+- [Admin Console](admin-console.md)
+- [Project state](project-state.md)
 
-- [`../README.md`](../README.md) — project landing and quick start.
-- [`getting-started.md`](getting-started.md) — shortest path for a new user.
-- [`installation.md`](installation.md) — fresh install and reinstall contract.
-- [`configuration.md`](configuration.md) — environment, Registry and security settings.
-- [`operations.md`](operations.md) — normal administration and maintenance.
-- [`update-rollback.md`](update-rollback.md) — user update/rollback and maintainer deployment boundary.
-- [`recovery.md`](recovery.md) — backup, restore and disaster recovery.
-- [`troubleshooting.md`](troubleshooting.md) — diagnosis by layer.
-- [`architecture.md`](architecture.md) — current component and request flows.
-- [`security.md`](security.md) — trust boundaries, grants, kill switches and shell semantics.
-- [`admin-console.md`](admin-console.md) — Admin UI behavior.
-- [`project-state.md`](project-state.md) — concise dynamic state of this repository/production baseline.
-
-Project context, not step-by-step operating instructions:
-
+These documents describe the 1.5.0-rc.1 Go-only source candidate. They do not claim that production has already been promoted.
 
 ## REFERENCE — deep technical detail
 
-[`reference/`](reference/) keeps specialized protocol, lifecycle, deployment and integration material that is useful to maintainers but should not compete with the beginner path.
+- [Compatibility contract](reference/compatibility.md)
+- [MCP adapter/Core](reference/mcp-adapter.md)
+- [Lifecycle](reference/lifecycle.md)
+- [Deployment](reference/deployment.md)
+- [Controlled writes](reference/controlled-write.md)
+- [Performance](reference/performance.md)
+- [Diagrams](reference/diagrams.md)
 
-Key maintainer references:
-
-- [`reference/performance.md`](reference/performance.md) — runtime benchmark and evidence gate for any Python-to-Go consolidation.
-- [`reference/mcp-adapter.md`](reference/mcp-adapter.md) — Go MCP adapter and Python bridge boundary.
-- [`reference/compatibility.md`](reference/compatibility.md) — supported runtime/platform contract.
-
-Reference documents are not the source of truth for a command when a CURRENT guide says otherwise.
+Reference material must agree with CURRENT docs for the active candidate.
 
 ## ARCHIVE — historical evidence
 
-[`archive/`](archive/) preserves completed migrations, old runbooks, implementation plans/specs and acceptance evidence. Old IPs, versions, tool counts and procedures may intentionally appear there.
-
-Do **not** execute archived commands as current operating guidance.
-
-Release notes under [`releases/`](releases/) are historical and immutable by version.
+docs/releases and docs/archive may describe older runtime designs and are not current operating instructions.
 
 ## Authority rule
 
-```text
-Observed runtime / code contract
-        ↓
-CURRENT documentation
-        ↓
-REFERENCE rationale/details
-        ↓
-ARCHIVE historical evidence
-```
+If documentation and code disagree, do not change production to fit prose. Establish the actual source contract from Go code/tests and metadata, correct the documentation, then rerun:
 
-If CURRENT documentation disagrees with the running software, stop, determine which source drifted, correct it and re-run `python scripts/audit-docs.py`. Never change production merely to make it match old archived text.
+    cd mcp-adapter && go test -count=1 ./...
+    cd ..
+    scripts/verify-go-only.sh
+
+Live production remains authoritative only for its own deployed state through gateway_status, deployment provenance and the live Registry.

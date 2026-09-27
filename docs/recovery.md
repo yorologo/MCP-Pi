@@ -1,87 +1,54 @@
 # Recovery
 
-Recovery is split into three levels so the smallest safe action is used first.
-
-```mermaid
-flowchart TD
-    F[Failure] --> Q{What failed?}
-    Q -->|service/runtime| S[Repair/restart one service]
-    Q -->|new application release| A[Installer/deploy rollback]
-    Q -->|Registry data| R[Validated SQLite restore]
-    Q -->|OS/media disaster| D[Reinstall OS + release + private backup]
-    S --> V[Doctor + endpoints + Target check]
-    A --> V
-    R --> V
-    D --> V
-```
+Recovery for the 1.5.0-rc.1 Go-only runtime is deliberately small.
 
 ## 1. Service/runtime issue
 
-Start with [troubleshooting.md](troubleshooting.md), relevant journals and Doctor. Do not restore data when the actual issue is a stopped service or bad unit.
+Inspect:
+
+    systemctl status mcp-gateway-admin mcp-gateway-mcp
+    journalctl -u mcp-gateway-admin -u mcp-gateway-mcp
+    sudo -u mcp-gateway mcp-gateway doctor
+
+A live endpoint does not imply readiness; Core/Registry initialization must succeed.
 
 ## 2. Application rollback
 
 For an installer-managed update:
 
-```bash
-sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
-```
+    sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
 
-For maintainer exact-commit deployments, use the rollback mechanism in `scripts/deploy-pi.sh`; do not invent a parallel manual layout.
+For a maintainer deployment, use the rollback set reported by deploy-pi.sh and the deployment runbook. Do not improvise a second deployment mechanism.
 
 ## 3. Registry backup
 
-Create a consistent online backup:
+    sudo -u mcp-gateway mcp-gateway backup
 
-```bash
-sudo -u mcp-gateway mcp-gateway backup
-```
-
-Backups live under the persistent data directory unless a destination is supplied. Copy critical recovery material off-device and encrypt it where appropriate.
+The command uses SQLite's online backup API through the existing Go SQLite dependency and verifies integrity/schema/SHA.
 
 ## 4. Registry restore
 
-Before restoring, identify the intended backup and verify it is trusted. The CLI validates SQLite integrity/schema before replacing the active database through SQLite's backup API:
+Stop Admin and MCP before restore so no process retains the old database state, then use:
 
-```bash
-sudo -u mcp-gateway mcp-gateway restore /path/to/gateway_backup.db
-```
+    sudo -u mcp-gateway mcp-gateway restore <backup.db>
 
-Then run:
-
-```bash
-sudo -u mcp-gateway mcp-gateway doctor
-```
-
-A restore is not successful merely because the file copied.
+Restart services and run Doctor afterward. Unsupported schema versions fail closed.
 
 ## 5. Disaster recovery
 
-A full appliance rebuild requires:
+    sudo scripts/backup-appliance.sh
 
-1. supported Linux/systemd OS;
-2. official MCP-Pi release bundle;
-3. persistent Registry backup;
-4. private Admin/tunnel configuration if used;
-5. SSH identities/known-host material if those identities must be preserved;
-6. installation + restore;
-7. permissions review;
-8. Doctor/endpoints/Target acceptance.
-
-Do not commit recovery secrets to Git.
+The private archive includes the verified Registry snapshot, private local config required for recovery, gateway/host SSH identities, relevant systemd/polkit state, fingerprints and checksums. Optional age encryption is fail-closed.
 
 ## Acceptance after recovery
 
-At minimum verify:
+Verify:
+- Admin and MCP services active;
+- /live and /ready behavior;
+- Doctor;
+- Registry schema/integrity;
+- Target SSH identity;
+- client/grant effective access;
+- deployment provenance when recovering a deployed release.
 
-- expected Gateway/API/schema contracts;
-- SQLite `integrity_check=ok`;
-- service user and sensitive-file permissions;
-- Admin/MCP services active;
-- MCP `/live` and `/ready`;
-- expected client/grant/Target/Project records;
-- Target SSH fingerprint and reachability;
-- no unexpected public listeners;
-- Doctor without error-severity failures.
-
-Historical machine-specific disaster-recovery evidence is preserved under [`archive/`](archive/); it is not the generic recovery contract.
+Do not declare recovery complete solely because systemd reports a process running.

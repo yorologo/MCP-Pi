@@ -1,85 +1,56 @@
 # Contributing to MCP-Pi
 
-MCP-Pi is security-sensitive and intentionally small. Contributions should preserve its KISS, fail-closed and low-resource character.
+MCP-Pi 1.5.0-rc.1 is a Go-only candidate. Keep contributions small, reviewable and aligned with KISS + Reuse First + Least Privilege + Fail Closed + Evidence Before PASS.
 
 ## Branches
 
-```text
-main      known-good release line
-develop   integrated validated development
-feature/* or fix/*  isolated work when useful
-```
-
-Do not force-push release history or move existing tags.
+main is stable release history. develop is integration. Feature/migration branches must not be treated as production until an exact commit is promoted and accepted.
 
 ## Development flow
 
-1. Start from `develop`.
-2. Make the smallest coherent change.
-3. Add/update regression tests.
-4. Run applicable gates.
-5. Update CURRENT docs when behavior/contracts changed.
-6. Run the documentation audit and `git diff --check`.
-7. Commit/push and require CI before hardware promotion.
+1. start from a clean, known branch;
+2. inspect the existing mechanism;
+3. change only the necessary surface;
+4. add tests when they protect a meaningful contract;
+5. run focused and full validation;
+6. update CURRENT documentation;
+7. review the complete diff before commit.
 
-Full release gate:
+Core gates:
 
-```bash
-python -m unittest discover -s tests -p 'test_*.py' -v
-cd mcp-adapter && go test ./...
-cd ..
-node tests/test_app_js.mjs
-cd tailwind && npm run build
-cd ..
-python scripts/audit-docs.py
-git diff --check
-```
+    cd mcp-adapter
+    go test -count=1 ./...
+    go vet ./...
+    go mod tidy -diff
+    cd ..
+    scripts/verify-go-only.sh
+    node mcp-adapter/internal/admin/app_js_test.mjs
+    (cd tailwind && npm run build)
+    ./install.sh --check
+    git diff --check
 
-Build the ARMv6 adapter when Go code changes.
+CI additionally runs vulnerability reachability checks and ARMv6 cross-build/package validation.
 
 ## Installation and release UX
 
-User entrypoint:
+User installation goes through install.sh and an immutable release bundle. Maintainer deployment goes through scripts/run-resumable.sh and scripts/deploy-pi.sh with an exact commit.
 
-```text
-install.sh
-```
-
-Maintainer exact-commit deployment:
-
-```bash
-SHA="$(git rev-parse HEAD)"
-JOB="deploy-${SHA:0:12}"
-scripts/run-resumable.sh start --expect-marker DEPLOYMENT_VERIFIED "$JOB" -- scripts/deploy-pi.sh "$SHA"
-```
-
-Beginner-facing release bundle:
-
-```bash
-scripts/build-release-package.sh "$(git rev-parse HEAD)"
-```
-
-Do not add another active deploy script. Historical deployment helpers are retained under `scripts/archive/` only as evidence.
+Do not add another installer, updater, migration daemon or release packaging path without a concrete requirement.
 
 ## Documentation
 
-CURRENT docs are listed in `docs/README.md`. Keep that set small and authoritative. Specialized internals belong in `docs/reference/`; completed plans/migrations/old runbooks belong in `docs/archive/`; version history belongs in `docs/releases/`.
+CURRENT docs live at README.md, AGENTS.md and docs/*. Historical material belongs under docs/releases or docs/archive.
 
-Historical content may contain old IPs, versions and procedures. Do not rewrite it to look current.
+The Go project contract test checks metadata, Registry defaults and stale CURRENT runtime descriptions.
 
 ## Dependencies
 
-Prefer standard library, OS facilities and the official MCP SDK. A new runtime dependency needs a concrete reason plus resource/architecture/rollback analysis.
+Prefer the standard library or an existing dependency. Runtime dependencies need a concrete reason, not generic best-practice value. The appliance release must remain self-contained and must not require Go or other development runtimes.
 
 ## Security-sensitive changes
 
-Changes to filesystem mutation, trusted shell, grants, auth, SSH, systemd, audit, update or rollback require negative-path regression coverage where practical. Never commit:
-
-- private keys;
-- tokens/passwords/cookies;
-- production SQLite databases;
-- `.mcp-pi.local.env` or private runtime config.
+Changes to policy, grants, filesystem confinement, trusted shell, privilege, SSH identity, backup/restore, sessions or deployment require explicit negative tests and fail-closed behavior.
 
 ## Hardware acceptance
 
-Local tests are necessary but not sufficient for a release/deployment change. On the real appliance verify the affected services/endpoints, Doctor and Target path. Keep heavy test/build work off constrained ARMv6 hardware.
+The reference deployment target is ARMv6. Cross-build locally/CI first; real appliance acceptance happens only in the deployment validation phase.

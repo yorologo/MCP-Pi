@@ -1,135 +1,85 @@
 # Architecture
 
-MCP-Pi is a small security gateway, not a compute platform. The appliance centralizes identity, policy, audit and protocol adaptation; Targets perform the actual work.
+MCP-Pi 1.5.0-rc.1 is a Go-only security gateway. The reference appliance centralizes MCP transport, policy, audit, Admin and lifecycle logic in one executable; Targets perform the delegated work.
 
 ## Components
 
-```mermaid
-flowchart LR
-    C[AI / MCP client] --> A[Go MCP adapter]
-    B[Admin browser] --> W[Flask Admin Console]
-    A --> G[Gateway Core]
-    W --> G
-    G --> P[Policy engine]
-    P --> R[(SQLite Registry)]
-    G --> S[SSH transport]
-    S --> T[Target]
-    T --> PR[Authorized Project]
-```
+    AI/MCP client -> Go MCP server -> Go Core -> Policy/SQLite Registry -> SSH -> Target
+                          ^
+                          |
+                    Go Admin Console
 
-The Admin Console and MCP adapter **must use the same Gateway Core**. There is no parallel Admin-to-SSH bypass.
+There is no subprocess bridge and no second canonical backend.
 
 ## Responsibilities
 
 | Component | Responsibility |
 | --- | --- |
-| Go MCP adapter | MCP protocol, HTTP/stdin transport, client identity handoff, tool annotations |
-| Gateway Core | canonical tool behavior, limits, audit and orchestration |
-| Policy | client/grant/Target/Project/capability authorization plus Target privilege consent |
-| Registry | Targets, Projects, clients, grants, privilege approvals, settings and activity |
-| SSH transport | pinned Target connection and bounded remote operations |
-| Admin Console | human configuration using the same Registry/Core |
-| Target | performs project work; not trusted merely because its IP matches |
+| Go MCP server | stdio/HTTP MCP transport, authentication handoff, tool catalog |
+| Go Core | canonical tool behavior, limits, audit and orchestration |
+| Policy | client/grant/Target/Project/capability decisions |
+| Registry | schema 5 settings, Targets, Projects, clients, grants, activity |
+| Go Admin | human management of the same Registry/policy model |
+| SSH transport | strict-host-key remote execution and native Target operations |
+| systemd | service lifecycle, timer/postboot integration |
+| logind/polkit | narrowly authorized appliance reboot |
 
 ## Request flow
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant A as MCP adapter
-    participant G as Gateway Core
-    participant P as Policy / Registry
-    participant S as SSH transport
-    participant T as Target
+1. authenticate/bind client identity;
+2. resolve the tool and validate its schema;
+3. evaluate global and scoped policy;
+4. deny immediately when a required precondition fails;
+5. execute the bounded local/remote operation;
+6. record audit evidence;
+7. return a structured result/error.
 
-    C->>A: tools/list or tools/call
-    A->>G: authenticated client + request
-    G->>P: authorize capability/scope
-    alt denied
-        P-->>G: deny
-        G-->>A: structured fail-closed error
-        A-->>C: denied
-    else allowed
-        P-->>G: allow
-        G->>S: bounded operation
-        S->>T: pinned SSH session
-        T-->>S: result
-        S-->>G: result
-        G->>P: audit result
-        G-->>A: structured result
-        A-->>C: MCP response
-    end
-```
+Missing Go Core or Registry state cannot route to a fallback implementation.
 
 ## Tool families
 
-The catalog currently contains 21 deterministic tools. They fall into four practical groups:
+The catalog contains 21 tools covering read/introspection, structured filesystem mutations, allowlisted tasks/trusted shell and appliance administration.
 
-- read/introspection;
-- structured project filesystem mutations;
-- allowlisted project tasks;
-- appliance administration plus trusted Target shell.
+run_command is a trusted Target shell for explicitly authorized clients; Project scope supplies authorization and initial CWD, not a general filesystem sandbox.
 
-Structured filesystem mutations enforce Project-root canonical paths. `run_command` is different: it is a **trusted Target shell** for explicitly authorized clients. Its Project identifies authorization scope and initial working directory; it is not a filesystem sandbox.
+## Target execution
 
-### Privileged Target execution
+Unix-like Targets use native POSIX utilities through pinned SSH. Windows Targets use PowerShell. Target facts include platform/runtime/privilege evidence without requiring an additional language runtime.
 
-Privilege elevation extends the existing execution path; MCP-Pi does not expose a second administrative shell. `run_command` carries `privilege=standard|required`. Normal authorization is evaluated first. A required command, an already-elevated `run_command`, or an allowlisted `run_task` whose base transport is observed root/Administrator then crosses a second gate consisting of an explicit `target_admin` grant, Target privilege policy, optional approval/boot lease, and a verified platform backend.
+Structured mutation safety is treated separately from general shell authorization; Project-root checks, symlink/reparse handling, optimistic hashes and atomic replace semantics must remain fail-closed.
 
-```text
-run_command
-  -> normal target_shell authorization
-  -> requested/observed privilege?
-       no  -> normal transport
-       yes -> explicit target_admin grant
-           -> Target privilege_policy
-           -> required approval/boot_id
-           -> verified native backend
-           -> execute + audit
-```
+## Privileged Target execution
 
-Platform details remain behind this boundary: Shizuku/`rish`, a transport already proven root/Administrator, or an optional `privilege_user` SSH identity on Linux/Windows that is independently probed as root/Administrator on the same pinned Target. Merely finding `sudo` or Windows elevation support is not enough to mark a backend ready, because delegating arbitrary escalation would create a second privilege path outside the policy engine. A missing verified backend is a denial, not a reason to weaken the host's global security policy.
+Privilege is a second policy gate:
+- normal operation authorization first;
+- explicit target_admin grant;
+- Target privilege policy;
+- approval/boot constraint when required;
+- verified native backend.
+
+Do not infer administrator capability from installed tooling alone.
 
 ## Identity versus endpoint
 
-A Target ID and pinned SSH host key establish identity. DHCP addresses and ports are runtime endpoints and may change.
-
-```text
-Target ID + SSH host fingerprint = identity
-IP + port                         = endpoint
-```
-
-Endpoint rediscovery may update an address only after cryptographic identity matches. An unexpected host key fails closed.
+Target ID + pinned SSH host key establish identity. Address and port are mutable endpoints.
 
 ## Runtime layout
 
-```text
-/home/mcp-gateway/mcp-gateway/                  application runtime
-/home/mcp-gateway/.local/share/mcp-gateway/    Registry + backups
-/home/mcp-gateway/.config/mcp-gateway/          private config + secrets
-/etc/systemd/system/                             service definitions
-```
+    /home/mcp-gateway/mcp-gateway/               root-owned runtime
+    /home/mcp-gateway/.local/share/mcp-gateway/ Registry/backups
+    /home/mcp-gateway/.config/mcp-gateway/       private mutable config
+    /etc/systemd/system/                          installed units
 
-Application updates must not overwrite persistent Registry/config/secrets.
+## Registry lifecycle
 
-## Installation and deployment boundaries
+Schema 5 is canonical. Fresh install creates v5; the direct Go migration path supports v4 to v5 and v5. SQLite backup/restore uses the existing modernc.org/sqlite online API.
 
-```mermaid
-flowchart TD
-    U[User release bundle] --> I[install.sh]
-    I --> R[Installed runtime]
-    M[Maintainer exact Git SHA] --> R[scripts/run-resumable.sh] --> D[scripts/deploy-pi.sh]
-    D --> C[Validated candidate]
-    C --> R
-    R --> P[Persistent data/config]
-```
+## Installation and deployment
 
-`install.sh` is the user install/reinstall path. `deploy-pi.sh` is a maintainer promotion mechanism with exact-commit provenance and transactional rollback.
+install.sh is the user lifecycle entrypoint. scripts/build-release-package.sh builds the immutable Go-only ARMv6 artifact. scripts/deploy-pi.sh promotes exactly that artifact and exact Git commit.
 
 ## Resource model
 
-The reference appliance is intentionally constrained. Heavy tests, frontend builds and Go cross-compilation run on a development host. The appliance runs only lightweight validation/Doctor and the production services.
+Heavy Go tests, frontend builds, vulnerability analysis and cross-compilation run off-appliance. The Raspberry Pi A+ runs the static gateway binary, SQLite and system services.
 
-The current Go adapter invokes the Python Core through a fresh bridge subprocess for individual tool calls. That boundary is a known performance candidate on ARMv6, but a full Go rewrite is not assumed to be beneficial until the reference appliance quantifies process-startup, in-process Core, adapter and remote-operation costs separately. See [performance.md](reference/performance.md) for the canonical measurement and migration gate.
-
-See [security.md](security.md), [configuration.md](configuration.md) and [compatibility.md](reference/compatibility.md).
+Current performance evidence comes from mcp-gateway benchmark and must represent measurements from that execution; historical migration baselines are not printed as if they were current results.

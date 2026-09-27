@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -72,8 +74,8 @@ func TestLoginLimiter(t *testing.T) {
 }
 
 func TestSessionManager(t *testing.T) {
-	secretDir := t.TempDir()
-	sm, err := NewSessionManager(secretDir)
+	secretFile := filepath.Join(t.TempDir(), "admin-secret")
+	sm, err := NewSessionManager(secretFile)
 	if err != nil {
 		t.Fatalf("NewSessionManager failed: %v", err)
 	}
@@ -99,7 +101,7 @@ func TestSessionManager(t *testing.T) {
 	}
 
 	// Verify key persistence: new session manager with same secret dir can decode
-	sm2, err := NewSessionManager(secretDir)
+	sm2, err := NewSessionManager(secretFile)
 	if err != nil {
 		t.Fatalf("NewSessionManager 2 failed: %v", err)
 	}
@@ -116,7 +118,7 @@ func TestSessionManager(t *testing.T) {
 	}
 
 	cookie := rec.Result().Cookies()[0]
-	if cookie.Name != DefaultSessionCookie || !cookie.HttpOnly {
+	if cookie.Name != DefaultSessionCookie || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("unexpected cookie attributes: %+v", cookie)
 	}
 

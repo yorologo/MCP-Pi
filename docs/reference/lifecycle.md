@@ -1,82 +1,55 @@
-# MCP Gateway Lifecycle & Operations Guide
+# MCP Gateway lifecycle and operations
 
-## 1. Visión General
+MCP-Pi 1.5.0-rc.1 keeps lifecycle responsibilities in the Go CLI while thin shell scripts orchestrate operating-system services and release files.
 
-La arquitectura de ciclo de vida de **MCP Gateway** proporciona operaciones deterministas para instalación, diagnóstico de salud, respaldo, restauración, actualización atómica y reversión (*rollback*), tanto mediante la interfaz de línea de comandos unificada (`bin/mcp-gateway`) como desde la consola web de administración (`/maintenance`).
+## Runtime tree
 
----
+    bin/mcp-gateway
+    bin/mcp-gateway-adapter
+    bin/mcp-gateway-client-stdio
+    config/systemd/
+    config/polkit/
+    compatibility.json
+    manifest.json
+    install.sh
 
-## 2. Estructura de Directorios y Despliegue
+Persistent data/config is outside the runtime tree.
 
-```text
-/home/mcp-gateway/
-├── mcp-gateway/              # Instalación estándar o symlink 'current'
-│   ├── bin/
-│   │   ├── mcp-gateway        # Wrapper ejecutable CLI unificado
-│   │   └── mcp-gateway-adapter# Binario Go compilado estáticamente (ARMv6)
-│   ├── src/mcp_gateway/      # Código fuente Python stdlib
-│   ├── config/               # Plantillas y unidades systemd
-│   ├── tests/                # Suites de pruebas unitarias y de integración
-│   ├── compatibility.json    # Matriz de compatibilidad y versiones
-│   ├── manifest.json         # Manifiesto de release
-│   ├── SHA256SUMS            # Sumas criptográficas de verificación
-│   └── install.sh            # Script de instalación idempotente
-├── .local/share/mcp-gateway/ # Directorio de datos (permisos 700)
-│   ├── gateway.db            # Base de datos SQLite
-│   └── backups/              # Respaldos automáticos de base de datos y archivos
-└── .config/mcp-gateway/      # Directorio de configuración local (permisos 700)
-```
+## Unified CLI
 
----
+Important commands:
+- version / version --json;
+- status;
+- doctor;
+- maintenance;
+- backup;
+- restore;
+- repair;
+- setup;
+- benchmark;
+- serve-admin;
+- serve-mcp.
 
-## 3. CLI Unificado (`bin/mcp-gateway`)
+## Doctor
 
-El wrapper [`bin/mcp-gateway`](../../bin/mcp-gateway) es compatible con POSIX shell y no requiere dependencias externas:
+Doctor verifies Go Core availability, SQLite connection/integrity, local resource warnings and optionally enabled Target reachability. Requested Target checks participate in the overall verdict.
 
-| Comando | Descripción |
-| :--- | :--- |
-| `mcp-gateway status` | Consulta rápida del estado del Gateway, writes y número de targets. |
-| `mcp-gateway doctor` | Ejecuta la batería completa de chequeos diagnósticos de salud. |
-| `mcp-gateway repair` | Aplica correcciones no destructivas (permisos de directorios y recarga de servicios). |
-| `mcp-gateway backup` | Genera un respaldo online y consistente de SQLite mediante la API nativa de backup. |
-| `mcp-gateway restore <path>` | Valida integridad/esquema, migra v1/v2/v3→v4 cuando corresponde y limpia aprobaciones temporales de privilegio antes de devolver el Registry al servicio. |
-| `mcp-gateway rollback` | Indica la ruta administrativa soportada para rollback; la reversión real del runtime requiere la operación root correspondiente. |
-| `mcp-gateway uninstall [--purge]` | Detiene y desactiva servicios systemd; opcionalmente elimina los datos con `--purge`. |
+## Backup and restore
 
----
+Backup and restore use modernc.org/sqlite online APIs. Restore validates the source and refuses unsafe live-service replacement. Installer/deployer stop or coordinate services before recovery.
 
-## 4. Diagnóstico y Auto-Reparación Segura (`Doctor` & `Repair`)
+## Installation
 
-El módulo [`doctor.py`](../../src/mcp_gateway/doctor.py) verifica:
-1. **Runtime de Python**: Versión compatible (>= 3.9).
-2. **Arquitectura de CPU**: Coincidencia con arquitecturas soportadas (`armv6l`, `aarch64`, `x86_64`).
-3. **Contrato de Compatibilidad**: Validación íntegra contra `compatibility.json`.
-4. **Integridad de SQLite**: Ejecución de `PRAGMA integrity_check` y `PRAGMA user_version`.
-5. **Permisos de Archivos**: Permisos estrictos en directorios de datos (`700`) y claves SSH (`600`).
-6. **Salud del Núcleo**: Inicialización de `GatewayTools` y estado de kill switch.
-7. **Catálogo de Herramientas**: Presencia y orden determinista del catálogo vigente de 21 herramientas allowlisted.
-8. **HTTP Probes**: Verificación en vivo de `/live`, `/ready`, protección de Host y protección de Origin.
+install.sh stages a candidate, backs up Registry, initializes/migrates through the Go binary, saves prior system assets, installs root-owned runtime files, starts services and runs Doctor.
 
-El comando `repair` restringe permisos vulnerables y recarga los daemons sin alterar la configuración ni destruir datos.
+## Deployment
 
----
+scripts/deploy-pi.sh consumes the canonical immutable bundle produced by scripts/build-release-package.sh. Exact Git SHA and final binary/package hashes become deployment provenance only after acceptance.
 
-## 5. Manifiesto de Release y Verificación de Integridad
+## Maintenance
 
-Cada versión cuenta con un archivo [`manifest.json`](../../manifest.json) que certifica compatibilidad:
-- Arquitectura objetivo
-- Versión de API del Core y del Bridge
-- Versión del catálogo de herramientas
-- Protocolo MCP implementado
+maintenance creates a verified backup, rotates retained gateway backups, checks SQLite integrity and runs Doctor. Required failure stops the operation.
 
-El archivo [`SHA256SUMS`](../../SHA256SUMS) garantiza que ningún archivo del paquete ha sido alterado de forma accidental o maliciosa.
+## Reboot
 
----
-
-## 6. Consola Web de Mantenimiento (`/maintenance`)
-
-La interfaz administrativa incluye un panel de control con soporte de **HTMX local vendored** (cero dependencias externas o CDN):
-- Visualización en tiempo real del estado de Doctor.
-- Consulta de contratos de versiones y esquema de base de datos.
-- Listado histórico de respaldos almacenados en el Gateway con tamaños y fecha.
-- Acciones rápidas: *Re-run Diagnostics*, *Execute Safe Repair*, *Create Backup* y *Rollback*.
+gateway_reboot schedules through systemd-logind. The service keeps NoNewPrivileges and receives only the narrow polkit reboot permission.

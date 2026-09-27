@@ -4,7 +4,7 @@
     "project": "mock-proj",
     "result": {
       "bytes_appended": 10,
-      "new_sha256": "",
+      "new_sha256": "34120f4a595861609bcb7d46caa3fd3715ef1f17cdf0eb2bd6aec9c2be6e2440",
       "path": "existing.txt"
     },
     "target": "mock-target",
