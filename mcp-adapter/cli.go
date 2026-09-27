@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,9 +53,6 @@ func resolveDBPath(flagVal string) string {
 }
 
 func initStoreAndCore(dbPath string) (*registry.Store, *core.Core, error) {
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
-		return nil, nil, fmt.Errorf("failed to create db directory: %w", err)
-	}
 	store, err := registry.OpenStore(context.Background(), dbPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open registry store: %w", err)
@@ -118,44 +116,103 @@ func cmdStatus(args []string) int {
 	}
 
 	dbPath := resolveDBPath(*dbFlag)
-	_, c, err := initStoreAndCore(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Could not initialize gateway core: %v\n", err)
-		return 1
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	resp := c.Health(ctx, "cli-status")
-	if !resp.OK {
-		fmt.Fprintf(os.Stderr, "[ERROR] Health check failed: %v\n", resp.Error)
+	info, err := sqliteutil.Inspect(ctx, dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Could not inspect Registry: %v\n", err)
+		return 1
+	}
+	if info.Integrity != "ok" {
+		fmt.Fprintf(os.Stderr, "[ERROR] Registry integrity check failed: %s\n", info.Integrity)
 		return 1
 	}
 
-	res, _ := resp.Result.(map[string]any)
 	fmt.Println("==================================================")
-	fmt.Printf("MCP Gateway: %v (Architecture: %v)\n", res["gateway_version"], res["architecture"])
-	fmt.Printf("Status:      %s\n", func() string {
-		if resp.OK {
-			return "ONLINE"
-		}
-		return "OFFLINE"
-	}())
-	fmt.Printf("Writes:      %s\n", func() string {
-		if w, _ := res["writes_enabled"].(bool); w {
-			return "ENABLED"
-		}
-		return "DISABLED"
-	}())
-	fmt.Printf("Shell:       %s\n", func() string {
-		if s, _ := res["shell_enabled"].(bool); s {
-			return "ENABLED"
-		}
-		return "DISABLED"
-	}())
-	fmt.Printf("Targets:     %v configured\n", res["configured_targets"])
+	fmt.Printf("MCP Gateway: %s (Architecture: %s)\n", buildinfo.GatewayVersion, runtime.GOARCH)
+	fmt.Printf("Registry:    integrity=%s schema=%d\n", info.Integrity, info.SchemaVersion)
+	if info.SchemaVersion != registry.SchemaVersion {
+		fmt.Printf("Runtime:     REQUIRES SCHEMA %d\n", registry.SchemaVersion)
+		fmt.Println("==================================================")
+		fmt.Fprintf(os.Stderr, "[ERROR] Registry schema %d is not current; run explicit migration during a coordinated lifecycle operation.\n", info.SchemaVersion)
+		return 1
+	}
+
+	store, err := registry.OpenReadOnlyStore(ctx, dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Could not open current Registry read-only: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	writes, err := store.GetSetting(ctx, "writes_enabled", "false")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Could not read writes setting: %v\n", err)
+		return 1
+	}
+	shell, err := store.GetSetting(ctx, "shell_enabled", "false")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Could not read shell setting: %v\n", err)
+		return 1
+	}
+	targets, err := store.ListTargets(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Could not enumerate Targets: %v\n", err)
+		return 1
+	}
+
+	fmt.Println("Runtime:     Registry contract compatible")
+	fmt.Printf("Writes:      %s\n", strings.ToUpper(writes))
+	fmt.Printf("Shell:       %s\n", strings.ToUpper(shell))
+	fmt.Printf("Targets:     %d configured\n", len(targets))
 	fmt.Println("==================================================")
+	return 0
+}
+
+func cmdMigrate(args []string) int {
+	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	dbFlag := fs.String("db", "", "Path to SQLite database")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	dbPath := resolveDBPath(*dbFlag)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if active := activeGatewayServices(); len(active) > 0 {
+		fmt.Fprintf(os.Stderr, "[ERROR] Refusing migration while database users are active: %s\n", strings.Join(active, ", "))
+		fmt.Fprintln(os.Stderr, "Stop Admin/MCP/maintenance database users first, then retry migration.")
+		return 1
+	}
+
+	before := 0
+	if _, err := os.Stat(dbPath); err == nil {
+		info, err := sqliteutil.Inspect(ctx, dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Could not inspect Registry before migration: %v\n", err)
+			return 1
+		}
+		if info.Integrity != "ok" {
+			fmt.Fprintf(os.Stderr, "[ERROR] Refusing migration because Registry integrity is %s\n", info.Integrity)
+			return 1
+		}
+		before = info.SchemaVersion
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "[ERROR] Could not inspect Registry path: %v\n", err)
+		return 1
+	}
+
+	if err := registry.MigratePath(ctx, dbPath); err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Registry migration failed: %v\n", err)
+		return 1
+	}
+	after, err := sqliteutil.Inspect(ctx, dbPath)
+	if err != nil || after.Integrity != "ok" || after.SchemaVersion != registry.SchemaVersion {
+		fmt.Fprintf(os.Stderr, "[ERROR] Post-migration verification failed: integrity=%s schema=%d err=%v\n", after.Integrity, after.SchemaVersion, err)
+		return 1
+	}
+	fmt.Printf("[OK] Registry migration verified: schema %d -> %d, integrity=%s\n", before, after.SchemaVersion, after.Integrity)
 	return 0
 }
 
@@ -222,7 +279,7 @@ func cmdDoctor(args []string) int {
 		overall, _ = res["overall"].(string)
 	}
 	if overall == "" {
-		overall = "HEALTHY"
+		overall = "ERROR"
 	}
 	color := "\033[92m"
 	if overall == "WARNING" || overall == "DEGRADED" {
@@ -330,7 +387,7 @@ func activeGatewayServices() []string {
 		return nil
 	}
 	var active []string
-	for _, svc := range []string{"mcp-gateway-admin.service", "mcp-gateway-mcp.service"} {
+	for _, svc := range []string{"mcp-gateway-admin.service", "mcp-gateway-mcp.service", "mcp-gateway-maintenance.service", "mcp-gateway-maintenance.timer"} {
 		if err := exec.Command("systemctl", "is-active", "--quiet", svc).Run(); err == nil {
 			active = append(active, svc)
 		}
@@ -415,58 +472,21 @@ func cmdRestore(args []string) int {
 		return 1
 	}
 
-	store, err := registry.OpenStore(ctx, dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Restored database migration/validation failed: %v\n", err)
-		return 1
-	}
-	if err := store.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Closing validated Registry failed: %v\n", err)
-		return 1
-	}
-
 	restoredInfo, err := sqliteutil.Inspect(ctx, dbPath)
-	if err != nil || restoredInfo.Integrity != "ok" || restoredInfo.SchemaVersion != registry.SchemaVersion {
-		fmt.Fprintf(os.Stderr, "[ERROR] Post-restore verification failed: integrity=%s schema=%d err=%v\n", restoredInfo.Integrity, restoredInfo.SchemaVersion, err)
+	if err != nil || restoredInfo.Integrity != "ok" || restoredInfo.SchemaVersion != sourceInfo.SchemaVersion {
+		fmt.Fprintf(os.Stderr, "[ERROR] Post-restore verification failed: integrity=%s schema=%d expected_schema=%d err=%v\n", restoredInfo.Integrity, restoredInfo.SchemaVersion, sourceInfo.SchemaVersion, err)
 		return 1
 	}
-	fmt.Printf("[OK] Restore verified: schema=%d sha256=%s\n", restoredInfo.SchemaVersion, restoredInfo.SHA256)
-	return cmdDoctor([]string{"-db", dbPath})
-}
-
-func cmdRepair(args []string) int {
-	fmt.Println("Executing safe repair actions...")
-	fs := flag.NewFlagSet("repair", flag.ContinueOnError)
-	dbFlag := fs.String("db", "", "Path to SQLite database")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	fmt.Printf("[OK] Restore verified without migration: schema=%d sha256=%s\n", restoredInfo.SchemaVersion, restoredInfo.SHA256)
+	if restoredInfo.SchemaVersion != registry.SchemaVersion {
+		fmt.Printf("[INFO] Restored schema %d is preserved exactly; run explicit migration only when activating a runtime that requires schema %d.\n", restoredInfo.SchemaVersion, registry.SchemaVersion)
 	}
-
-	dbPath := resolveDBPath(*dbFlag)
-	_, c, err := initStoreAndCore(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Could not initialize gateway core: %v\n", err)
-		return 1
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	resp := c.Invoke(ctx, core.Invocation{ClientID: "local"}, "gateway_maintenance", map[string]any{})
-	if ok, _ := resp["ok"].(bool); ok {
-		fmt.Println("- Database VACUUM and schema repair completed.")
-	} else {
-		fmt.Fprintf(os.Stderr, "- Database repair action reported: %v\n", resp["error"])
-	}
-
-	fmt.Println("\nRe-evaluating system health:")
-	return cmdDoctor([]string{"-db", dbPath})
+	return 0
 }
 
 func cmdSetup(args []string) int {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	adminUser := fs.String("admin-user", "admin", "Admin username to configure")
-	skipPassword := fs.Bool("skip-password", false, "Skip Admin password bootstrap")
 	passwordStdin := fs.Bool("password-stdin", false, "Read password from stdin")
 	dbFlag := fs.String("db", "", "Path to SQLite database")
 	if err := fs.Parse(args); err != nil {
@@ -479,16 +499,21 @@ func cmdSetup(args []string) int {
 	fmt.Printf("Contract: Gateway v%s, MCP Protocol %s (Go-Only)\n", buildinfo.GatewayVersion, buildinfo.MCPProtocol)
 
 	dbPath := resolveDBPath(*dbFlag)
+	ctx := context.Background()
+
 	store, _, err := initStoreAndCore(dbPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Failed to open registry: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[ERROR] Setup requires a current Registry; run 'mcp-gateway migrate -db %s' first: %v\n", dbPath, err)
 		return 1
 	}
 
-	ctx := context.Background()
-	existing, _ := store.GetAdminUser(ctx, *adminUser)
+	existing, err := store.GetAdminUser(ctx, *adminUser)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to inspect Admin user: %v\n", err)
+		return 1
+	}
 
-	if !*skipPassword {
+	{
 		shouldSet := *passwordStdin || existing == nil
 		if shouldSet {
 			var password string
@@ -535,6 +560,22 @@ func cmdSetup(args []string) int {
 		} else {
 			fmt.Printf("[OK] Admin user '%s' is already configured; password left unchanged.\n", *adminUser)
 		}
+	}
+
+	admins, err := store.ListAdminUsers(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to verify Admin users: %v\n", err)
+		return 1
+	}
+	enabledAdmins := 0
+	for _, user := range admins {
+		if user.Enabled {
+			enabledAdmins++
+		}
+	}
+	if enabledAdmins == 0 {
+		fmt.Fprintln(os.Stderr, "[ERROR] Setup is incomplete: no enabled Admin user exists.")
+		return 1
 	}
 
 	fmt.Println("\nRunning Doctor...")
@@ -739,12 +780,12 @@ Usage:
   mcp-gateway <command> [options]
 
 Commands:
-  status         Show gateway status summary
+  status         Inspect Registry/runtime compatibility without changing schema
+  migrate        Explicitly create/migrate the Registry to the current schema
   doctor         Run comprehensive system diagnostics
   maintenance    Run safe automated maintenance (backup, rotation, integrity)
   backup [path]  Create an online database backup
-  restore <file> Restore database from a backup file with integrity verification
-  repair         Perform database vacuum and integrity repair
+  restore <file> Restore a database backup exactly, without schema migration
   setup          Configure initial Admin user password and verify system health
   benchmark      Run in-process Core performance and latency benchmarks
   serve-mcp      Start the MCP Protocol adapter (Streamable HTTP or stdio)

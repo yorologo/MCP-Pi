@@ -58,13 +58,13 @@ Runtime code is root-owned. Only persistent data, local config, backups and SSH 
 
 install.sh is the user install/reinstall/rollback entrypoint.
 
-scripts/deploy-pi.sh is the maintainer exact-commit promotion path and must be launched through scripts/run-resumable.sh unless explicit break-glass is used. It must build the same canonical release bundle, validate it before activation and preserve rollback state.
+scripts/deploy-pi.sh is the maintainer exact-commit promotion path and must be launched through scripts/run-resumable.sh unless explicit break-glass is used. It builds and validates the canonical release bundle, then delegates activation and rollback to that bundle's install.sh. Do not maintain a second deployment lifecycle engine.
 
 Do not deploy production merely to make it match source or documentation.
 
 ## Registry lifecycle
 
-Schema version is 5. Fresh install creates v5. Direct Go migration supports v4 to v5 and current v5. Do not claim support for older schemas unless migrations are implemented and tested.
+Schema version is 5. Runtime Open is non-migrating and requires the current schema. Fresh install and coordinated updates use the explicit Go migrate command; setup requires an already-current Registry and never migrates it. Direct migration supports v4 to v5 and current v5. Restore preserves the backup schema exactly. Do not claim support for older schemas unless migrations are implemented and tested.
 
 Use the Go Online Backup/Restore implementation. Do not copy a live SQLite database as an ordinary file.
 
@@ -106,7 +106,6 @@ At minimum before a candidate commit:
     sh -n install.sh
     bash -n scripts/build-release-package.sh
     bash -n scripts/deploy-pi.sh
-    bash -n scripts/backup-appliance.sh
     git diff --check
 
 Also cross-build Linux ARMv6 before promotion. The canonical release package must contain no legacy runtime payload.

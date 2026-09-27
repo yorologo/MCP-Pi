@@ -19,6 +19,8 @@ func main() {
 		switch subcmd {
 		case "status":
 			os.Exit(cmdStatus(os.Args[2:]))
+		case "migrate":
+			os.Exit(cmdMigrate(os.Args[2:]))
 		case "doctor":
 			os.Exit(cmdDoctor(os.Args[2:]))
 		case "maintenance":
@@ -27,8 +29,6 @@ func main() {
 			os.Exit(cmdBackup(os.Args[2:]))
 		case "restore":
 			os.Exit(cmdRestore(os.Args[2:]))
-		case "repair":
-			os.Exit(cmdRepair(os.Args[2:]))
 		case "setup":
 			os.Exit(cmdSetup(os.Args[2:]))
 		case "benchmark":

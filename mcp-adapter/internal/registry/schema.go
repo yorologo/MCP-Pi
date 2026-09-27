@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -148,18 +149,65 @@ var defaultSettings = [][2]string{
 	{"admin_timezone", "UTC"},
 }
 
-// Open opens the MCP-Pi registry with conservative SQLite settings suitable for
-// the constrained appliance: foreign keys enabled, a bounded busy timeout, and
-// a single database/sql connection. It intentionally does not change
-// journal_mode or synchronous.
+// Open opens an existing Registry for normal runtime use. It is deliberately
+// non-migrating: schema changes must happen through MigratePath while the
+// lifecycle controller has stopped database users and created a rollback backup.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
+	return openCurrent(ctx, path, "rw")
+}
+
+// OpenReadOnly opens an existing current-schema Registry using SQLite mode=ro.
+// SQLite itself enforces the read-only boundary.
+func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
+	return openCurrent(ctx, path, "ro")
+}
+
+func openCurrent(ctx context.Context, path, mode string) (*sql.DB, error) {
+	db, err := openSQLite(ctx, path, mode, false)
+	if err != nil {
+		return nil, err
+	}
+	version, err := Version(ctx, db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if version != SchemaVersion {
+		db.Close()
+		return nil, fmt.Errorf("unsupported database schema version: %d (runtime requires %d; run explicit migration)", version, SchemaVersion)
+	}
+	if err := checkForeignKeysConnDB(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+// MigratePath is the explicit schema-creation/migration boundary. Callers are
+// responsible for lifecycle coordination (backup and stopped database users).
+func MigratePath(ctx context.Context, path string) error {
+	db, err := openSQLite(ctx, path, "rwc", true)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return Migrate(ctx, db)
+}
+
+func openSQLite(ctx context.Context, path, mode string, createDir bool) (*sql.DB, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve registry path: %w", err)
 	}
+	if createDir {
+		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+			return nil, fmt.Errorf("create registry directory: %w", err)
+		}
+	}
 
 	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
 	q := u.Query()
+	q.Set("mode", mode)
 	q.Set("_foreign_keys", "on")
 	q.Set("_busy_timeout", "5000")
 	u.RawQuery = q.Encode()
@@ -170,14 +218,9 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ping registry: %w", err)
-	}
-	if err := Migrate(ctx, db); err != nil {
-		db.Close()
-		return nil, err
 	}
 	return db, nil
 }
@@ -357,6 +400,10 @@ func checkForeignKeys(ctx context.Context, q rowQueryer) error {
 
 func checkForeignKeysConn(ctx context.Context, conn *sql.Conn) error {
 	return checkForeignKeys(ctx, conn)
+}
+
+func checkForeignKeysConnDB(ctx context.Context, db *sql.DB) error {
+	return checkForeignKeys(ctx, db)
 }
 
 // IsUnsupportedVersion reports whether err represents a deliberate refusal to

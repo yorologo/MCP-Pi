@@ -50,8 +50,8 @@ git -C "$ROOT" archive "$SHA" config | tar -xf - -C "$PKG_ROOT"
 
 mkdir -p "$PKG_ROOT/docs"
 for doc in \
-    installation.md getting-started.md configuration.md operations.md recovery.md \
-    security.md troubleshooting.md update-rollback.md admin-console.md architecture.md; do
+    installation.md configuration.md operations.md recovery.md \
+    security.md troubleshooting.md admin-console.md architecture.md; do
     if git -C "$ROOT" cat-file -e "$SHA:docs/$doc" 2>/dev/null; then
         git -C "$ROOT" show "$SHA:docs/$doc" > "$PKG_ROOT/docs/$doc"
     fi

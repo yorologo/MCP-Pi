@@ -92,7 +92,11 @@ func (f *executionFakeRemote) WriteFileAtomic(_ context.Context, _ registry.Targ
 func seededExecutionCore(t *testing.T) (*Core, *executionFakeRemote, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := registry.Open(ctx, filepath.Join(t.TempDir(), "registry.db"))
+	dbPath := filepath.Join(t.TempDir(), "registry.db")
+	if err := registry.MigratePath(ctx, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	db, err := registry.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

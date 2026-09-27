@@ -135,9 +135,12 @@ func rawV4(t *testing.T, invalidProjectScope bool) string {
 	return path
 }
 
-func TestOpenCreatesSchemaV5WithConservativeSettings(t *testing.T) {
+func TestMigratePathCreatesSchemaV5WithConservativeSettings(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "new.db")
+	if err := MigratePath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
 	db, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -183,6 +186,9 @@ func TestOpenCreatesSchemaV5WithConservativeSettings(t *testing.T) {
 func TestMigrateV4ToV5PreservesRowsAndConvertsWildcardScopes(t *testing.T) {
 	ctx := context.Background()
 	path := rawV4(t, false)
+	if err := MigratePath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
 
 	db, err := Open(ctx, path)
 	if err != nil {
@@ -309,6 +315,30 @@ func TestMigrateV4FailsClosedAndRollsBackInvalidWildcardProjectScope(t *testing.
 	}
 	if grantsTable != 1 || renamedTable != 0 {
 		t.Fatalf("rollback incomplete: grants=%d grants_v4=%d", grantsTable, renamedTable)
+	}
+}
+
+func TestOpenRefusesSupportedButOutdatedSchemaWithoutMigrating(t *testing.T) {
+	path := rawV4(t, false)
+	db, err := Open(context.Background(), path)
+	if db != nil {
+		db.Close()
+	}
+	if err == nil || !IsUnsupportedVersion(err) {
+		t.Fatalf("Open error=%v want explicit-migration failure", err)
+	}
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var version int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 4 {
+		t.Fatalf("non-migrating Open changed schema to %d want 4", version)
 	}
 }
 

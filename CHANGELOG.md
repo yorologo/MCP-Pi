@@ -14,15 +14,25 @@ All notable user-visible changes are documented here. Historical release details
 - Nested numeric values rendered by the Admin Console preserve integer semantics instead of becoming `.000000` floats.
 - Maintenance & Diagnostics now consumes real Doctor/build metadata, invokes the existing maintenance contract correctly, and no longer exposes a non-existent web rollback path.
 - Dashboard wording distinguishes enabled configuration from reachability and uses MCP `/ready` rather than a raw TCP listener check.
+- Registry `status` is non-migrating and refuses incompatible schemas instead of changing them as a side effect.
+- Registry `restore` preserves the backup schema exactly; migration is now a distinct explicit lifecycle action.
+- Setup no longer has a successful path that can leave the appliance without an enabled Admin user.
+- Doctor no longer turns missing status into HEALTHY and now checks deployed systemd services plus MCP readiness when running on the appliance.
+- Maintenance fails closed when the backup directory cannot be enumerated.
 
 ### Added
 - Admin Console display time zone setting using IANA identifiers. Audit storage remains UTC; Activity timestamps and date filters are converted at the presentation boundary.
-- Focused regression coverage for effective task privilege, Activity LIVE, time-zone conversion, result filtering, numeric presentation and Maintenance contracts.
+- Explicit `mcp-gateway migrate` command for fresh Registry creation and supported schema migration.
+- Focused regression coverage for privilege boundaries, Activity LIVE/time-zone/filtering, numeric presentation, exact-schema restore and non-migrating status.
+- Release-bundle installation verifies `SHA256SUMS` and checks candidate binary metadata against manifest/compatibility contracts before mutation.
 
 ### Changed
 - Admin tables prioritize display names while retaining stable Target/Project/Client keys as secondary operational metadata; internal Grant IDs are no longer a primary table column.
-- Current recovery documentation distinguishes release-bundle Registry backup/restore from the maintainer-only source-checkout appliance backup helper.
-- Removed the unused backup-manifest example that duplicated metadata generated directly by the maintainer backup helper and was otherwise shipped without a consumer.
+- `install.sh` is now the single activation/update/rollback engine; exact-commit deployment delegates lifecycle mutation to the candidate installer and retains only Git/provenance/transport/acceptance responsibilities.
+- Admin/MCP systemd units use `Type=exec`; postboot and maintenance log through journald; tunnel startup waits for MCP `/ready`.
+- Removed the redundant standalone ARMv6 build helper and unsupported appliance-wide secret backup helper. Canonical release build plus Registry backup/restore remain.
+- Removed the misleading `repair` command; `maintenance` is the single safe maintenance operation.
+- Consolidated current documentation around README + installation/configuration/operations/recovery/troubleshooting; removed duplicate getting-started/update-rollback/lifecycle/adapter/diagram pages and archived deployment-specific client/tunnel/roadmap snapshots.
 - Integration work is documented on `develop`; the retired `go-only-migration` branch is no longer part of active CI.
 
 ### Compatibility
@@ -147,7 +157,7 @@ All notable user-visible changes are documented here. Historical release details
 ### Changed
 - Project/repository branding, canonical GitHub URL and release-package filename prefix are standardized as `MCP-Pi`.
 
-- Exact-commit deployment now exits safely as `ALREADY_DEPLOYED` when the same verified SHA is already healthy; `MCP_DEPLOY_FORCE=1` is the explicit repair override.
+- Exact-commit deployment now exits safely as `ALREADY_DEPLOYED` when the same verified SHA is already healthy; `MCP_DEPLOY_FORCE=1` is the explicit redeploy override.
 
 - structured filesystem mutations share remote canonical destination resolution and reject symlink-parent escapes;
 - critical mutations require audit availability before execution;

@@ -1,49 +1,34 @@
 # Compatibility contract
 
-## Current candidate
+Machine-readable authority is:
 
-| Contract | Value |
-| --- | --- |
-| Gateway | 1.5.0-rc.2 |
-| Runtime | Go-only |
-| Core API | 1 |
-| Bridge API | 1 |
-| Tool catalog | 4 / 21 tools |
-| Registry schema | 5 |
-| Fresh schema | 5 |
-| Direct upgrade input | 4 or 5 |
-| MCP protocol | 2026-07-28 |
-| MCP Go SDK | 1.7.0 |
-| Build toolchain contract | Go 1.27.1 |
+- `manifest.json` — release/package contract;
+- `compatibility.json` — runtime/API/catalog/schema/protocol compatibility;
+- `mcp-gateway version --json` — exact binary contract;
+- Registry schema constants/migrations — database implementation.
 
-compatibility.json and manifest.json are checked against the Go build metadata and Registry constants by Go tests.
+Project contract tests and the installer require these authorities to agree. This document describes semantics rather than maintaining another copy of every numeric field.
 
-## Fail-closed compatibility
+## Registry compatibility
 
-The server is ready only when the in-process Go Core and Registry initialize and their API/catalog/protocol contract matches the adapter build. Missing or incompatible state does not route through a fallback runtime.
+Normal runtime open is non-migrating and requires the runtime's current schema.
 
-## Tool catalog
+The explicit `migrate` command is the only supported schema transformation path. The current candidate supports fresh creation and the directly tested previous-schema upgrade encoded by Registry migrations.
 
-The canonical Core catalog contains 21 tools. Client-visible tools/list can contain fewer because grants/policy filter the catalog.
+`status`, service startup, Doctor and `restore` never migrate as a side effect. Restore preserves the backup schema exactly.
 
-No-argument administrative tools reject undeclared properties. gateway_doctor declares check_targets and verbose explicitly.
+Newer-than-runtime or otherwise unsupported schemas fail closed.
 
-## Registry schema
+## Tool/API/protocol compatibility
 
-Schema 5 is canonical. A fresh Registry is created directly at v5. The current Go migration path supports v4 to v5 and already-current v5.
+The Core catalog is canonical; client-visible `tools/list` can contain fewer tools because policy filters it.
 
-Older schemas are not claimed as directly supported by this candidate. They must first be upgraded using a release that explicitly supports them. Newer-than-runtime schemas fail closed.
+Install preflight compares the candidate binary against `manifest.json` and `compatibility.json` before mutation. Release packaging/CI additionally checks the same source contract.
 
-Before schema-changing install/deploy work, MCP-Pi creates a verified SQLite online backup.
+## Architecture compatibility
 
-## Architecture declaration versus appliance validation
-
-Metadata declares supported artifact architectures, but real release acceptance still requires the reference ARMv6 appliance. A successful cross-build does not prove production readiness.
-
-## Protocol security
-
-Authorization remains independent of transport. Authentication, client identity, grants, Target/Project scope, kill switches and Target privilege policy are evaluated in the Go Core/Registry path.
+A declared/cross-built architecture is not production evidence. The reference ARMv6 appliance must still pass real service/readiness/Doctor acceptance.
 
 ## Release identity
 
-Do not reuse an immutable published version number for changed software. 1.5.0-rc.2 is a prerelease candidate until later validation justifies promotion.
+Published tags/releases are immutable identities. Changed software receives a new candidate/release identifier rather than reusing an already published version.

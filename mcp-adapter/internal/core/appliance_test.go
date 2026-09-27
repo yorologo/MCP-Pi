@@ -19,6 +19,9 @@ func seededApplianceCore(t *testing.T) (*Core, context.Context, string, string) 
 	dbPath := filepath.Join(tmpDir, "gateway.db")
 	backupDir := filepath.Join(tmpDir, "backups")
 
+	if err := registry.MigratePath(ctx, dbPath); err != nil {
+		t.Fatal(err)
+	}
 	db, err := registry.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)

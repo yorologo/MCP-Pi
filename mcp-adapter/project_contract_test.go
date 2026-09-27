@@ -57,7 +57,11 @@ func TestProjectMetadataMatchesGoContract(t *testing.T) {
 
 func TestFreshRegistrySafeDefaults(t *testing.T) {
 	ctx := context.Background()
-	store, err := registry.OpenStore(ctx, filepath.Join(t.TempDir(), "gateway.db"))
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	if err := registry.MigratePath(ctx, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	store, err := registry.OpenStore(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +90,9 @@ func TestCurrentDocumentationDescribesGoOnlyCandidate(t *testing.T) {
 		"AGENTS.md",
 		"CONTRIBUTING.md",
 		"docs/README.md",
-		"docs/getting-started.md",
 		"docs/installation.md",
 		"docs/configuration.md",
 		"docs/operations.md",
-		"docs/update-rollback.md",
 		"docs/recovery.md",
 		"docs/troubleshooting.md",
 		"docs/architecture.md",
@@ -98,12 +100,10 @@ func TestCurrentDocumentationDescribesGoOnlyCandidate(t *testing.T) {
 		"docs/admin-console.md",
 		"docs/project-state.md",
 		"docs/reference/compatibility.md",
-		"docs/reference/mcp-adapter.md",
-		"docs/reference/lifecycle.md",
 		"docs/reference/deployment.md",
+		"docs/reference/client-grants.md",
 		"docs/reference/controlled-write.md",
 		"docs/reference/performance.md",
-		"docs/reference/diagrams.md",
 		"docs/reference/chatgpt-gate.md",
 	}
 	forbidden := []string{
@@ -116,6 +116,10 @@ func TestCurrentDocumentationDescribesGoOnlyCandidate(t *testing.T) {
 		"Flask Admin",
 		"Flask session",
 		"go-only-migration",
+		"backup-appliance.sh",
+		"build-armv6.sh",
+		"mcp-gateway repair",
+		"--skip-password",
 	}
 	for _, rel := range current {
 		data, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(rel)))
@@ -129,7 +133,7 @@ func TestCurrentDocumentationDescribesGoOnlyCandidate(t *testing.T) {
 			}
 		}
 	}
-	for _, rel := range []string{"README.md", "docs/installation.md", "docs/architecture.md", "docs/project-state.md"} {
+	for _, rel := range []string{"README.md", "docs/installation.md", "docs/project-state.md"} {
 		data, _ := os.ReadFile(filepath.Join("..", filepath.FromSlash(rel)))
 		if !strings.Contains(string(data), buildinfo.GatewayVersion) {
 			t.Errorf("%s does not mention candidate %s", rel, buildinfo.GatewayVersion)
@@ -191,33 +195,49 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	if activation < 0 {
 		t.Fatal("installer activation/migration boundary is missing")
 	}
-	stopRel := strings.Index(installer[activation:], "systemctl stop mcp-gateway-tunnel mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin")
-	migrateRel := strings.Index(installer[activation:], "status -db \"$DB_PATH\"")
+	stopRel := strings.Index(installer[activation:], "systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin")
+	migrateRel := strings.Index(installer[activation:], "migrate -db \"$DB_PATH\"")
 	if stopRel < 0 || migrateRel < 0 || stopRel >= migrateRel {
-		t.Fatal("installer must stop database users before opening/migrating the live Registry")
+		t.Fatal("installer must stop database users before explicit Registry migration")
 	}
-	if strings.Contains(installer[:activation], "status -db \"$DB_PATH\"") {
+	if strings.Contains(installer[:activation], "migrate -db \"$DB_PATH\"") {
 		t.Fatal("installer must not migrate the live Registry before the activation stop boundary")
+	}
+	if !strings.Contains(installer, "verify_source_integrity") || !strings.Contains(installer, "sha256sum -c SHA256SUMS") {
+		t.Fatal("installer must verify release-bundle checksums before mutation")
 	}
 
 	deployer := readText("scripts/deploy-pi.sh")
-	if strings.Contains(deployer, "status -db \"$registry_backup\"") {
-		t.Fatal("deployment must not migrate the rollback Registry backup during validation")
+	for _, forbidden := range []string{
+		"backup -db \"$db\"",
+		"restore -db \"$db\"",
+		"migrate -db \"$db\"",
+		"sudo mv \"$candidate\" \"$current\"",
+	} {
+		if strings.Contains(deployer, forbidden) {
+			t.Fatalf("deployment must delegate lifecycle mutation to install.sh; found %q", forbidden)
+		}
 	}
-	if !strings.Contains(deployer, "SQLite integrity: ok; schema: (4|5);") {
-		t.Fatal("deployment must validate rollback backup integrity/schema without migration")
+	if !strings.Contains(deployer, "sudo \"$candidate/install.sh\" --check") {
+		t.Fatal("deployment must validate the canonical candidate installer")
+	}
+	if !strings.Contains(deployer, "sudo \"$candidate/install.sh\" --no-setup") {
+		t.Fatal("deployment must use install.sh as the single activation/update engine")
+	}
+	if !strings.Contains(deployer, "sudo '$REMOTE_TARGET_DIR/install.sh' --rollback") {
+		t.Fatal("deployment rollback must reuse the installed canonical installer")
 	}
 
 	candidateValidation := []string{
-		`sudo sha256sum "$candidate/bin/mcp-gateway-adapter"`,
-		`sudo -u mcp-gateway "$candidate/bin/mcp-gateway-adapter" version --json`,
-		`sudo "$candidate/install.sh" --check`,
-		`sudo find "$candidate"`,
-		`sudo systemd-analyze verify "$candidate/config/systemd/$unit"`,
+		"sha256sum \"$upload/release.tar.gz\"",
+		"sudo sha256sum \"$candidate/bin/mcp-gateway-adapter\"",
+		"sudo \"$candidate/install.sh\" --check",
+		"sudo find \"$candidate\"",
+		"sudo systemd-analyze verify \"$candidate/config/systemd/$unit\"",
 	}
 	for _, required := range candidateValidation {
 		if !strings.Contains(deployer, required) {
-			t.Errorf("root-owned deployment candidate validation missing %q", required)
+			t.Errorf("deployment candidate validation missing %q", required)
 		}
 	}
 }

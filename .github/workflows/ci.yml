@@ -103,10 +103,9 @@ jobs:
           test -x "$root/bin/mcp-gateway"
           test -x "$root/bin/mcp-gateway-client-stdio"
 
-          # Distributed documentation must not instruct release-bundle users to run
-          # source-only maintainer helpers.
-          if grep -R -F 'sudo scripts/backup-appliance.sh' "$root/docs"; then
-            echo "Release documentation references a source-only backup command" >&2
+          # Distributed documentation must not reference retired lifecycle helpers.
+          if grep -R -E 'backup-appliance[.]sh|build-armv6[.]sh|mcp-gateway repair|--skip-password' "$root/docs"; then
+            echo "Release documentation references a retired lifecycle path" >&2
             exit 1
           fi
 

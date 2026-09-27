@@ -55,7 +55,11 @@ func loadFrozenPolicyCases(t *testing.T) frozenPolicyCases {
 func policyStore(t *testing.T) (*registry.Store, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := registry.Open(ctx, filepath.Join(t.TempDir(), "policy.db"))
+	dbPath := filepath.Join(t.TempDir(), "policy.db")
+	if err := registry.MigratePath(ctx, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	db, err := registry.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

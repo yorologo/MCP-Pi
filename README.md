@@ -1,46 +1,57 @@
 # MCP-Pi Gateway
 
-MCP-Pi is a small private MCP security gateway for delegating controlled work to machines on a trusted network. It does not run an LLM. It authenticates clients, applies policy, audits decisions and sends bounded operations to configured Targets over pinned SSH.
+MCP-Pi is a small private MCP security gateway for delegating controlled work to authorized Targets. It does not run an LLM. One Go runtime authenticates clients, evaluates policy, audits decisions and performs bounded operations over pinned SSH.
 
-## Current baseline
-
-| Contract | Candidate source |
-| --- | --- |
-| Gateway | 1.5.0-rc.2 |
-| Runtime | Go-only |
-| Core API | 1 |
-| Bridge API | 1 |
-| Tool catalog | v4 / 21 tools |
-| Registry schema | 5 |
-| MCP protocol | 2026-07-28 |
-
-The source candidate is 1.5.0-rc.2. Production remains a separate authority until an exact candidate commit is deployed and accepted. Historical immutable releases remain under docs/releases and Git tags.
+The current source candidate is **1.5.0-rc.2**. Production is a separate authority until an exact commit is deployed and accepted. Machine-readable runtime/API/schema/protocol metadata lives in `manifest.json`, `compatibility.json` and `mcp-gateway version --json`.
 
 ## Security model
 
-MCP-Pi follows KISS, Reuse First, Least Privilege, Deny by Default, Fail Closed and Evidence Before PASS.
+MCP-Pi follows **KISS + Reuse First + Least Privilege + Deny by Default + Fail Closed + Evidence Before PASS**.
 
-- Admin and MCP use the same Go Core and SQLite Registry.
-- Fresh Registries enable the gateway but disable structured writes and trusted shell.
-- Clients receive explicit grants scoped by Target, Project and capability.
-- SSH host keys are pinned; endpoint changes do not redefine Target identity.
-- Structured filesystem tools are preferred over shell.
-- Trusted shell and Target administrative privilege require separate explicit authorization.
-- Runtime code is root-owned; mutable data/config belongs to the service account.
-- Admin binds to loopback by default.
-- Missing Core/Registry state never falls back to another runtime.
+- one Go Core and one SQLite Registry authority;
+- explicit client → Target → Project → capability grants;
+- pinned SSH host identity;
+- structured tools preferred over trusted shell;
+- Target administrative privilege is a separate authorization gate;
+- root-owned runtime with service-owned mutable state;
+- Admin and MCP bind locally by default;
+- no runtime fallback when Core/Registry state is unavailable.
 
-## Install
+## Quick start
 
-For the Raspberry Pi A+ use the release bundle with its prebuilt ARMv6 binary:
+For the reference Raspberry Pi appliance, an official release bundle is preferred because it already contains the ARMv6 binary.
 
     ./install.sh --check
     sudo ./install.sh
+
+The installer validates the bundle, creates/migrates the Registry explicitly, installs systemd units, starts Admin/MCP and runs Doctor. If interactive setup was skipped, configure the Admin user afterward:
+
     sudo -u mcp-gateway mcp-gateway setup
 
-No Python runtime is required on the appliance. A source checkout may build the Go binary only when Go is already installed; compilation belongs on a development host.
+Then verify:
 
-See [Getting started](docs/getting-started.md) and [Installation](docs/installation.md).
+    sudo -u mcp-gateway mcp-gateway status
+    sudo -u mcp-gateway mcp-gateway doctor
+
+`status` is non-mutating. Doctor is the appliance health check.
+
+Admin binds to loopback by default. Use an SSH port forward unless another trusted exposure is deliberately configured.
+
+A source checkout can use the same installer when a matching prebuilt gateway exists or Go is already installed. The appliance installer does not install a compiler.
+
+See [Installation](docs/installation.md) for the complete lifecycle and [Admin Console](docs/admin-console.md) for first configuration.
+
+## First configuration
+
+In Admin Console:
+
+1. add a Target and verify its pinned SSH identity;
+2. add a Project root;
+3. register the client that will use MCP-Pi;
+4. grant only the required capabilities;
+5. use **Check Effective Access** before enabling broader operations.
+
+Fresh Registry defaults keep structured writes and trusted shell disabled.
 
 ## Normal operation
 
@@ -48,64 +59,33 @@ See [Getting started](docs/getting-started.md) and [Installation](docs/installat
     sudo -u mcp-gateway mcp-gateway doctor
     sudo -u mcp-gateway mcp-gateway backup
     sudo -u mcp-gateway mcp-gateway maintenance
-    sudo -u mcp-gateway mcp-gateway version --json
 
-Fresh Registry defaults:
+systemd is the canonical start/stop/restart interface. Exact commands are in [Operations](docs/operations.md).
 
-    gateway_enabled = true
-    writes_enabled  = false
-    shell_enabled   = false
-
-## Update and rollback
-
-User update and maintainer promotion remain separate:
-
-    user install/update -> release bundle -> sudo ./install.sh
-    user rollback       -> installed install.sh --rollback
-    maintainer deploy   -> run-resumable.sh -> deploy-pi.sh <exact-sha>
-
-The deployment path builds the same Go-only bundle used for releases, creates an online SQLite backup, validates the candidate, activates it transactionally and preserves a rollback set. See [Update and rollback](docs/update-rollback.md).
+Updates use a new release bundle plus the same `install.sh`. Rollback uses the installed `install.sh --rollback`. Registry restore preserves the backup schema exactly; schema migration is a separate explicit operation.
 
 ## Architecture
 
-One Go executable contains MCP transport, Core, policy, Admin Console, Registry migrations, Doctor, backup/restore and maintenance. SQLite is accessed with modernc.org/sqlite. Remote work uses the existing OpenSSH transport and native POSIX/PowerShell capabilities according to the Target platform.
+    MCP client ---> Go MCP server ----+
+                                      |
+    Admin browser -> Go Admin --------+-> Go Core -> Policy/Registry -> SSH -> Target
+                                                     |
+                                                     +-> Audit
 
-See [Architecture](docs/architecture.md) and [Security](docs/security.md).
+There is no second backend or per-call bridge runtime. See [Architecture](docs/architecture.md) and [Security](docs/security.md).
 
-## Documentation map
+## Documentation
 
-| Need | Document |
+| Need | Canonical document |
 | --- | --- |
-| First installation | [docs/getting-started.md](docs/getting-started.md) |
-| Install details | [docs/installation.md](docs/installation.md) |
-| Runtime configuration | [docs/configuration.md](docs/configuration.md) |
-| Daily operations | [docs/operations.md](docs/operations.md) |
-| Update / rollback | [docs/update-rollback.md](docs/update-rollback.md) |
-| Backup / recovery | [docs/recovery.md](docs/recovery.md) |
+| Install / bootstrap / update / rollback | [docs/installation.md](docs/installation.md) |
+| Configuration | [docs/configuration.md](docs/configuration.md) |
+| Daily operation / maintenance / diagnostics | [docs/operations.md](docs/operations.md) |
+| Backup / restore / recovery | [docs/recovery.md](docs/recovery.md) |
 | Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Admin Console | [docs/admin-console.md](docs/admin-console.md) |
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | Security | [docs/security.md](docs/security.md) |
-| Version contract | [docs/reference/compatibility.md](docs/reference/compatibility.md) |
-| Maintainers | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Automation agents | [AGENTS.md](AGENTS.md) |
+Source checkouts also contain maintainer/automation references under `docs/README.md`, `CONTRIBUTING.md` and `AGENTS.md`; those are intentionally separate from release-bundle operator guidance.
 
-## Development
-
-Run heavy validation on a development host:
-
-    cd mcp-adapter
-    go test -count=1 ./...
-    go vet ./...
-    go mod tidy -diff
-    cd ..
-    scripts/verify-go-only.sh
-    node mcp-adapter/internal/admin/app_js_test.mjs
-    (cd tailwind && npm run build)
-    ./install.sh --check
-    git diff --check
-
-The ARMv6 release build and exact-commit deployment are maintainer operations. Do not treat a local or CI PASS as evidence that production is already running that commit.
-
-## Project status
-
-[docs/project-state.md](docs/project-state.md) defines the source/integration state and the evidence required before promotion. MCP-Pi intentionally avoids adding dependencies or abstractions without a concrete operational benefit.
+Historical release/implementation evidence is isolated under `docs/releases/` and `docs/archive/`.

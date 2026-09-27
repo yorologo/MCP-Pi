@@ -1,85 +1,102 @@
 # Architecture
 
-MCP-Pi 1.5.0-rc.2 is a Go-only security gateway. The reference appliance centralizes MCP transport, policy, audit, Admin and lifecycle logic in one executable; Targets perform the delegated work.
+MCP-Pi is a Go-only security gateway. MCP transport, Admin, policy, audit and lifecycle logic use one Core and one SQLite Registry.
 
-## Components
+## System boundary
 
-    AI/MCP client -> Go MCP server -> Go Core -> Policy/SQLite Registry -> SSH -> Target
-                          ^
-                          |
-                    Go Admin Console
+    MCP client ---> Go MCP server ----+
+                                      |
+    Admin browser -> Go Admin --------+-> Go Core -> Policy/Registry -> SSH -> Target
+                                                     |
+                                                     +-> Audit
 
-There is no subprocess bridge and no second canonical backend.
+OS integrations remain outside the process:
+
+    systemd -> service lifecycle / timer / postboot
+    logind + polkit -> controlled reboot
+    OpenSSH -> pinned Target transport
+
+There is no per-call bridge process or alternate Core.
 
 ## Responsibilities
 
 | Component | Responsibility |
 | --- | --- |
-| Go MCP server | stdio/HTTP MCP transport, authentication handoff, tool catalog |
-| Go Core | canonical tool behavior, limits, audit and orchestration |
+| MCP server | stdio/Streamable HTTP transport and bound client identity |
+| Go Core | canonical tool behavior, limits, policy orchestration and audit |
 | Policy | client/grant/Target/Project/capability decisions |
-| Registry | schema 5 settings, Targets, Projects, clients, grants, activity |
+| Registry | settings, Targets, Projects, clients, grants and activity |
 | Go Admin | human management of the same Registry/policy model |
 | SSH transport | strict-host-key remote execution and native Target operations |
-| systemd | service lifecycle, timer/postboot integration |
-| logind/polkit | narrowly authorized appliance reboot |
+| systemd | Admin/MCP services, maintenance timer, postboot and optional tunnel |
+| `install.sh` | canonical install/update/migrate/rollback lifecycle |
+| `deploy-pi.sh` | exact-commit promotion, transport, acceptance and provenance |
+
+## MCP transports and identity
+
+Stdio is used for forced-command/local integrations. Streamable HTTP is used by the appliance MCP service and optional secure tunnel.
+
+Client identity is bound before tool discovery/invocation. A forced SSH command can bind a registered client ID to a dedicated SSH key; HTTP authentication binds its configured client identity. Request arguments cannot replace that identity.
+
+`tools/list` is projected through the same authorization model used by execution, so a client may see fewer tools than the Core catalog.
 
 ## Request flow
 
-1. authenticate/bind client identity;
-2. resolve the tool and validate its schema;
+1. bind authenticated client identity;
+2. validate tool and argument schema;
 3. evaluate global and scoped policy;
-4. deny immediately when a required precondition fails;
+4. deny immediately when a precondition fails;
 5. execute the bounded local/remote operation;
-6. record audit evidence;
-7. return a structured result/error.
+6. persist required audit evidence;
+7. return the structured result/error.
 
-Missing Go Core or Registry state cannot route to a fallback implementation.
-
-## Tool families
-
-The catalog contains 21 tools covering read/introspection, structured filesystem mutations, allowlisted tasks/trusted shell and appliance administration.
-
-run_command is a trusted Target shell for explicitly authorized clients; Project scope supplies authorization and initial CWD, not a general filesystem sandbox.
+Missing Core/Registry state never falls back to another implementation.
 
 ## Target execution
 
-Unix-like Targets use native POSIX utilities through pinned SSH. Windows Targets use PowerShell. Target facts include platform/runtime/privilege evidence without requiring an additional language runtime.
+Unix-like Targets use native POSIX utilities through pinned SSH. Windows Targets use PowerShell. Target identity is the configured Target plus its pinned SSH host key; address and port are mutable endpoint data.
 
-Structured mutation safety is treated separately from general shell authorization; Project-root checks, symlink/reparse handling, optimistic hashes and atomic replace semantics must remain fail-closed.
+Structured filesystem mutations validate Project root, canonical path, symlink/reparse state, size/conflict rules and audit availability. They never silently degrade into trusted shell.
 
-## Privileged Target execution
+## Target privilege
 
-Privilege is a second policy gate:
-- normal operation authorization first;
-- explicit target_admin grant;
-- Target privilege policy;
-- approval/boot constraint when required;
-- verified native backend.
+Privilege is a second gate over otherwise authorized execution:
 
-Do not infer administrator capability from installed tooling alone.
+    normal execution authorization
+      + explicit target_admin
+      + Target privilege policy
+      + required approval/boot identity
+      + verified native backend
 
-## Identity versus endpoint
+`run_command` and allowlisted `run_task` share this effective-privilege gate.
 
-Target ID + pinned SSH host key establish identity. Address and port are mutable endpoints.
-
-## Runtime layout
+## Runtime and Registry lifecycle
 
     /home/mcp-gateway/mcp-gateway/               root-owned runtime
     /home/mcp-gateway/.local/share/mcp-gateway/ Registry/backups
     /home/mcp-gateway/.config/mcp-gateway/       private mutable config
-    /etc/systemd/system/                          installed units
 
-## Registry lifecycle
+Runtime Registry open is non-migrating and requires the current schema. Read-only inspection uses SQLite `mode=ro`.
 
-Schema 5 is canonical. Fresh install creates v5; the direct Go migration path supports v4 to v5 and v5. SQLite backup/restore uses the existing modernc.org/sqlite online API.
+Schema change is explicit:
+
+    stop DB users
+      -> verified backup
+      -> mcp-gateway migrate
+      -> non-mutating status
+      -> start services
+      -> Doctor
+
+Restore preserves the source schema exactly.
 
 ## Installation and deployment
 
-install.sh is the user lifecycle entrypoint. scripts/build-release-package.sh builds the immutable Go-only ARMv6 artifact. scripts/deploy-pi.sh promotes exactly that artifact and exact Git commit.
+`install.sh` is the single activation/update/rollback engine. The release builder creates the immutable ARMv6 bundle. `deploy-pi.sh` validates exact Git provenance, transfers the canonical bundle, delegates activation/rollback to its installer, performs production acceptance and records provenance.
+
+## Version contract
+
+Do not duplicate build/API/schema/protocol constants in architecture prose. Machine-readable authority is `manifest.json`, `compatibility.json` and `mcp-gateway version --json`. Source checkouts provide deeper compatibility semantics in `docs/reference/compatibility.md`.
 
 ## Resource model
 
-Heavy Go tests, frontend builds, vulnerability analysis and cross-compilation run off-appliance. The Raspberry Pi A+ runs the static gateway binary, SQLite and system services.
-
-Current performance evidence comes from mcp-gateway benchmark and must represent measurements from that execution; historical migration baselines are not printed as if they were current results.
+The reference appliance is constrained ARMv6 hardware. Tests, frontend builds, vulnerability analysis and cross-compilation belong on a development host; the appliance runs the static gateway binary, SQLite and system services.

@@ -126,6 +126,14 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 	return &Store{db: db, path: path}, nil
 }
 
+func OpenReadOnlyStore(ctx context.Context, path string) (*Store, error) {
+	db, err := OpenReadOnly(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{db: db, path: path}, nil
+}
+
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil

@@ -103,19 +103,84 @@ copy_adapter() {
     fail "no compatible Go binary is present; use an official release bundle or build on a development host"
 }
 
+json_string_file() {
+    file=$1
+    key=$2
+    sed -n "s/.*\"${key}\":[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" | head -n1
+}
+
+json_number_file() {
+    file=$1
+    key=$2
+    sed -n "s/.*\"${key}\":[[:space:]]*\([0-9][0-9]*\).*/\1/p" "$file" | head -n1
+}
+
+json_string_text() {
+    text=$1
+    key=$2
+    printf '%s\n' "$text" | sed -n "s/.*\"${key}\":[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
+}
+
+json_number_text() {
+    text=$1
+    key=$2
+    printf '%s\n' "$text" | sed -n "s/.*\"${key}\":[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n1
+}
+
+verify_source_integrity() {
+    if [ -f "${SOURCE_DIR}/SHA256SUMS" ]; then
+        command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify release bundles"
+        (cd "$SOURCE_DIR" && sha256sum -c SHA256SUMS) || fail "release bundle checksum verification failed"
+    elif [ ! -d "${SOURCE_DIR}/mcp-adapter" ]; then
+        fail "release bundle is missing SHA256SUMS"
+    fi
+}
 validate_adapter() {
     adapter=$1
     [ -x "$adapter" ] || fail "gateway binary is not executable: $adapter"
     version_json=$("$adapter" version --json 2>/dev/null) || fail "gateway binary cannot execute on this architecture"
-    printf '%s
-' "$version_json" | grep -q '"gateway_version"' || fail "version contract lacks gateway_version"
-    printf '%s
-' "$version_json" | grep -q '"registry_schema_version"' || fail "version contract lacks registry_schema_version"
+
+    bin_version=$(json_string_text "$version_json" gateway_version)
+    bin_core=$(json_number_text "$version_json" core_api_version)
+    bin_bridge=$(json_number_text "$version_json" bridge_api_version)
+    bin_tools=$(json_number_text "$version_json" tool_catalog_version)
+    bin_schema=$(json_number_text "$version_json" registry_schema_version)
+    bin_protocol=$(json_string_text "$version_json" mcp_protocol)
+
+    [ -n "$bin_version" ] && [ -n "$bin_core" ] && [ -n "$bin_bridge" ] &&
+        [ -n "$bin_tools" ] && [ -n "$bin_schema" ] && [ -n "$bin_protocol" ] ||
+        fail "gateway binary version contract is incomplete"
+
+    [ "$bin_version" = "$(json_string_file "${SOURCE_DIR}/manifest.json" version)" ] ||
+        fail "gateway binary version does not match manifest.json"
+    [ "$bin_version" = "$(json_string_file "${SOURCE_DIR}/compatibility.json" gateway_version)" ] ||
+        fail "gateway binary version does not match compatibility.json"
+    [ "$bin_core" = "$(json_number_file "${SOURCE_DIR}/manifest.json" core_api)" ] ||
+        fail "Core API does not match manifest.json"
+    [ "$bin_core" = "$(json_number_file "${SOURCE_DIR}/compatibility.json" core_api_version)" ] ||
+        fail "Core API does not match compatibility.json"
+    [ "$bin_bridge" = "$(json_number_file "${SOURCE_DIR}/manifest.json" bridge_api)" ] ||
+        fail "Bridge API does not match manifest.json"
+    [ "$bin_bridge" = "$(json_number_file "${SOURCE_DIR}/compatibility.json" bridge_api_version)" ] ||
+        fail "Bridge API does not match compatibility.json"
+    [ "$bin_tools" = "$(json_number_file "${SOURCE_DIR}/manifest.json" tool_catalog)" ] ||
+        fail "Tool catalog does not match manifest.json"
+    [ "$bin_tools" = "$(json_number_file "${SOURCE_DIR}/compatibility.json" tool_catalog_version)" ] ||
+        fail "Tool catalog does not match compatibility.json"
+    [ "$bin_schema" = "$(json_number_file "${SOURCE_DIR}/manifest.json" registry_schema)" ] ||
+        fail "Registry schema does not match manifest.json"
+    [ "$bin_schema" = "$(json_number_file "${SOURCE_DIR}/compatibility.json" registry_schema_version)" ] ||
+        fail "Registry schema does not match compatibility.json"
+    [ "$bin_protocol" = "$(json_string_file "${SOURCE_DIR}/manifest.json" mcp_protocol)" ] ||
+        fail "MCP protocol does not match manifest.json"
+    [ "$bin_protocol" = "$(json_string_file "${SOURCE_DIR}/compatibility.json" protocol)" ] ||
+        fail "MCP protocol does not match compatibility.json"
 }
 
 validate_source() {
     required_source
-    for cmd in grep mktemp rm cp chmod uname; do command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required"; done
+    for cmd in grep sed head mktemp rm cp chmod uname; do command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required"; done
+    verify_source_integrity
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/mcp-install-check.XXXXXX")
     trap 'rm -rf "$tmp"' 0 HUP INT TERM
     copy_adapter "$tmp/mcp-gateway-adapter"
@@ -215,6 +280,8 @@ restore_registry_for_rollback() {
 
 rollback_runtime() {
     echo "ROLLBACK: restoring previous installer-managed runtime..." >&2
+    systemctl stop mcp-gateway-maintenance.timer 2>/dev/null || true
+    systemctl stop mcp-gateway-maintenance.service 2>/dev/null || true
     systemctl stop mcp-gateway-tunnel 2>/dev/null || true
     systemctl stop mcp-gateway-postboot 2>/dev/null || true
     systemctl stop mcp-gateway-mcp 2>/dev/null || true
@@ -239,10 +306,11 @@ if [ "$MODE" = check ]; then
 fi
 
 [ "$(id -u)" = "0" ] || fail "install.sh must run as root"
-for cmd in systemctl useradd install cp mv rm mktemp touch curl od tr grep find; do command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required"; done
+for cmd in systemctl useradd install cp mv rm mktemp touch curl od tr grep sed head find; do command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required"; done
 if [ "$MODE" = rollback ]; then rollback_runtime; exit 0; fi
 
 required_source
+verify_source_integrity
 arch=$(uname -m)
 case "$arch" in armv6*|armv7*|aarch64|arm64|x86_64|amd64) ;; *) warn "architecture $arch is not in the verified compatibility set" ;; esac
 
@@ -266,16 +334,16 @@ install_exit() {
     trap - 0 HUP INT TERM
     if [ "$rc" -ne 0 ]; then
         if [ "$ACTIVATED" -eq 1 ] && [ -d "$PREVIOUS_DIR" ]; then
-            rollback_runtime || true
+            rollback_runtime
         elif [ "$ACTIVATED" -eq 1 ]; then
-            systemctl stop mcp-gateway-tunnel mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
-            restore_registry_for_rollback || true
+            systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
+            restore_registry_for_rollback
             rm -rf "$INSTALL_DIR"
-            restore_system_files || true
+            restore_system_files
         elif [ "$CONTROL_PLANE_STOPPED" -eq 1 ] && [ -d "$PREVIOUS_DIR" ]; then
             [ -d "$INSTALL_DIR" ] || mv "$PREVIOUS_DIR" "$INSTALL_DIR"
             restore_system_files || true
-            restart_runtime || true
+            restart_runtime
         elif [ "$CONTROL_PLANE_STOPPED" -eq 1 ] && [ -d "$INSTALL_DIR" ]; then
             restart_runtime || true
         fi
@@ -319,7 +387,7 @@ else
 fi
 
 echo "[5/9] Activating root-owned runtime and migrating Registry with services stopped..."
-systemctl stop mcp-gateway-tunnel mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
+systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
 CONTROL_PLANE_STOPPED=1
 rm -rf "$PREVIOUS_DIR"
 [ ! -d "$INSTALL_DIR" ] || mv "$INSTALL_DIR" "$PREVIOUS_DIR"
@@ -328,6 +396,7 @@ ACTIVATED=1
 chown -R root:root "$INSTALL_DIR"
 find "$INSTALL_DIR" -type d -exec chmod 0755 {} +
 chmod 0755 "$INSTALL_DIR/bin/mcp-gateway" "$INSTALL_DIR/bin/mcp-gateway-client-stdio" "$INSTALL_DIR/bin/mcp-gateway-adapter" "$INSTALL_DIR/install.sh"
+as_service "$INSTALL_DIR/bin/mcp-gateway-adapter" migrate -db "$DB_PATH"
 as_service "$INSTALL_DIR/bin/mcp-gateway-adapter" status -db "$DB_PATH" >/dev/null
 
 echo "[6/9] Installing systemd and least-privilege policy assets..."

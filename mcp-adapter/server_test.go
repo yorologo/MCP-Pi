@@ -22,6 +22,9 @@ import (
 func getTestBridgeConfig(t *testing.T) *BridgeConfig {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	if err := registry.MigratePath(context.Background(), dbPath); err != nil {
+		t.Fatalf("initialize test registry: %v", err)
+	}
 	store, err := registry.OpenStore(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("open test registry: %v", err)
@@ -833,6 +836,9 @@ func TestToolSetEquality(t *testing.T) {
 func TestInProcessCoreExecution(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	if err := registry.MigratePath(ctx, dbPath); err != nil {
+		t.Fatal(err)
+	}
 	db, err := registry.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)

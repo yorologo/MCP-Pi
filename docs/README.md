@@ -1,45 +1,34 @@
 # Documentation
 
-MCP-Pi documentation is split by authority.
+README.md is the onboarding entry point. The files below are authoritative only for the current source candidate; historical material is isolated under `docs/releases/` and `docs/archive/`.
 
-## CURRENT — authoritative operational guidance
+## User / operator
 
-- [Getting started](getting-started.md)
-- [Installation](installation.md)
-- [Configuration](configuration.md)
-- [Operations](operations.md)
-- [Update and rollback](update-rollback.md)
-- [Recovery](recovery.md)
-- [Troubleshooting](troubleshooting.md)
-- [Architecture](architecture.md)
-- [Security](security.md)
-- [Admin Console](admin-console.md)
-- [Project state](project-state.md)
+- [Installation](installation.md) — install, bootstrap, update and rollback.
+- [Configuration](configuration.md) — runtime paths, Admin, Targets/Projects and private configuration.
+- [Operations](operations.md) — start/stop/restart, status, Doctor, maintenance and logs.
+- [Recovery](recovery.md) — Registry backup/restore and application rollback.
+- [Troubleshooting](troubleshooting.md) — failure-oriented procedures.
+- [Admin Console](admin-console.md) — UI operation.
+- [Architecture](architecture.md) — current system boundaries.
+- [Security](security.md) — security model and invariants.
 
-These documents describe the 1.5.0-rc.2 Go-only source candidate. They do not claim that production has already been promoted.
+## Maintainer reference
 
-## REFERENCE — deep technical detail
+- [Project state](project-state.md) — source versus production authority and promotion objective.
+- [Compatibility](reference/compatibility.md) — machine-readable contract and schema compatibility semantics.
+- [Deployment](reference/deployment.md) — exact-commit promotion to the ARMv6 appliance.
+- [Client grants](reference/client-grants.md) — authorization semantics.
+- [Controlled writes](reference/controlled-write.md) — structured mutation semantics.
+- [Performance](reference/performance.md) — measurement contract.
+- [ChatGPT / secure tunnel](reference/chatgpt-gate.md) — optional external MCP path.
 
-- [Compatibility contract](reference/compatibility.md)
-- [MCP adapter/Core](reference/mcp-adapter.md)
-- [Lifecycle](reference/lifecycle.md)
-- [Deployment](reference/deployment.md)
-- [Controlled writes](reference/controlled-write.md)
-- [Performance](reference/performance.md)
-- [Diagrams](reference/diagrams.md)
+Contributor workflow belongs in [../CONTRIBUTING.md](../CONTRIBUTING.md). Automation-specific operational rules belong in [../AGENTS.md](../AGENTS.md).
 
-Reference material must agree with CURRENT docs for the active candidate.
+## Authority
 
-## ARCHIVE — historical evidence
+For numeric build/API/schema/protocol values use `manifest.json`, `compatibility.json` and `mcp-gateway version --json`; do not maintain parallel prose constants unnecessarily.
 
-docs/releases and docs/archive may describe older runtime designs and are not current operating instructions.
+When prose and code disagree, establish behavior from Go code/tests and machine-readable metadata, correct the prose, then rerun repository gates.
 
-## Authority rule
-
-If documentation and code disagree, do not change production to fit prose. Establish the actual source contract from Go code/tests and metadata, correct the documentation, then rerun:
-
-    cd mcp-adapter && go test -count=1 ./...
-    cd ..
-    scripts/verify-go-only.sh
-
-Live production remains authoritative only for its own deployed state through gateway_status, deployment provenance and the live Registry.
+Live production is authoritative only for its deployed state through systemd/endpoints, the live Registry and deployment provenance.

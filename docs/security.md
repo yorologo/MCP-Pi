@@ -1,64 +1,52 @@
 # Security model
 
-MCP-Pi 1.5.0-rc.2 applies KISS + Least Privilege + Deny by Default + Fail Closed.
+MCP-Pi applies **KISS + Least Privilege + Deny by Default + Fail Closed**.
 
 ## Core invariants
 
 - one Go Core and one Registry authority;
 - explicit client/grant/Target/Project scope;
 - pinned SSH host keys;
-- safe fresh-install kill-switch defaults;
+- writes and trusted shell disabled on a fresh Registry;
 - no runtime fallback;
 - auditable critical mutations;
 - root-owned program files;
 - service-owned mutable state only.
 
-## Fresh-install defaults
-
-    gateway_enabled=true
-    writes_enabled=false
-    shell_enabled=false
-
 ## Structured writes
 
-Structured filesystem tools validate relative paths, Project scope, destination type, symlink/reparse conditions and optimistic SHA where required. Critical writes require audit availability. An unsupported or ambiguous path state is denied.
+Structured filesystem tools validate Project scope, relative/canonical paths, destination type, symlink/reparse conditions, bounds and optimistic SHA where required. Unsupported or ambiguous path state is denied. Critical mutations require audit availability.
 
-## Trusted shell
+## Trusted shell and Target privilege
 
-run_command is intentionally broader than structured tools and therefore requires target_shell plus shell_enabled. Do not present it as a filesystem sandbox.
+`run_command` requires ordinary shell authorization plus the global shell switch. It is not a filesystem sandbox.
 
-## Target administrative privilege
+Administrative Target privilege is a second gate. `run_command` and allowlisted `run_task` share the same effective-privilege check. Crossing into root/Administrator requires explicit `target_admin`, Target privilege policy, any required human approval/boot identity and a verified backend.
 
-target_admin is separate from target_shell. A privilege request also requires Target consent policy and a verified native backend. General sudo on the gateway is not an accepted substitute.
+General sudo on the gateway is not a substitute.
 
-## Kill switches
+## Kill switches and SSH trust
 
-Disabled global/write/shell states produce denial. A disabled capability does not silently route elsewhere.
+Disabled gateway/write/shell states deny the operation; they never route elsewhere.
 
-## SSH trust
+Strict host-key checking remains enabled. Endpoint rediscovery cannot replace Target identity without the pinned host key.
 
-Strict host-key checking remains enabled. Endpoint rediscovery cannot replace Target identity without matching the pinned host key.
+## Admin and MCP HTTP
 
-## Admin Console
+Admin binds to loopback by default and enforces signed HttpOnly/SameSite cookies, Host allowlisting and CSRF.
 
-Fresh install binds to loopback. Sessions use signed cookies, HttpOnly and SameSite Strict behavior. Host allowlisting and CSRF checks remain enforced. The signing secret is local private state.
-
-## MCP HTTP
-
-Private bearer material remains outside Git. Readiness requires initialized Go Core/Registry. Liveness alone is not authorization/readiness proof.
+MCP private bearer material remains outside Git. `/live` only proves process liveness; `/ready` requires initialized Core/Registry and is the traffic-readiness signal.
 
 ## Backup and recovery
 
-SQLite uses online backup/restore APIs. Restore is coordinated with service shutdown. Disaster-recovery archives are private mode 0600 and may be encrypted with age; requested encryption fails closed if age is unavailable.
+Registry backup/restore uses SQLite online APIs. Restore requires database users stopped and preserves the source schema exactly. Migration is a separate explicit lifecycle operation.
+
+MCP-Pi does not maintain a second supported archive of host SSH/private/tunnel secrets; those are reprovisioned from their authoritative secure source during disaster recovery.
 
 ## Appliance reboot
 
-NoNewPrivileges remains enabled. Reboot is requested through systemd-logind with a narrow polkit action; mcp-gateway is not granted arbitrary sudo.
+`NoNewPrivileges` remains enabled. Reboot is requested through systemd-logind with a narrow polkit action; the service account is not granted arbitrary sudo.
 
 ## Audit
 
 Critical mutation/reboot/maintenance paths must not report success when required audit persistence fails. Audit data must not contain credentials or private key material.
-
-## Privileged Target execution
-
-`run_command` and allowlisted `run_task` share the same effective-privilege gate. If the Target transport is already root/Administrator or otherwise crosses the configured privilege boundary, an explicit `target_admin` grant plus the Target privilege policy and any required human approval must pass before execution. Privilege probing fails closed when the effective level cannot be established.

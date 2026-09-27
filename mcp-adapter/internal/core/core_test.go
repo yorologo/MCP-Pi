@@ -46,6 +46,9 @@ func seededCore(t *testing.T) (*Core, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "core.db")
+	if err := registry.MigratePath(ctx, dbPath); err != nil {
+		t.Fatal(err)
+	}
 	db, err := registry.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)

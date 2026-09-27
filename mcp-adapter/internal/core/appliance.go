@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,7 +56,7 @@ func (c *Core) GatewayStatus(ctx context.Context, requestID string) Response {
 	storage := getDiskInfo("/")
 	tempC := getTemperature()
 	throttled := getThrottled()
-	services := getServicesStatus([]string{"mcp-gateway-admin", "mcp-gateway-mcp", "mcp-gateway-tunnel"})
+	services := getServiceStates([]string{"mcp-gateway-admin.service", "mcp-gateway-mcp.service", "mcp-gateway-tunnel.service"})
 	writesEnabled, _ := c.boolSetting(ctx, "writes_enabled", false)
 	targetCount, _ := c.store.TargetCount(ctx)
 
@@ -166,10 +167,6 @@ type DoctorCheck struct {
 
 func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorOptions) Response {
 	started := time.Now()
-	if blocked := c.operationalGate(ctx, "gateway_doctor", requestID, "", ""); blocked != nil {
-		return responseFromMap(blocked)
-	}
-
 	checks := []DoctorCheck{{
 		Name:     "Gateway Core Health",
 		Passed:   true,
@@ -287,15 +284,72 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		}
 	}
 
-	services := getServicesStatus([]string{"mcp-gateway-tunnel"})
+	applianceStatus := "WARN"
+	applianceMsg := "systemd appliance checks unavailable on this platform"
+	mcpAdapterStatus := "SKIP"
+	mcpAdapterMsg := "MCP readiness not evaluated"
 	tunnelStatus := "SKIP"
-	tunnelMsg := "systemd tunnel probe unavailable on this platform"
-	if t, ok := services["mcp-gateway-tunnel"]; ok && t != "unknown" {
-		if t == "active" {
-			tunnelStatus, tunnelMsg = "PASS", "active"
-		} else {
-			tunnelStatus, tunnelMsg = "WARN", "tunnel service status: "+t
+	tunnelMsg := "optional tunnel not evaluated"
+
+	if systemdAvailable() {
+		adminActive := serviceIsActive("mcp-gateway-admin.service")
+		mcpActive := serviceIsActive("mcp-gateway-mcp.service")
+		servicesPassed := adminActive && mcpActive
+		checks = append(checks,
+			DoctorCheck{
+				Name: "Admin Service", Passed: adminActive,
+				Message: serviceStateMessage("mcp-gateway-admin.service", adminActive), Severity: "error", Required: true,
+			},
+			DoctorCheck{
+				Name: "MCP Service", Passed: mcpActive,
+				Message: serviceStateMessage("mcp-gateway-mcp.service", mcpActive), Severity: "error", Required: true,
+			},
+		)
+
+		mcpReady, mcpReadyMsg := httpEndpointReady(ctx, "http://127.0.0.1:8090/ready")
+		checks = append(checks, DoctorCheck{
+			Name: "MCP Readiness", Passed: mcpReady,
+			Message: mcpReadyMsg, Severity: "error", Required: true,
+		})
+		mcpAdapterStatus, mcpAdapterMsg = "FAIL", mcpReadyMsg
+		if mcpReady {
+			mcpAdapterStatus, mcpAdapterMsg = "PASS", mcpReadyMsg
 		}
+
+		timerEnabled := serviceIsEnabled("mcp-gateway-maintenance.timer")
+		checks = append(checks, DoctorCheck{
+			Name: "Maintenance Timer", Passed: timerEnabled,
+			Message: enabledStateMessage("mcp-gateway-maintenance.timer", timerEnabled), Severity: "warning", Required: true,
+		})
+
+		postbootFailed := serviceIsFailed("mcp-gateway-postboot.service")
+		checks = append(checks, DoctorCheck{
+			Name: "Post-Boot Verification", Passed: !postbootFailed,
+			Message: failedStateMessage("mcp-gateway-postboot.service", postbootFailed), Severity: "error", Required: true,
+		})
+
+		applianceStatus, applianceMsg = "FAIL", "required appliance service/readiness checks failed"
+		if servicesPassed && mcpReady && !postbootFailed {
+			applianceStatus, applianceMsg = "PASS", "Admin/MCP services active and MCP readiness verified"
+		}
+
+		if serviceIsEnabled("mcp-gateway-tunnel.service") {
+			if serviceIsActive("mcp-gateway-tunnel.service") {
+				tunnelStatus, tunnelMsg = "PASS", "enabled and active"
+			} else {
+				tunnelStatus, tunnelMsg = "WARN", "enabled but not active"
+				checks = append(checks, DoctorCheck{
+					Name: "Optional Tunnel", Passed: false, Message: tunnelMsg, Severity: "warning", Required: false,
+				})
+			}
+		} else {
+			tunnelStatus, tunnelMsg = "SKIP", "not enabled"
+		}
+	} else {
+		checks = append(checks, DoctorCheck{
+			Name: "Appliance Services", Passed: false,
+			Message: applianceMsg, Severity: "warning", Required: true,
+		})
 	}
 
 	clients, err := c.store.ListClients(ctx)
@@ -308,10 +362,11 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 	}
 
 	controlPath := map[string]any{
+		"appliance":         map[string]string{"status": applianceStatus, "message": applianceMsg},
 		"client_entrypoint": map[string]string{"status": clientStatus, "message": clientMsg},
 		"tunnel":            map[string]string{"status": tunnelStatus, "message": tunnelMsg},
-		"mcp_adapter":       map[string]string{"status": "PASS", "message": "Go-only in-process MCP adapter active"},
-		"gateway_core":      map[string]string{"status": "PASS", "message": "Derived from Gateway Core Doctor check"},
+		"mcp_adapter":       map[string]string{"status": mcpAdapterStatus, "message": mcpAdapterMsg},
+		"gateway_core":      map[string]string{"status": "PASS", "message": "Core initialized with current Registry schema"},
 		"targets":           map[string]string{"status": targetStatus, "message": targetMsg},
 	}
 
@@ -378,27 +433,29 @@ func (c *Core) GatewayMaintenance(ctx context.Context, requestID, actor string) 
 
 	backupsDir := c.backupDir()
 	prunedCount := 0
-	if entries, err := os.ReadDir(backupsDir); err == nil {
-		var backupFiles []string
-		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), "gateway_backup_") && strings.HasSuffix(e.Name(), ".db") {
-				backupFiles = append(backupFiles, filepath.Join(backupsDir, e.Name()))
-			}
+	entries, err := os.ReadDir(backupsDir)
+	if err != nil {
+		return errorResponse("gateway_maintenance", "BACKUP_ENUMERATION_FAILED", "Failed to enumerate backup directory: "+err.Error(), requestID, "", "", started)
+	}
+	var backupFiles []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "gateway_backup_") && strings.HasSuffix(e.Name(), ".db") {
+			backupFiles = append(backupFiles, filepath.Join(backupsDir, e.Name()))
 		}
-		sort.Slice(backupFiles, func(i, j int) bool {
-			fi, err1 := os.Stat(backupFiles[i])
-			fj, err2 := os.Stat(backupFiles[j])
-			if err1 != nil || err2 != nil {
-				return backupFiles[i] < backupFiles[j]
-			}
-			return fi.ModTime().Before(fj.ModTime())
-		})
-		for _, old := range backupFiles[:max(0, len(backupFiles)-5)] {
-			if err := os.Remove(old); err != nil {
-				return errorResponse("gateway_maintenance", "BACKUP_PRUNE_FAILED", "Failed to prune old backup: "+err.Error(), requestID, "", "", started)
-			}
-			prunedCount++
+	}
+	sort.Slice(backupFiles, func(i, j int) bool {
+		fi, err1 := os.Stat(backupFiles[i])
+		fj, err2 := os.Stat(backupFiles[j])
+		if err1 != nil || err2 != nil {
+			return backupFiles[i] < backupFiles[j]
 		}
+		return fi.ModTime().Before(fj.ModTime())
+	})
+	for _, old := range backupFiles[:max(0, len(backupFiles)-5)] {
+		if err := os.Remove(old); err != nil {
+			return errorResponse("gateway_maintenance", "BACKUP_PRUNE_FAILED", "Failed to prune old backup: "+err.Error(), requestID, "", "", started)
+		}
+		prunedCount++
 	}
 
 	var integrity string
@@ -638,23 +695,87 @@ func getThrottled() string {
 	return "unknown"
 }
 
-func getServicesStatus(services []string) map[string]string {
-	out := make(map[string]string)
-	if _, err := exec.LookPath("systemctl"); err == nil {
-		for _, svc := range services {
-			cp, err := exec.Command("systemctl", "is-active", svc).Output()
-			if err == nil {
-				out[svc] = strings.TrimSpace(string(cp))
-			} else {
-				out[svc] = "inactive"
-			}
+func getServiceStates(services []string) map[string]string {
+	states := make(map[string]string, len(services))
+	if !systemdAvailable() {
+		for _, service := range services {
+			states[service] = "unknown"
 		}
-	} else {
-		for _, svc := range services {
-			out[svc] = "unknown"
+		return states
+	}
+	for _, service := range services {
+		switch {
+		case serviceIsActive(service):
+			states[service] = "active"
+		case serviceIsFailed(service):
+			states[service] = "failed"
+		default:
+			states[service] = "inactive"
 		}
 	}
-	return out
+	return states
+}
+
+func systemdAvailable() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	if _, err := os.Stat("/run/systemd/system"); err != nil {
+		return false
+	}
+	_, err := exec.LookPath("systemctl")
+	return err == nil
+}
+
+func serviceIsActive(service string) bool {
+	return exec.Command("systemctl", "is-active", "--quiet", service).Run() == nil
+}
+
+func serviceIsEnabled(service string) bool {
+	return exec.Command("systemctl", "is-enabled", "--quiet", service).Run() == nil
+}
+
+func serviceIsFailed(service string) bool {
+	return exec.Command("systemctl", "is-failed", "--quiet", service).Run() == nil
+}
+
+func serviceStateMessage(service string, active bool) string {
+	if active {
+		return service + " is active"
+	}
+	return service + " is not active"
+}
+
+func enabledStateMessage(service string, enabled bool) string {
+	if enabled {
+		return service + " is enabled"
+	}
+	return service + " is not enabled"
+}
+
+func failedStateMessage(service string, failed bool) string {
+	if failed {
+		return service + " is failed"
+	}
+	return service + " is not failed"
+}
+
+func httpEndpointReady(ctx context.Context, endpoint string) (bool, string) {
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, "invalid readiness endpoint: " + err.Error()
+	}
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	if err != nil {
+		return false, endpoint + " unavailable: " + err.Error()
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Sprintf("%s returned HTTP %d", endpoint, resp.StatusCode)
+	}
+	return true, endpoint + " returned HTTP 200"
 }
 
 func getSecurityUpdatesStatus() string {

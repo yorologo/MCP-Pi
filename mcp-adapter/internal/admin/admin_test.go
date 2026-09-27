@@ -19,6 +19,9 @@ func setupTestAdminServer(t *testing.T) (*Server, *registry.Store) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "registry.db")
+	if err := registry.MigratePath(ctx, dbPath); err != nil {
+		t.Fatalf("failed to initialize registry: %v", err)
+	}
 	store, err := registry.OpenStore(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("failed to open registry: %v", err)

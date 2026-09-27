@@ -11,7 +11,7 @@ WorkingDirectory=/home/mcp-gateway/mcp-gateway
 Environment=MCP_GATEWAY_REGISTRY=sqlite
 Environment=MCP_GATEWAY_DB=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db
 ExecStartPre=/bin/sleep 5
-ExecStart=/bin/sh -c 'mkdir -p /home/mcp-gateway/.local/share/mcp-gateway/logs && /home/mcp-gateway/mcp-gateway/bin/mcp-gateway doctor > /home/mcp-gateway/.local/share/mcp-gateway/logs/postboot-health.log 2>&1'
+ExecStart=/home/mcp-gateway/mcp-gateway/bin/mcp-gateway doctor
 RemainAfterExit=yes
 
 [Install]

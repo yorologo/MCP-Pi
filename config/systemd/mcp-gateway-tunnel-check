@@ -13,7 +13,7 @@ check_credentials() {
 }
 
 wait_backend() {
-    BACKEND_URL="${MCP_BACKEND_URL:-http://127.0.0.1:8090/live}"
+    BACKEND_URL="${MCP_BACKEND_URL:-http://127.0.0.1:8090/ready}"
     TIMEOUT_SECS="${MCP_BACKEND_TIMEOUT_SECS:-120}"
     POLL_INTERVAL="${MCP_BACKEND_POLL_INTERVAL:-1}"
 

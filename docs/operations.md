@@ -5,7 +5,48 @@
     sudo -u mcp-gateway mcp-gateway status
     sudo -u mcp-gateway mcp-gateway doctor
 
-Use doctor --check-targets when Target reachability must participate in the overall verdict.
+`status` is non-mutating and reports Registry/runtime compatibility. It does not prove that the whole appliance is ready. Doctor is the canonical appliance diagnostic.
+
+Use:
+
+    sudo -u mcp-gateway mcp-gateway doctor --check-targets
+
+when Target reachability must participate in the verdict.
+
+## Service lifecycle
+
+The base control plane is:
+
+    mcp-gateway-admin.service
+    mcp-gateway-mcp.service
+
+Automation:
+
+    mcp-gateway-maintenance.timer
+    mcp-gateway-postboot.service
+
+Optional:
+
+    mcp-gateway-tunnel.service
+
+Stop the base control plane:
+
+    sudo systemctl stop mcp-gateway-mcp mcp-gateway-admin
+
+Start it:
+
+    sudo systemctl start mcp-gateway-admin
+    sudo systemctl start mcp-gateway-mcp
+
+Restart it:
+
+    sudo systemctl restart mcp-gateway-admin
+    sudo systemctl restart mcp-gateway-mcp
+    sudo -u mcp-gateway mcp-gateway doctor
+
+For a schema-changing lifecycle operation also stop the maintenance timer/service before touching the Registry.
+
+Do not add wrapper scripts for these operations; systemd is the service manager.
 
 ## Daily model
 
@@ -13,42 +54,52 @@ Admin Console changes configuration in the same Registry used by MCP. Prefer str
 
 ## Kill switches
 
-gateway_enabled gates operations globally. writes_enabled gates structured mutations. shell_enabled gates trusted Target shell. Disabled state is a denial, not a warning.
+`gateway_enabled` gates delegated operations globally. `writes_enabled` gates structured mutations. `shell_enabled` gates trusted Target shell. Disabled state is a denial, not a warning.
+
+Diagnostic/recovery lifecycle commands remain available so a disabled gateway can still be inspected and recovered.
 
 ## Target privilege
 
-Administrative Target execution requires normal authorization plus target_admin and the Target privilege policy. The same effective-privilege gate protects both run_command and allowlisted run_task execution. Do not use general sudo on the appliance as a substitute.
+Administrative Target execution requires normal authorization plus `target_admin` and the Target privilege policy. The same effective-privilege gate protects both `run_command` and allowlisted `run_task` execution.
 
 ## Backup
 
-Registry-only online backup:
+Registry-only online backup is canonical:
 
     sudo -u mcp-gateway mcp-gateway backup
 
-This is the canonical backup operation shipped in release bundles. A source checkout also contains scripts/backup-appliance.sh for maintainer-only host-level disaster-recovery archives; it is not part of the release bundle interface.
+There is no separate supported host-wide secret backup format.
 
 ## Maintenance
 
     sudo -u mcp-gateway mcp-gateway maintenance
 
-Maintenance creates a verified online backup, rotates gateway backups, checks SQLite integrity and runs Doctor. Required failure stops the operation.
+Maintenance creates a verified online backup, rotates backups, checks SQLite integrity and runs Doctor. Required failure stops the operation.
 
 ## Logs
 
-Use journalctl for mcp-gateway-admin, mcp-gateway-mcp, mcp-gateway-maintenance, mcp-gateway-postboot and the optional tunnel service.
+systemd/journald is the canonical runtime log:
 
-## Restart order
+    journalctl -u mcp-gateway-admin
+    journalctl -u mcp-gateway-mcp
+    journalctl -u mcp-gateway-maintenance
+    journalctl -u mcp-gateway-postboot
 
-When manual service recovery is necessary, restore Admin/MCP first, then postboot/maintenance and the optional tunnel. Do not restart merely to hide a failed readiness condition; inspect Core/Registry errors first.
+The optional tunnel uses its own unit journal as well.
 
 ## Updates
 
-User update uses install.sh. Maintainer exact-commit deployment uses:
+User update:
 
-    scripts/run-resumable.sh start --expect-marker DEPLOYMENT_VERIFIED -- scripts/deploy-pi.sh <sha>
+    ./install.sh --check
+    sudo ./install.sh
 
-Use run-resumable.sh status and log if the control connection is intentionally restarted.
+Maintainer exact-commit promotion:
+
+    scripts/run-resumable.sh start --expect-marker DEPLOYMENT_VERIFIED -- scripts/deploy-pi.sh <exact-sha>
+
+The deployer delegates activation and rollback to the bundle's canonical installer.
 
 ## Recovery
 
-See [recovery.md](recovery.md). Restore is designed to run with Admin/MCP stopped so all processes reopen the same SQLite database state.
+See [recovery.md](recovery.md). Restore is exact-schema; migration is a distinct explicit operation.

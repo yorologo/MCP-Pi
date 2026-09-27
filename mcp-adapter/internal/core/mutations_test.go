@@ -111,7 +111,11 @@ func loadMutationFixture(t *testing.T) map[string]any {
 func seededMutationCore(t *testing.T) (*Core, *mutationRemote, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := registry.Open(ctx, filepath.Join(t.TempDir(), "mutation.db"))
+	dbPath := filepath.Join(t.TempDir(), "mutation.db")
+	if err := registry.MigratePath(ctx, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	db, err := registry.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

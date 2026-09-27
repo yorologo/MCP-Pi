@@ -10,7 +10,11 @@ import (
 func seededStore(t *testing.T) (*Store, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "registry.db"))
+	path := filepath.Join(t.TempDir(), "registry.db")
+	if err := MigratePath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
