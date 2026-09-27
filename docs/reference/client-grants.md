@@ -18,7 +18,7 @@ CREATE TABLE grants (
 );
 ```
 
-Un grant puede usar una capacidad común (`read`, `write`, `execute`, `target_shell`, `target_admin`, `admin`) o capacidades específicas de herramientas. Se admiten valores separados por comas por compatibilidad. La UI recomienda grants separados cuando sea práctico.
+Un grant nuevo usa exactamente **una capacidad explícita** (`read`, `write`, `execute`, `target_shell`, `target_admin`, `admin`) o una capacidad específica de herramienta. `*` es una elección explícita y nunca un valor por omisión. Los valores históricos separados por comas se conservan únicamente por compatibilidad de lectura/edición; Admin no crea nuevos bundles y permite sustituirlos deliberadamente por grants separados.
 
 El scope es:
 
@@ -74,7 +74,7 @@ Por compatibilidad segura, `*` **no implica el nuevo privilegio administrativo d
 target_shell,target_admin
 ```
 
-o dos grants separados con el mismo scope.
+La forma recomendada es usar dos grants separados con el mismo scope. Un bundle histórico `target_shell,target_admin` puede seguir interpretándose mientras exista, pero Admin no crea nuevos bundles.
 
 `admin` conserva exclusivamente su significado de administración del appliance Gateway. `target_admin` es independiente y sólo habilita la segunda puerta de privilegio del Target; una no implica la otra.
 

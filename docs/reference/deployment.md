@@ -6,7 +6,8 @@ This is the exact-commit promotion path to the reference ARMv6 appliance. It is 
 
 - clean named Git branch;
 - requested SHA equals local HEAD and `origin/<branch>`;
-- repository gates pass;
+- repository gates pass locally;
+- the exact pushed SHA has a completed successful remote CI run before any version tag is created;
 - Go/OpenSSH/scp/tar/gzip/sha256sum available;
 - Node only when rebuilding frontend assets;
 - private connection settings, when needed, in ignored `.mcp-pi.local.env`.
@@ -24,7 +25,17 @@ This is the exact-commit promotion path to the reference ARMv6 appliance. It is 
     ./install.sh --check
     git diff --check
 
-Cross-build ARMv6 and inspect the canonical release bundle before promotion.
+Cross-build ARMv6 and inspect the canonical release bundle before promotion. Then push the exact candidate SHA and require its remote CI to succeed **before** creating the immutable version tag:
+
+    SHA=$(git rev-parse HEAD)
+    git push origin develop
+    gh run list --commit "$SHA" --limit 10
+    gh run watch <run-id> --exit-status
+    test "$(gh run view <run-id> --json headSha --jq .headSha)" = "$SHA"
+    git tag -a <version-tag> "$SHA" -m '<version>'
+    git push origin <version-tag>
+
+A tag is evidence of a candidate that already passed the remote commit gate; tagging is not itself the CI gate.
 
 ## Deploy
 

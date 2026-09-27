@@ -114,6 +114,25 @@ type Store struct {
 	path string
 }
 
+type sqlExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
+}
+
 func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
@@ -562,8 +581,11 @@ func (s *Store) GetSetting(ctx context.Context, key, defaultValue string) (strin
 	return value, nil
 }
 
-func (s *Store) SetSetting(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
+func setSettingExec(ctx context.Context, exec sqlExecer, key, value string) error {
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("setting key cannot be empty")
+	}
+	_, err := exec.ExecContext(ctx, `
 INSERT INTO settings (key, value) VALUES (?, ?)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
 `, key, value)
@@ -573,8 +595,12 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('no
 	return nil
 }
 
-func (s *Store) RecordActivity(ctx context.Context, entry Activity) error {
-	_, err := s.db.ExecContext(ctx, `
+func (s *Store) SetSetting(ctx context.Context, key, value string) error {
+	return setSettingExec(ctx, s.db, key, value)
+}
+
+func recordActivityExec(ctx context.Context, exec sqlExecer, entry Activity) error {
+	_, err := exec.ExecContext(ctx, `
 INSERT INTO activity (
     actor, action, target_id, project_id, duration_ms, success,
     error_code, bytes_transferred, detail
@@ -595,6 +621,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		return fmt.Errorf("record activity: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) RecordActivity(ctx context.Context, entry Activity) error {
+	return recordActivityExec(ctx, s.db, entry)
 }
 
 func (s *Store) TargetCount(ctx context.Context) (int, error) {
@@ -628,7 +658,7 @@ WHERE target_id = ?
 	return &a, nil
 }
 
-func (s *Store) SetPrivilegeApproval(ctx context.Context, targetID, policy, clientID, projectID, bootID string) error {
+func setPrivilegeApprovalExec(ctx context.Context, exec sqlExecer, targetID, policy, clientID, projectID, bootID string) error {
 	policy = strings.ToLower(strings.TrimSpace(policy))
 	clientID = strings.TrimSpace(clientID)
 	projectID = strings.TrimSpace(projectID)
@@ -639,7 +669,7 @@ func (s *Store) SetPrivilegeApproval(ctx context.Context, targetID, policy, clie
 		return fmt.Errorf("privilege approval requires client and project scope")
 	}
 	now := float64(time.Now().UnixNano()) / 1e9
-	_, err := s.db.ExecContext(ctx, `
+	_, err := exec.ExecContext(ctx, `
 INSERT INTO privilege_approvals (target_id, policy, client_id, project_id, boot_id, approved_at)
 VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(target_id) DO UPDATE SET
@@ -655,15 +685,11 @@ ON CONFLICT(target_id) DO UPDATE SET
 	return nil
 }
 
-func (s *Store) ClearPrivilegeApproval(ctx context.Context, targetID string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM privilege_approvals WHERE target_id = ?", targetID)
-	if err != nil {
-		return fmt.Errorf("clear privilege approval: %w", err)
-	}
-	return nil
+func (s *Store) SetPrivilegeApproval(ctx context.Context, targetID, policy, clientID, projectID, bootID string) error {
+	return setPrivilegeApprovalExec(ctx, s.db, targetID, policy, clientID, projectID, bootID)
 }
 
-func (s *Store) ClearPrivilegeApprovalsScoped(ctx context.Context, targetID, clientID, projectID string) error {
+func clearPrivilegeApprovalsScopedExec(ctx context.Context, exec sqlExecer, targetID, clientID, projectID string) error {
 	var conditions []string
 	var args []any
 	if targetID != "" {
@@ -678,13 +704,22 @@ func (s *Store) ClearPrivilegeApprovalsScoped(ctx context.Context, targetID, cli
 		conditions = append(conditions, "project_id = ?")
 		args = append(args, projectID)
 	}
-	if len(conditions) == 0 {
-		_, err := s.db.ExecContext(ctx, "DELETE FROM privilege_approvals")
-		return err
+	query := "DELETE FROM privilege_approvals"
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query := "DELETE FROM privilege_approvals WHERE " + strings.Join(conditions, " AND ")
-	_, err := s.db.ExecContext(ctx, query, args...)
-	return err
+	if _, err := exec.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("clear privilege approvals: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ClearPrivilegeApproval(ctx context.Context, targetID string) error {
+	return clearPrivilegeApprovalsScopedExec(ctx, s.db, targetID, "", "")
+}
+
+func (s *Store) ClearPrivilegeApprovalsScoped(ctx context.Context, targetID, clientID, projectID string) error {
+	return clearPrivilegeApprovalsScopedExec(ctx, s.db, targetID, clientID, projectID)
 }
 
 func (s *Store) ConsumePrivilegeApproval(
@@ -722,55 +757,60 @@ WHERE target_id = ?
 
 	if policy == "ask_once_per_boot" {
 		if bootID != "" && rowBoot == bootID {
-			return true, tx.Commit()
+			if err := tx.Commit(); err != nil {
+				return false, fmt.Errorf("commit privilege approval check: %w", err)
+			}
+			return true, nil
 		}
-		_, _ = tx.ExecContext(ctx, "DELETE FROM privilege_approvals WHERE target_id = ?", targetID)
-		_ = tx.Commit()
+		if _, err := tx.ExecContext(ctx, "DELETE FROM privilege_approvals WHERE target_id = ?", targetID); err != nil {
+			return false, fmt.Errorf("clear stale privilege approval: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("commit stale privilege approval cleanup: %w", err)
+		}
 		return false, nil
 	}
 
 	if policy == "ask_always" {
 		now := float64(time.Now().UnixNano()) / 1e9
 		age := now - approvedAt
-		_, _ = tx.ExecContext(ctx, "DELETE FROM privilege_approvals WHERE target_id = ?", targetID)
+		if _, err := tx.ExecContext(ctx, "DELETE FROM privilege_approvals WHERE target_id = ?", targetID); err != nil {
+			return false, fmt.Errorf("consume privilege approval: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("commit privilege approval consumption: %w", err)
+		}
 		if age < 0 || age > float64(maxAgeSeconds) {
-			_ = tx.Commit()
 			return false, nil
 		}
-		return true, tx.Commit()
+		return true, nil
 	}
 
 	return false, nil
 }
 
-func (s *Store) SetSettings(ctx context.Context, values map[string]string) error {
+func setSettingsExec(ctx context.Context, exec sqlExecer, values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin settings transaction: %w", err)
-	}
-	defer tx.Rollback()
-
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if strings.TrimSpace(key) == "" {
-			return fmt.Errorf("setting key cannot be empty")
+		if err := setSettingExec(ctx, exec, key, values[key]); err != nil {
+			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO settings (key, value) VALUES (?, ?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
-`, key, values[key]); err != nil {
-			return fmt.Errorf("set setting %q: %w", key, err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit settings transaction: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) SetSettings(ctx context.Context, values map[string]string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		return setSettingsExec(ctx, tx, values)
+	})
 }

@@ -342,3 +342,33 @@ func TestAdminPagesRender(t *testing.T) {
 		}
 	}
 }
+
+func TestMalformedFormFailsClosedBeforeCSRF(t *testing.T) {
+	srv, _ := setupTestAdminServer(t)
+	handler := srv.Handler()
+
+	get := httptest.NewRequest(http.MethodGet, "/login", nil)
+	get.Host = "127.0.0.1:8080"
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, get)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET /login returned %d", getRec.Code)
+	}
+	cookie := extractCookie(getRec.Result(), "mcp_admin_session")
+	csrfToken := extractCSRFToken(getRec.Body.String())
+	if cookie == nil || csrfToken == "" {
+		t.Fatal("failed to establish session/CSRF fixture")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&bad=%ZZ"))
+	req.Host = "127.0.0.1:8080"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed form with valid CSRF header returned %d, want 400", rec.Code)
+	}
+}

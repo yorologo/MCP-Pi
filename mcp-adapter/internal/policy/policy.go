@@ -3,12 +3,59 @@ package policy
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"mcp-gateway-adapter/internal/registry"
 )
 
 const TargetPrivilegeCapability = "target_admin"
+
+var reservedInternalClientIDs = map[string]struct{}{
+	"local":  {},
+	"admin":  {},
+	"system": {},
+	"test":   {},
+}
+
+func IsReservedInternalClientID(value string) bool {
+	_, ok := reservedInternalClientIDs[strings.TrimSpace(value)]
+	return ok
+}
+
+func GrantCapabilities() []string {
+	seen := map[string]struct{}{
+		TargetPrivilegeCapability: {},
+		"*":                       {},
+	}
+	for _, capabilities := range ToolCapabilities {
+		for _, capability := range capabilities {
+			capability = strings.TrimSpace(capability)
+			if capability != "" {
+				seen[capability] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for capability := range seen {
+		out = append(out, capability)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func IsGrantCapability(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.Contains(value, ",") {
+		return false
+	}
+	for _, capability := range GrantCapabilities() {
+		if value == capability {
+			return true
+		}
+	}
+	return false
+}
 
 var ToolCapabilities = map[string][]string{
 	"health":              {"health", "read", "*"},
@@ -69,8 +116,7 @@ func AuthorizeClient(
 		return deny("ANONYMOUS_CLIENT_DENIED", "Client identity required"), nil
 	}
 
-	switch clientID {
-	case "local", "admin", "system", "test":
+	if IsReservedInternalClientID(clientID) {
 		return allow(), nil
 	}
 
@@ -255,8 +301,7 @@ func CatalogForClient(ctx context.Context, store *registry.Store, clientID strin
 		strings.EqualFold(strings.TrimSpace(clientID), "ANONYMOUS") {
 		return []string{}, nil
 	}
-	switch strings.TrimSpace(clientID) {
-	case "local", "admin", "system", "test":
+	if IsReservedInternalClientID(clientID) {
 		return append([]string(nil), tools...), nil
 	}
 

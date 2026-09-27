@@ -29,7 +29,7 @@ Core gates:
     ./install.sh --check
     git diff --check
 
-CI additionally runs vulnerability reachability checks and ARMv6 cross-build/package inspection.
+CI additionally runs vulnerability reachability checks and ARMv6 cross-build/package inspection. A version tag is created only **after** the exact pushed commit has a successful remote CI run: push the SHA, locate the run with `gh run list --commit <sha>`, wait with `gh run watch <run-id> --exit-status`, verify `headSha`, then create/push the immutable tag.
 
 ## Frontend
 
@@ -42,7 +42,7 @@ Tailwind writes directly to the embedded static directory. Do not create a secon
 
 ## Installation and release UX
 
-User install/update/rollback goes through `install.sh` and an immutable release bundle. Maintainer promotion uses `scripts/run-resumable.sh` + `scripts/deploy-pi.sh`, which delegates lifecycle mutation to that same installer.
+User install/update/rollback goes through `install.sh` and an immutable release bundle. Maintainer promotion uses `scripts/run-resumable.sh` + `scripts/deploy-pi.sh`, which delegates lifecycle mutation to that same installer. Never publish a candidate tag before the exact commit's remote CI has completed successfully.
 
 Do not add another installer, updater, migration daemon, service wrapper or release packaging path without a demonstrated need.
 

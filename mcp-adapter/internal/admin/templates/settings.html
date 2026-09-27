@@ -126,7 +126,7 @@
     <div>
       <label for="admin-timezone" class="field-label">Admin Time Zone</label>
       <input id="admin-timezone" type="text" name="admin_timezone" value="{{ settings.admin_timezone }}" required class="field font-mono" placeholder="America/Mexico_City" autocomplete="off">
-      <p class="text-[11px] text-slate-500 mt-1">IANA time zone used only for Admin Console display and date filters. Audit storage remains UTC. Examples: UTC, America/Mexico_City.</p>
+      <p class="text-[11px] text-slate-500 mt-1">Effective display time zone: <code class="text-indigo-300">{{ settings.admin_timezone }}</code>. Used only for Admin Console display and date filters; audit storage remains UTC. Examples: UTC, America/Mexico_City.</p>
     </div>
 
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">

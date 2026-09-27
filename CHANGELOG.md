@@ -2,6 +2,25 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
+## 1.5.0-rc.5 — candidate
+
+### Security
+- Security-sensitive Admin mutations now record their successful Activity entry in the same SQLite transaction as the authorization/state change; audit failure rolls the mutation back.
+- Target/Project/Client changes revoke cached privilege approvals transactionally, and one-use `ask_always` approval consumption fails closed if deletion or commit fails.
+- Grant edit/toggle/delete routes are scoped by both Client ID and Grant ID, and externally configured MCP transports cannot claim the reserved internal principals `local`, `admin`, `system` or `test`.
+- Scheduled maintenance and post-boot units inherit the existing systemd hardening baseline.
+
+### Fixed
+- Project READ/WRITE indicators now render the persisted `read_enabled` / `write_enabled` values and act as the single controls for those permissions; the redundant Allow/Revoke Write action is removed.
+- Client Grants now use one explicit capability per new Grant, have a functional canonical Edit route, preserve legacy comma-separated bundles only for deliberate migration, and no longer default a missing capability to wildcard `*`.
+- Target form validation rejects missing host/user, invalid ports, unsupported platforms and invalid privilege policies instead of silently normalizing dangerous input.
+- Target privilege administration now renders the live Core privilege status contract, only offers scopes that pass both ordinary shell authorization and explicit `target_admin`, and persists `ask_once_per_boot` approvals with the observed Target boot ID instead of hardcoding `ask_always`.
+- Admin Registry reads that are required to render Targets/Projects/Clients/Grants fail closed instead of presenting empty healthy-looking state.
+- Settings now show the effective configured Admin time zone explicitly.
+
+### Changed
+- Release guidance requires successful CI for the exact pushed SHA before an immutable version tag is created.
+
 
 ## 1.5.0-rc.4 — candidate
 

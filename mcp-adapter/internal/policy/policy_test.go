@@ -246,3 +246,24 @@ func TestLocalTrustedCallerPreservesBypass(t *testing.T) {
 		t.Fatalf("trusted local caller denied: %+v", decision)
 	}
 }
+
+func TestGrantCapabilityCatalogAndReservedClientIDs(t *testing.T) {
+	for _, capability := range []string{"read", "write", "target_shell", "target_admin", "admin", "*"} {
+		if !IsGrantCapability(capability) {
+			t.Fatalf("expected capability %q to be accepted", capability)
+		}
+	}
+	for _, capability := range []string{"", "read,write", "unknown_capability"} {
+		if IsGrantCapability(capability) {
+			t.Fatalf("unexpected capability %q accepted", capability)
+		}
+	}
+	for _, clientID := range []string{"local", "admin", "system", "test"} {
+		if !IsReservedInternalClientID(clientID) {
+			t.Fatalf("internal client ID %q is not reserved", clientID)
+		}
+	}
+	if IsReservedInternalClientID("chatgpt-main") {
+		t.Fatal("ordinary external client ID was treated as reserved")
+	}
+}

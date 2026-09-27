@@ -165,7 +165,7 @@
             </button>
           </form>
           {% else %}
-          <div class="text-sm text-amber-300">No enabled client/project scope currently has an explicit <code>target_admin</code> grant for this Target.</div>
+          <div class="text-sm text-amber-300">No enabled client/project scope currently passes both Target shell authorization and an explicit <code>target_admin</code> grant for this Target.</div>
           {% endif %}
         {% endif %}
         {% if priv.approval %}

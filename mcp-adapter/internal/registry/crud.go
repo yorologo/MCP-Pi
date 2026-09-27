@@ -17,7 +17,7 @@ type AdminUser struct {
 	LastLogin    *string
 }
 
-func (s *Store) AddTarget(ctx context.Context, target Target) error {
+func addTargetExec(ctx context.Context, exec sqlExecer, target Target) error {
 	id := strings.TrimSpace(target.ID)
 	if id == "" {
 		return fmt.Errorf("target id cannot be empty")
@@ -26,14 +26,14 @@ func (s *Store) AddTarget(ctx context.Context, target Target) error {
 	if policy == "" {
 		policy = "never"
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := exec.ExecContext(ctx, `
 INSERT INTO targets (id, display_name, platform, host, port, user, ssh_alias, privilege_user, privilege_policy, enabled)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `,
 		id,
 		nonEmpty(target.DisplayName, id),
 		nonEmpty(target.Platform, "linux"),
-		nonEmpty(target.Host, "127.0.0.1"),
+		target.Host,
 		target.Port,
 		target.User,
 		target.SSHAlias,
@@ -47,7 +47,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
-func (s *Store) UpdateTarget(ctx context.Context, target Target) error {
+func (s *Store) AddTarget(ctx context.Context, target Target) error {
+	return addTargetExec(ctx, s.db, target)
+}
+
+func updateTargetExec(ctx context.Context, exec sqlExecer, target Target) error {
 	id := strings.TrimSpace(target.ID)
 	if id == "" {
 		return fmt.Errorf("target id cannot be empty")
@@ -56,7 +60,7 @@ func (s *Store) UpdateTarget(ctx context.Context, target Target) error {
 	if policy == "" {
 		policy = "never"
 	}
-	res, err := s.db.ExecContext(ctx, `
+	res, err := exec.ExecContext(ctx, `
 UPDATE targets
 SET display_name = ?, platform = ?, host = ?, port = ?, user = ?, ssh_alias = ?, privilege_user = ?, privilege_policy = ?, enabled = ?
 WHERE id = ?
@@ -75,36 +79,56 @@ WHERE id = ?
 	if err != nil {
 		return fmt.Errorf("update target: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect target update: %w", err)
+	}
 	if n == 0 {
 		return &LookupError{Code: "UNKNOWN_TARGET", Message: fmt.Sprintf("target '%s' not found", id)}
 	}
-	// Revoke cached privilege approval if target changes
-	_ = s.ClearPrivilegeApproval(ctx, id)
 	return nil
+}
+
+func (s *Store) UpdateTarget(ctx context.Context, target Target) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if err := updateTargetExec(ctx, tx, target); err != nil {
+			return err
+		}
+		if err := clearPrivilegeApprovalsScopedExec(ctx, tx, strings.TrimSpace(target.ID), "", ""); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *Store) DeleteTarget(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
-	res, err := s.db.ExecContext(ctx, "DELETE FROM targets WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("delete target: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return &LookupError{Code: "UNKNOWN_TARGET", Message: fmt.Sprintf("target '%s' not found", id)}
-	}
-	_ = s.ClearPrivilegeApproval(ctx, id)
-	return nil
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, "DELETE FROM targets WHERE id = ?", id)
+		if err != nil {
+			return fmt.Errorf("delete target: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("inspect target delete: %w", err)
+		}
+		if n == 0 {
+			return &LookupError{Code: "UNKNOWN_TARGET", Message: fmt.Sprintf("target '%s' not found", id)}
+		}
+		if err := clearPrivilegeApprovalsScopedExec(ctx, tx, id, "", ""); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
-func (s *Store) AddProject(ctx context.Context, project Project) error {
+func addProjectExec(ctx context.Context, exec sqlExecer, project Project) error {
 	id := strings.TrimSpace(project.ID)
 	targetID := strings.TrimSpace(project.TargetID)
 	if id == "" || targetID == "" {
 		return fmt.Errorf("project id and target id cannot be empty")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := exec.ExecContext(ctx, `
 INSERT INTO projects (id, target_id, display_name, root, read_enabled, write_enabled, enabled)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 `,
@@ -122,13 +146,17 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
-func (s *Store) UpdateProject(ctx context.Context, project Project) error {
+func (s *Store) AddProject(ctx context.Context, project Project) error {
+	return addProjectExec(ctx, s.db, project)
+}
+
+func updateProjectExec(ctx context.Context, exec sqlExecer, project Project) error {
 	id := strings.TrimSpace(project.ID)
 	targetID := strings.TrimSpace(project.TargetID)
 	if id == "" || targetID == "" {
 		return fmt.Errorf("project id and target id cannot be empty")
 	}
-	res, err := s.db.ExecContext(ctx, `
+	res, err := exec.ExecContext(ctx, `
 UPDATE projects
 SET display_name = ?, root = ?, read_enabled = ?, write_enabled = ?, enabled = ?
 WHERE id = ? AND target_id = ?
@@ -144,34 +172,57 @@ WHERE id = ? AND target_id = ?
 	if err != nil {
 		return fmt.Errorf("update project: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect project update: %w", err)
+	}
 	if n == 0 {
 		return &LookupError{Code: "UNKNOWN_PROJECT", Message: fmt.Sprintf("project '%s' not found in target '%s'", id, targetID)}
 	}
-	_ = s.ClearPrivilegeApprovalsScoped(ctx, targetID, "", id)
 	return nil
+}
+
+func (s *Store) UpdateProject(ctx context.Context, project Project) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if err := updateProjectExec(ctx, tx, project); err != nil {
+			return err
+		}
+		if err := clearPrivilegeApprovalsScopedExec(ctx, tx, strings.TrimSpace(project.TargetID), "", strings.TrimSpace(project.ID)); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *Store) DeleteProject(ctx context.Context, targetID, projectID string) error {
-	res, err := s.db.ExecContext(ctx, "DELETE FROM projects WHERE target_id = ? AND id = ?", targetID, projectID)
-	if err != nil {
-		return fmt.Errorf("delete project: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return &LookupError{Code: "UNKNOWN_PROJECT", Message: fmt.Sprintf("project '%s' not found in target '%s'", projectID, targetID)}
-	}
-	_ = s.ClearPrivilegeApprovalsScoped(ctx, targetID, "", projectID)
-	return nil
+	targetID = strings.TrimSpace(targetID)
+	projectID = strings.TrimSpace(projectID)
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, "DELETE FROM projects WHERE target_id = ? AND id = ?", targetID, projectID)
+		if err != nil {
+			return fmt.Errorf("delete project: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("inspect project delete: %w", err)
+		}
+		if n == 0 {
+			return &LookupError{Code: "UNKNOWN_PROJECT", Message: fmt.Sprintf("project '%s' not found in target '%s'", projectID, targetID)}
+		}
+		if err := clearPrivilegeApprovalsScopedExec(ctx, tx, targetID, "", projectID); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
-func (s *Store) AddClient(ctx context.Context, client Client) error {
+func addClientExec(ctx context.Context, exec sqlExecer, client Client) error {
 	id := strings.TrimSpace(client.ID)
 	if id == "" {
 		return fmt.Errorf("client id cannot be empty")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `
+	_, err := exec.ExecContext(ctx, `
 INSERT INTO ai_clients (id, display_name, provider, protocol, enabled, notes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `,
@@ -190,13 +241,17 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
-func (s *Store) UpdateClient(ctx context.Context, client Client) error {
+func (s *Store) AddClient(ctx context.Context, client Client) error {
+	return addClientExec(ctx, s.db, client)
+}
+
+func updateClientExec(ctx context.Context, exec sqlExecer, client Client) error {
 	id := strings.TrimSpace(client.ID)
 	if id == "" {
 		return fmt.Errorf("client id cannot be empty")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.db.ExecContext(ctx, `
+	res, err := exec.ExecContext(ctx, `
 UPDATE ai_clients
 SET display_name = ?, provider = ?, protocol = ?, enabled = ?, notes = ?, updated_at = ?
 WHERE id = ?
@@ -212,27 +267,49 @@ WHERE id = ?
 	if err != nil {
 		return fmt.Errorf("update client: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect client update: %w", err)
+	}
 	if n == 0 {
 		return &LookupError{Code: "UNKNOWN_CLIENT", Message: fmt.Sprintf("client '%s' not found", id)}
-	}
-	if !client.Enabled {
-		_ = s.ClearPrivilegeApprovalsScoped(ctx, "", id, "")
 	}
 	return nil
 }
 
+func (s *Store) UpdateClient(ctx context.Context, client Client) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if err := updateClientExec(ctx, tx, client); err != nil {
+			return err
+		}
+		if !client.Enabled {
+			if err := clearPrivilegeApprovalsScopedExec(ctx, tx, "", strings.TrimSpace(client.ID), ""); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (s *Store) DeleteClient(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, "DELETE FROM ai_clients WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("delete client: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return &LookupError{Code: "UNKNOWN_CLIENT", Message: fmt.Sprintf("client '%s' not found", id)}
-	}
-	_ = s.ClearPrivilegeApprovalsScoped(ctx, "", id, "")
-	return nil
+	id = strings.TrimSpace(id)
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, "DELETE FROM ai_clients WHERE id = ?", id)
+		if err != nil {
+			return fmt.Errorf("delete client: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("inspect client delete: %w", err)
+		}
+		if n == 0 {
+			return &LookupError{Code: "UNKNOWN_CLIENT", Message: fmt.Sprintf("client '%s' not found", id)}
+		}
+		if err := clearPrivilegeApprovalsScopedExec(ctx, tx, "", id, ""); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func nonEmpty(value, fallback string) string {
@@ -242,18 +319,13 @@ func nonEmpty(value, fallback string) string {
 	return strings.TrimSpace(value)
 }
 
-func (s *Store) GetGrant(ctx context.Context, grantID int64) (Grant, error) {
-	row := s.db.QueryRowContext(ctx, `
-SELECT id, client_id, target_id, project_id, capability, enabled, created_at
-FROM grants
-WHERE id = ?
-`, grantID)
+func getGrantRow(ctx context.Context, row *sql.Row) (Grant, error) {
 	var g Grant
 	var targetID, projectID sql.NullString
 	var enabled int
 	if err := row.Scan(&g.ID, &g.ClientID, &targetID, &projectID, &g.Capability, &enabled, &g.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Grant{}, &LookupError{Code: "UNKNOWN_GRANT", Message: fmt.Sprintf("grant %d not found", grantID)}
+			return Grant{}, &LookupError{Code: "UNKNOWN_GRANT", Message: "grant not found"}
 		}
 		return Grant{}, err
 	}
@@ -269,68 +341,146 @@ WHERE id = ?
 	return g, nil
 }
 
-func (s *Store) AddGrant(ctx context.Context, grant Grant) (int64, error) {
+func (s *Store) GetGrant(ctx context.Context, grantID int64) (Grant, error) {
+	g, err := getGrantRow(ctx, s.db.QueryRowContext(ctx, `
+SELECT id, client_id, target_id, project_id, capability, enabled, created_at
+FROM grants
+WHERE id = ?
+`, grantID))
+	if err != nil {
+		if ErrorCode(err) == "UNKNOWN_GRANT" {
+			return Grant{}, &LookupError{Code: "UNKNOWN_GRANT", Message: fmt.Sprintf("grant %d not found", grantID)}
+		}
+		return Grant{}, err
+	}
+	return g, nil
+}
+
+func (s *Store) GetGrantForClient(ctx context.Context, clientID string, grantID int64) (Grant, error) {
+	clientID = strings.TrimSpace(clientID)
+	g, err := getGrantRow(ctx, s.db.QueryRowContext(ctx, `
+SELECT id, client_id, target_id, project_id, capability, enabled, created_at
+FROM grants
+WHERE id = ? AND client_id = ?
+`, grantID, clientID))
+	if err != nil {
+		if ErrorCode(err) == "UNKNOWN_GRANT" {
+			return Grant{}, &LookupError{Code: "UNKNOWN_GRANT", Message: fmt.Sprintf("grant %d not found for client '%s'", grantID, clientID)}
+		}
+		return Grant{}, err
+	}
+	return g, nil
+}
+
+func addGrantExec(ctx context.Context, exec sqlExecer, grant Grant) (int64, error) {
 	clientID := strings.TrimSpace(grant.ClientID)
 	capability := strings.TrimSpace(grant.Capability)
 	if clientID == "" || capability == "" {
 		return 0, fmt.Errorf("client id and capability cannot be empty")
 	}
 
-	var targetVal any = nil
+	var targetVal any
 	if grant.TargetID != "" && grant.TargetID != "*" {
 		targetVal = grant.TargetID
 	}
-	var projectVal any = nil
+	var projectVal any
 	if grant.ProjectID != "" && grant.ProjectID != "*" {
 		projectVal = grant.ProjectID
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.db.ExecContext(ctx, `
+	res, err := exec.ExecContext(ctx, `
 INSERT INTO grants (client_id, target_id, project_id, capability, enabled, created_at)
 VALUES (?, ?, ?, ?, ?, ?)
 `, clientID, targetVal, projectVal, capability, boolInt(grant.Enabled), now)
 	if err != nil {
 		return 0, fmt.Errorf("add grant: %w", err)
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("read grant id: %w", err)
+	}
+	return id, nil
 }
 
-func (s *Store) UpdateGrant(ctx context.Context, grant Grant) error {
-	var targetVal any = nil
+func (s *Store) AddGrant(ctx context.Context, grant Grant) (int64, error) {
+	return addGrantExec(ctx, s.db, grant)
+}
+
+func updateGrantExec(ctx context.Context, exec sqlExecer, clientID string, grant Grant) error {
+	var targetVal any
 	if grant.TargetID != "" && grant.TargetID != "*" {
 		targetVal = grant.TargetID
 	}
-	var projectVal any = nil
+	var projectVal any
 	if grant.ProjectID != "" && grant.ProjectID != "*" {
 		projectVal = grant.ProjectID
 	}
 
-	res, err := s.db.ExecContext(ctx, `
+	query := `
 UPDATE grants
 SET target_id = ?, project_id = ?, capability = ?, enabled = ?
-WHERE id = ?
-`, targetVal, projectVal, grant.Capability, boolInt(grant.Enabled), grant.ID)
+WHERE id = ?`
+	args := []any{targetVal, projectVal, strings.TrimSpace(grant.Capability), boolInt(grant.Enabled), grant.ID}
+	if strings.TrimSpace(clientID) != "" {
+		query += " AND client_id = ?"
+		args = append(args, strings.TrimSpace(clientID))
+	}
+	res, err := exec.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("update grant: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect grant update: %w", err)
+	}
 	if n == 0 {
+		if strings.TrimSpace(clientID) != "" {
+			return &LookupError{Code: "UNKNOWN_GRANT", Message: fmt.Sprintf("grant %d not found for client '%s'", grant.ID, clientID)}
+		}
 		return &LookupError{Code: "UNKNOWN_GRANT", Message: fmt.Sprintf("grant %d not found", grant.ID)}
 	}
 	return nil
 }
 
-func (s *Store) DeleteGrant(ctx context.Context, grantID int64) error {
-	res, err := s.db.ExecContext(ctx, "DELETE FROM grants WHERE id = ?", grantID)
+func (s *Store) UpdateGrant(ctx context.Context, grant Grant) error {
+	return updateGrantExec(ctx, s.db, "", grant)
+}
+
+func (s *Store) UpdateGrantForClient(ctx context.Context, clientID string, grant Grant) error {
+	return updateGrantExec(ctx, s.db, clientID, grant)
+}
+
+func deleteGrantExec(ctx context.Context, exec sqlExecer, clientID string, grantID int64) error {
+	query := "DELETE FROM grants WHERE id = ?"
+	args := []any{grantID}
+	if strings.TrimSpace(clientID) != "" {
+		query += " AND client_id = ?"
+		args = append(args, strings.TrimSpace(clientID))
+	}
+	res, err := exec.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("delete grant: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect grant delete: %w", err)
+	}
 	if n == 0 {
+		if strings.TrimSpace(clientID) != "" {
+			return &LookupError{Code: "UNKNOWN_GRANT", Message: fmt.Sprintf("grant %d not found for client '%s'", grantID, clientID)}
+		}
 		return &LookupError{Code: "UNKNOWN_GRANT", Message: fmt.Sprintf("grant %d not found", grantID)}
 	}
 	return nil
+}
+
+func (s *Store) DeleteGrant(ctx context.Context, grantID int64) error {
+	return deleteGrantExec(ctx, s.db, "", grantID)
+}
+
+func (s *Store) DeleteGrantForClient(ctx context.Context, clientID string, grantID int64) error {
+	return deleteGrantExec(ctx, s.db, clientID, grantID)
 }
 
 func (s *Store) GetAdminUser(ctx context.Context, username string) (*AdminUser, error) {

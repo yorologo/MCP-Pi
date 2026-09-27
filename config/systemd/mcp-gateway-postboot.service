@@ -7,6 +7,15 @@ Wants=mcp-gateway-mcp.service
 Type=oneshot
 User=mcp-gateway
 Group=mcp-gateway
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictRealtime=yes
+LockPersonality=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
 WorkingDirectory=/home/mcp-gateway/mcp-gateway
 Environment=MCP_GATEWAY_REGISTRY=sqlite
 Environment=MCP_GATEWAY_DB=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db

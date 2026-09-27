@@ -2,7 +2,7 @@
 
 This file records source/integration state, not live production.
 
-The current source candidate is **1.5.0-rc.4** on `develop`. `main` remains the stable-history branch until a deliberately validated promotion.
+The current source candidate is **1.5.0-rc.5** on `develop`. `main` receives only deliberately validated exact-SHA promotions.
 
 Numeric build/API/catalog/schema/protocol values are not duplicated here; use `manifest.json`, `compatibility.json` and `mcp-gateway version --json`.
 
@@ -44,8 +44,8 @@ Before promotion:
 3. cross-build ARMv6;
 4. build/inspect the canonical bundle from the exact clean commit;
 5. verify current documentation contains no duplicate/legacy lifecycle path;
-6. push the exact integration commit and immutable version tag;
-7. deploy through the resumable exact-commit path;
-8. run real ARMv6 service/readiness/Doctor/recovery/security acceptance.
+6. push the exact integration commit and require its remote CI to pass;
+7. create/push the immutable version tag, then promote the same SHA to `main`;
+8. deploy through the resumable exact-commit path and run real ARMv6 service/readiness/Doctor/recovery/security acceptance.
 
 Source validation does not equal deployment PASS.

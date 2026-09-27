@@ -115,6 +115,11 @@ func URLFor(endpoint string, args ...interface{}) string {
 			return fmt.Sprintf("/projects/%v/%v/toggle", args[0], args[1])
 		}
 		return "/projects"
+	case "admin.project_toggle_read":
+		if len(args) >= 2 {
+			return fmt.Sprintf("/projects/%v/%v/toggle-read", args[0], args[1])
+		}
+		return "/projects"
 	case "admin.project_toggle_write":
 		if len(args) >= 2 {
 			return fmt.Sprintf("/projects/%v/%v/toggle-write", args[0], args[1])

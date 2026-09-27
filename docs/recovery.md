@@ -1,6 +1,6 @@
 # Recovery
 
-Recovery for the 1.5.0-rc.4 Go-only runtime deliberately uses the same lifecycle primitives as normal operation.
+Recovery for the 1.5.0-rc.5 Go-only runtime deliberately uses the same lifecycle primitives as normal operation.
 
 ## 1. Diagnose before mutating
 

@@ -43,12 +43,12 @@
 
     <div class="space-y-2 pt-2">
       <div class="flex items-center gap-2">
-        <input type="checkbox" id="read" name="read" class="rounded bg-slate-900 border-slate-800 text-indigo-600 focus:ring-indigo-500" {% if not project or project.read %}checked{% endif %}>
+        <input type="checkbox" id="read" name="read" class="rounded bg-slate-900 border-slate-800 text-indigo-600 focus:ring-indigo-500" {% if not project or project.read_enabled %}checked{% endif %}>
         <label for="read" class="text-xs text-slate-300">Allow Read Operations (file_stat, read_file, list_directory)</label>
       </div>
 
       <div class="flex items-center gap-2">
-        <input type="checkbox" id="write" name="write" class="rounded bg-slate-900 border-slate-800 text-amber-600 focus:ring-amber-500" {% if project and project.write %}checked{% endif %}>
+        <input type="checkbox" id="write" name="write" class="rounded bg-slate-900 border-slate-800 text-amber-600 focus:ring-amber-500" {% if project and project.write_enabled %}checked{% endif %}>
         <label for="write" class="text-xs text-amber-300">Allow Structured File Writes (write/append/delete/copy/move/mkdir)</label>
       </div>
 

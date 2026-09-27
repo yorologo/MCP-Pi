@@ -160,28 +160,6 @@ function setupDataTable(table) {
   apply();
 }
 
-function setupGrantForm() {
-  const form = document.getElementById('grant-form');
-  if (!form || typeof form.querySelector !== 'function') return;
-
-  const wildcard = form.querySelector('input[name="capabilities"][value="*"]');
-  if (!wildcard) return;
-  const ordinary = Array.from(form.querySelectorAll('input[name="capabilities"]'))
-    .filter(input => input !== wildcard);
-  const targetShell = form.querySelector('input[name="target_shell"]');
-
-  const sync = () => {
-    const coveredByWildcard = wildcard.checked;
-    [...ordinary, targetShell].filter(Boolean).forEach(input => {
-      if (coveredByWildcard) input.checked = false;
-      input.disabled = coveredByWildcard;
-    });
-  };
-
-  wildcard.addEventListener('change', sync);
-  sync();
-}
-
 document.addEventListener('DOMContentLoaded', () => {
   const navButton = document.querySelector('[data-nav-toggle]');
   const navigation = document.getElementById('primary-navigation');
@@ -215,5 +193,4 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.querySelectorAll('table[data-admin-table]').forEach(setupDataTable);
-  setupGrantForm();
 });

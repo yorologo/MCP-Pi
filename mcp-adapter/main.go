@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"mcp-gateway-adapter/internal/policy"
 )
 
 func main() {
@@ -109,11 +111,14 @@ func runMCPServer(args []string) {
 	bridgeConfig.AuthToken = token
 
 	if *clientIDFlag != "" {
-		bridgeConfig.ClientID = *clientIDFlag
+		bridgeConfig.ClientID = strings.TrimSpace(*clientIDFlag)
 	} else if envClient := os.Getenv("MCP_CLIENT_ID"); envClient != "" {
-		bridgeConfig.ClientID = envClient
+		bridgeConfig.ClientID = strings.TrimSpace(envClient)
 	} else if bridgeConfig.AuthToken != "" {
 		bridgeConfig.ClientID = "chatgpt-main"
+	}
+	if policy.IsReservedInternalClientID(bridgeConfig.ClientID) {
+		log.Fatalf("Client ID %q is reserved for internal gateway principals", bridgeConfig.ClientID)
 	}
 
 	if coreErr != nil && *transportFlag == "stdio" {

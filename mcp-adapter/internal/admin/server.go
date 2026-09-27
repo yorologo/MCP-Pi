@@ -166,7 +166,10 @@ func (s *Server) securityMiddleware(next http.Handler) http.Handler {
 		// 4. CSRF Check on mutating methods (POST, PUT, DELETE, PATCH)
 		if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" || r.Method == "PATCH" {
 			if !strings.HasPrefix(r.URL.Path, "/static/") {
-				_ = r.ParseForm()
+				if err := r.ParseForm(); err != nil {
+					http.Error(w, "Invalid form data", http.StatusBadRequest)
+					return
+				}
 				token := r.FormValue("csrf_token")
 				if token == "" {
 					token = r.Header.Get("X-CSRF-Token")
@@ -245,7 +248,7 @@ func (s *Server) ListenAndServe() error {
 }
 
 // RecordAudit logs an activity event to the registry store.
-func (s *Server) RecordAudit(r *http.Request, action, targetID, projectID string, success bool, errorCode, detail string, required bool) bool {
+func (s *Server) auditEntry(r *http.Request, action, targetID, projectID string, success bool, errorCode, detail string) registry.Activity {
 	sess := getSession(r)
 	actor := sess.Username
 	if actor == "" {
@@ -263,7 +266,7 @@ func (s *Server) RecordAudit(r *http.Request, action, targetID, projectID string
 	if errorCode != "" {
 		errCode = &errorCode
 	}
-	entry := registry.Activity{
+	return registry.Activity{
 		Actor:     actor,
 		Action:    action,
 		TargetID:  tID,
@@ -272,7 +275,10 @@ func (s *Server) RecordAudit(r *http.Request, action, targetID, projectID string
 		ErrorCode: errCode,
 		Detail:    detail,
 	}
-	err := s.cfg.Store.RecordActivity(r.Context(), entry)
+}
+
+func (s *Server) RecordAudit(r *http.Request, action, targetID, projectID string, success bool, errorCode, detail string, required bool) bool {
+	err := s.cfg.Store.RecordActivity(r.Context(), s.auditEntry(r, action, targetID, projectID, success, errorCode, detail))
 	if err != nil {
 		if required {
 			panic(fmt.Sprintf("AUDIT_UNAVAILABLE: %v", err))

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file defines how automated contributors must work on MCP-Pi. The current source candidate is 1.5.0-rc.4 and the product runtime is Go-only.
+This file defines how automated contributors must work on MCP-Pi. The current source candidate is 1.5.0-rc.5 and the product runtime is Go-only.
 
 ## Non-negotiable principles
 
@@ -89,7 +89,9 @@ For a substantive change:
 6. run full relevant gates;
 7. update documentation and remove redundant paths;
 8. commit/push only after local evidence is clean;
-9. deploy only in an explicit later promotion/validation phase.
+9. before any release tag, require the exact pushed SHA's remote CI to complete successfully and verify its `headSha`;
+10. create/push the immutable tag only after that evidence;
+11. deploy only in an explicit later promotion/validation phase.
 
 ## Required gates
 
