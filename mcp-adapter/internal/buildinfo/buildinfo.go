@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	GatewayVersion     = "1.5.0-rc.1"
+	GatewayVersion     = "1.5.0-rc.2"
 	CoreAPIVersion     = 1
 	BridgeAPIVersion   = 1
 	ToolCatalogVersion = 4
@@ -28,6 +28,7 @@ type Info struct {
 	Commit             string `json:"commit,omitempty"`
 	BuildDate          string `json:"build_date,omitempty"`
 	Modified           bool   `json:"modified,omitempty"`
+	MCPSDKVersion      string `json:"mcp_sdk_version,omitempty"`
 }
 
 func Current() Info {
@@ -42,6 +43,12 @@ func Current() Info {
 		BuildDate:          BuildDate,
 	}
 	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range bi.Deps {
+			if dep.Path == "github.com/modelcontextprotocol/go-sdk" {
+				info.MCPSDKVersion = dep.Version
+				break
+			}
+		}
 		for _, setting := range bi.Settings {
 			switch setting.Key {
 			case "vcs.revision":

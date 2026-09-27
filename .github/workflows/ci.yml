@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [develop, main, go-only-migration]
+    branches: [develop, main]
   pull_request:
     branches: [develop, main]
 
@@ -102,6 +102,17 @@ jobs:
           test -x "$root/bin/mcp-gateway-adapter"
           test -x "$root/bin/mcp-gateway"
           test -x "$root/bin/mcp-gateway-client-stdio"
+
+          # Distributed documentation must not instruct release-bundle users to run
+          # source-only maintainer helpers.
+          if grep -R -F 'sudo scripts/backup-appliance.sh' "$root/docs"; then
+            echo "Release documentation references a source-only backup command" >&2
+            exit 1
+          fi
+
+          # Package metadata must be the exact metadata validated in this checkout.
+          cmp manifest.json "$root/manifest.json"
+          cmp compatibility.json "$root/compatibility.json"
 
           bad_dir="$(find "$root" -type d ! -perm -0005 -print -quit)"
           if [ -n "$bad_dir" ]; then

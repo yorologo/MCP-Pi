@@ -22,6 +22,127 @@ type CommandRequest struct {
 	Privilege string
 }
 
+type executionPrivilegeState struct {
+	PolicyName               string
+	CurrentLevel             string
+	MaximumLevel             string
+	Backend                  string
+	IndependentElevator      string
+	BackendReady             bool
+	TransportAlreadyElevated bool
+	ShellCanElevate          bool
+	Guarded                  bool
+	Effective                bool
+}
+
+type executionPrivilegeError struct {
+	Code    string
+	Message string
+}
+
+func (c *Core) authorizeExecutionPrivilege(
+	ctx context.Context,
+	actor, targetID, projectID, privilegeRequest string,
+	target registry.Target,
+	transport remote.Transport,
+) (executionPrivilegeState, *executionPrivilegeError) {
+	state := executionPrivilegeState{
+		PolicyName: strings.ToLower(strings.TrimSpace(target.PrivilegePolicy)),
+	}
+	if state.PolicyName == "" {
+		state.PolicyName = "never"
+	}
+
+	includeBootID := state.PolicyName == "ask_once_per_boot"
+	facts, err := transport.ProbeFacts(ctx, target, includeBootID, 10*time.Second)
+	if err != nil || facts == nil || facts["probe_status"] != "ok" {
+		reason := "Target privilege probe failed"
+		if facts != nil {
+			if r, ok := facts["reason"].(string); ok && r != "" {
+				reason = r
+			}
+		}
+		if err != nil {
+			reason = fmt.Sprintf("Target privilege probe failed: %v", err)
+		}
+		return state, &executionPrivilegeError{Code: "PRIVILEGE_STATUS_UNAVAILABLE", Message: reason}
+	}
+
+	privilegeInfo, ok := facts["privilege"].(map[string]any)
+	if !ok || privilegeInfo == nil {
+		return state, &executionPrivilegeError{
+			Code:    "PRIVILEGE_STATUS_UNAVAILABLE",
+			Message: "Target privilege status is unavailable",
+		}
+	}
+
+	state.CurrentLevel, _ = privilegeInfo["current_level"].(string)
+	state.CurrentLevel = strings.ToLower(strings.TrimSpace(state.CurrentLevel))
+	if state.CurrentLevel == "" {
+		return state, &executionPrivilegeError{
+			Code:    "PRIVILEGE_STATUS_UNAVAILABLE",
+			Message: "Target privilege level is unavailable",
+		}
+	}
+	state.MaximumLevel, _ = privilegeInfo["maximum_level"].(string)
+	state.Backend, _ = privilegeInfo["backend"].(string)
+	state.BackendReady, _ = privilegeInfo["backend_ready"].(bool)
+	state.ShellCanElevate, _ = privilegeInfo["shell_can_elevate"].(bool)
+	state.IndependentElevator, _ = privilegeInfo["independent_elevator"].(string)
+	state.TransportAlreadyElevated = state.CurrentLevel == "root" || state.CurrentLevel == "administrator"
+
+	if privilegeRequest != "required" && !state.TransportAlreadyElevated && !state.ShellCanElevate {
+		return state, nil
+	}
+
+	state.Guarded = true
+	requireBackend := privilegeRequest == "required" || state.TransportAlreadyElevated
+
+	decision, err := policy.AuthorizePrivilegeRequest(ctx, c.store, actor, targetID, projectID)
+	if err != nil || !decision.Allowed {
+		reason := decision.Reason
+		if reason == "" {
+			reason = fmt.Sprintf("Client '%s' requires an explicit target_admin grant for %s/%s", actor, targetID, projectID)
+		}
+		return state, &executionPrivilegeError{Code: "PRIVILEGE_GRANT_REQUIRED", Message: reason}
+	}
+
+	if state.PolicyName == "never" {
+		return state, &executionPrivilegeError{
+			Code:    "PRIVILEGE_DISABLED",
+			Message: "Target privilege policy denies elevation",
+		}
+	}
+
+	if requireBackend && !state.BackendReady && !state.TransportAlreadyElevated {
+		return state, &executionPrivilegeError{
+			Code:    "PRIVILEGE_SETUP_REQUIRED",
+			Message: "No verified privileged backend is ready on this Target",
+		}
+	}
+
+	if state.PolicyName != "always_allow" {
+		bootID, _ := facts["boot_id"].(string)
+		if state.PolicyName == "ask_once_per_boot" && strings.TrimSpace(bootID) == "" {
+			return state, &executionPrivilegeError{
+				Code:    "PRIVILEGE_BOOT_ID_UNAVAILABLE",
+				Message: "Target boot identity is unavailable; per-boot approval fails closed",
+			}
+		}
+
+		approved, err := c.store.ConsumePrivilegeApproval(ctx, targetID, state.PolicyName, actor, projectID, bootID, 300)
+		if err != nil || !approved {
+			return state, &executionPrivilegeError{
+				Code:    "PRIVILEGE_APPROVAL_REQUIRED",
+				Message: "Human approval is required by the Target privilege policy",
+			}
+		}
+	}
+
+	state.Effective = privilegeRequest == "required" || state.TransportAlreadyElevated
+	return state, nil
+}
+
 func (c *Core) RunCommand(
 	ctx context.Context,
 	requestID, actor, targetID, projectID, command string,
@@ -115,82 +236,19 @@ func (c *Core) RunCommand(
 		return errorResponse("run_command", "INVALID_ARGUMENTS", fmt.Sprintf("Invalid privilege value '%s': must be standard or required", req.Privilege), requestID, targetID, projectID, started)
 	}
 
-	policyName := strings.ToLower(strings.TrimSpace(target.PrivilegePolicy))
-	if policyName == "" {
-		policyName = "never"
-	}
-	includeBootID := policyName == "ask_once_per_boot"
-
-	facts, err := transport.ProbeFacts(ctx, target, includeBootID, 10*time.Second)
-	if err != nil || facts == nil || facts["probe_status"] != "ok" {
-		reason := "Target privilege probe failed"
-		if facts != nil {
-			if r, ok := facts["reason"].(string); ok && r != "" {
-				reason = r
-			}
-		}
-		if err != nil {
-			reason = fmt.Sprintf("Target privilege probe failed: %v", err)
-		}
-		c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, command, privReq, "PRIVILEGE_STATUS_UNAVAILABLE", reason, started)
-		return errorResponse("run_command", "PRIVILEGE_STATUS_UNAVAILABLE", reason, requestID, targetID, projectID, started)
+	privilegeState, privilegeErr := c.authorizeExecutionPrivilege(ctx, actor, targetID, projectID, privReq, target, transport)
+	if privilegeErr != nil {
+		c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, command, privReq, privilegeErr.Code, privilegeErr.Message, started)
+		return errorResponse("run_command", privilegeErr.Code, privilegeErr.Message, requestID, targetID, projectID, started)
 	}
 
-	privilegeInfo, _ := facts["privilege"].(map[string]any)
-	if privilegeInfo == nil {
-		privilegeInfo = map[string]any{}
-	}
-
-	currentLevel, _ := privilegeInfo["current_level"].(string)
-	maximumLevel, _ := privilegeInfo["maximum_level"].(string)
-	transportAlreadyElevated := currentLevel == "root" || currentLevel == "administrator"
-	shellCanElevate, _ := privilegeInfo["shell_can_elevate"].(bool)
-	backend, _ := privilegeInfo["backend"].(string)
-	backendReady, _ := privilegeInfo["backend_ready"].(bool)
-	independentElevator, _ := privilegeInfo["independent_elevator"].(string)
-
-	privilegeGuarded := false
-	privilegeEffective := false
-
-	if privReq == "required" || transportAlreadyElevated || shellCanElevate {
-		privilegeGuarded = true
-		requireBackend := privReq == "required" || transportAlreadyElevated
-
-		dec, err := policy.AuthorizePrivilegeRequest(ctx, c.store, actor, targetID, projectID)
-		if err != nil || !dec.Allowed {
-			reason := dec.Reason
-			if reason == "" {
-				reason = fmt.Sprintf("Client '%s' requires an explicit target_admin grant for %s/%s", actor, targetID, projectID)
-			}
-			c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, command, privReq, "PRIVILEGE_GRANT_REQUIRED", reason, started)
-			return errorResponse("run_command", "PRIVILEGE_GRANT_REQUIRED", reason, requestID, targetID, projectID, started)
-		}
-
-		if policyName == "never" {
-			c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, command, privReq, "PRIVILEGE_DISABLED", "Target privilege policy denies elevation", started)
-			return errorResponse("run_command", "PRIVILEGE_DISABLED", "Target privilege policy denies elevation", requestID, targetID, projectID, started)
-		}
-
-		if requireBackend && !backendReady && !transportAlreadyElevated {
-			c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, command, privReq, "PRIVILEGE_SETUP_REQUIRED", "No verified privileged backend is ready on this Target", started)
-			return errorResponse("run_command", "PRIVILEGE_SETUP_REQUIRED", "No verified privileged backend is ready on this Target", requestID, targetID, projectID, started)
-		}
-
-		if policyName != "always_allow" {
-			bootID, _ := facts["boot_id"].(string)
-			if policyName == "ask_once_per_boot" && strings.TrimSpace(bootID) == "" {
-				c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, command, privReq, "PRIVILEGE_BOOT_ID_UNAVAILABLE", "Target boot identity is unavailable; per-boot approval fails closed", started)
-				return errorResponse("run_command", "PRIVILEGE_BOOT_ID_UNAVAILABLE", "Target boot identity is unavailable; per-boot approval fails closed", requestID, targetID, projectID, started)
-			}
-
-			ok, err := c.store.ConsumePrivilegeApproval(ctx, targetID, policyName, actor, projectID, bootID, 300)
-			if err != nil || !ok {
-				c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, command, privReq, "PRIVILEGE_APPROVAL_REQUIRED", "Human approval is required by the Target privilege policy", started)
-				return errorResponse("run_command", "PRIVILEGE_APPROVAL_REQUIRED", "Human approval is required by the Target privilege policy", requestID, targetID, projectID, started)
-			}
-		}
-		privilegeEffective = privReq == "required" || transportAlreadyElevated
-	}
+	policyName := privilegeState.PolicyName
+	maximumLevel := privilegeState.MaximumLevel
+	transportAlreadyElevated := privilegeState.TransportAlreadyElevated
+	backend := privilegeState.Backend
+	independentElevator := privilegeState.IndependentElevator
+	privilegeGuarded := privilegeState.Guarded
+	privilegeEffective := privilegeState.Effective
 
 	remoteCommand := command
 	executionTarget := target
@@ -351,20 +409,18 @@ func (c *Core) RunTask(
 	}
 	quotedCmd := strings.Join(quotedArgs, " ")
 
-	facts, _ := transport.ProbeFacts(ctx, target, false, 5*time.Second)
-	privEffective := false
-	var privBackend any
-	if facts != nil {
-		if priv, ok := facts["privilege"].(map[string]any); ok {
-			privEffective = priv["current_level"] == "root" || priv["current_level"] == "administrator"
-			privBackend = priv["backend"]
-		}
+	privilegeState, privilegeErr := c.authorizeExecutionPrivilege(ctx, actor, targetID, projectID, "standard", target, transport)
+	if privilegeErr != nil {
+		c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, quotedCmd, "standard", privilegeErr.Code, privilegeErr.Message, started)
+		return errorResponse("run_task", privilegeErr.Code, privilegeErr.Message, requestID, targetID, projectID, started)
 	}
 
 	attemptDetail := map[string]any{
 		"task":                taskName,
-		"privilege_effective": privEffective,
-		"privilege_backend":   privBackend,
+		"privilege_guarded":   privilegeState.Guarded,
+		"privilege_effective": privilegeState.Effective,
+		"privilege_backend":   privilegeState.Backend,
+		"privilege_policy":    privilegeState.PolicyName,
 	}
 	if err := c.recordAuditRequired(ctx, actor, "RUN_TASK_ATTEMPT", targetID, projectID, attemptDetail, started); err != nil {
 		return errorResponse("run_task", "AUDIT_UNAVAILABLE", "Audit sink is unavailable for a critical operation", requestID, targetID, projectID, started)
@@ -387,8 +443,8 @@ func (c *Core) RunTask(
 	resultDetail := map[string]any{
 		"task":                taskName,
 		"exit_code":           res.ExitCode,
-		"privilege_effective": privEffective,
-		"privilege_backend":   privBackend,
+		"privilege_effective": privilegeState.Effective,
+		"privilege_backend":   privilegeState.Backend,
 	}
 	durMS := time.Since(started).Milliseconds()
 	_ = c.store.RecordActivity(ctx, registry.Activity{

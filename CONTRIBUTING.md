@@ -1,6 +1,6 @@
 # Contributing to MCP-Pi
 
-MCP-Pi 1.5.0-rc.1 is a Go-only candidate. Keep contributions small, reviewable and aligned with KISS + Reuse First + Least Privilege + Fail Closed + Evidence Before PASS.
+MCP-Pi 1.5.0-rc.2 is a Go-only candidate. Keep contributions small, reviewable and aligned with KISS + Reuse First + Least Privilege + Fail Closed + Evidence Before PASS.
 
 ## Branches
 

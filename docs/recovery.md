@@ -1,6 +1,6 @@
 # Recovery
 
-Recovery for the 1.5.0-rc.1 Go-only runtime is deliberately small.
+Recovery for the 1.5.0-rc.2 Go-only runtime is deliberately small.
 
 ## 1. Service/runtime issue
 
@@ -18,7 +18,7 @@ For an installer-managed update:
 
     sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
 
-For a maintainer deployment, use the rollback set reported by deploy-pi.sh and the deployment runbook. Do not improvise a second deployment mechanism.
+For a maintainer exact-commit deployment, use the rollback set reported by deploy-pi.sh and the deployment runbook. Do not improvise a second deployment mechanism.
 
 ## 3. Registry backup
 
@@ -34,11 +34,11 @@ Stop Admin and MCP before restore so no process retains the old database state, 
 
 Restart services and run Doctor afterward. Unsupported schema versions fail closed.
 
-## 5. Disaster recovery
+## 5. Appliance-wide disaster-recovery backup
 
-    sudo scripts/backup-appliance.sh
+The supported release bundle does not ship a second host-backup mechanism. Registry recovery uses the canonical Go backup/restore commands above.
 
-The private archive includes the verified Registry snapshot, private local config required for recovery, gateway/host SSH identities, relevant systemd/polkit state, fingerprints and checksums. Optional age encryption is fail-closed.
+Maintainers working from a source checkout may additionally use `scripts/backup-appliance.sh` when a host-level archive of private configuration, SSH identities and system integration files is required. That script is a maintainer helper, not a release-bundle user command.
 
 ## Acceptance after recovery
 

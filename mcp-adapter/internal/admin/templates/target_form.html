@@ -16,7 +16,7 @@
 
     {% if not is_edit %}
     <div>
-      <label for="target-id" class="field-label">Target ID (unique key)</label>
+      <label for="target-id" class="field-label">Target key (stable identifier)</label>
       <input id="target-id" type="text" name="id" value="{% if target %}{{ target.id }}{% endif %}" required class="field font-mono" placeholder="e.g. termux-main">
     </div>
     {% endif %}
@@ -185,7 +185,7 @@
   <section class="card space-y-5 p-4 sm:p-6" aria-labelledby="ssh-identity-heading">
     <div>
       <h2 id="ssh-identity-heading" class="text-lg font-semibold text-white">SSH Host Identity</h2>
-      <p class="field-help mt-1">The Target ID is pinned to a verified SSH host fingerprint. Unknown or changed keys remain blocked until explicitly reviewed.</p>
+      <p class="field-help mt-1">The Target key is pinned to a verified SSH host fingerprint. Unknown or changed keys remain blocked until explicitly reviewed.</p>
     </div>
 
     {% if ssh_identity and ssh_identity.ok %}

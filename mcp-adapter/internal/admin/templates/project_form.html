@@ -19,13 +19,13 @@
       <label for="project-target" class="field-label">Target Host</label>
       <select id="project-target" name="target_id" required class="field font-mono">
         {% for t in targets %}
-          <option value="{{ t.id }}" {% if project and project.target_id == t.id %}selected{% endif %}>{{ t.id }} ({{ t.platform }})</option>
+          <option value="{{ t.id }}" {% if project and project.target_id == t.id %}selected{% endif %}>{{ t.display_name or t.id }} · {{ t.id }} ({{ t.platform }})</option>
         {% endfor %}
       </select>
     </div>
 
     <div>
-      <label for="project-id" class="field-label">Project ID (identifier)</label>
+      <label for="project-id" class="field-label">Project key (stable identifier)</label>
       <input id="project-id" type="text" name="id" value="{% if project %}{{ project.id }}{% endif %}" required class="field font-mono" placeholder="e.g. MCP_Local">
     </div>
     {% endif %}

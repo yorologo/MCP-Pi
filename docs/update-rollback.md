@@ -1,6 +1,6 @@
 # Update and rollback
 
-The 1.5.0-rc.1 candidate has one release artifact path and two consumers: user installation and maintainer exact-commit deployment.
+The 1.5.0-rc.2 candidate has one release artifact path and two consumers: user installation and maintainer exact-commit deployment.
 
 ## User update
 

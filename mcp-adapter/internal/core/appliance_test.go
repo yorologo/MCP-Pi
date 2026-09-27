@@ -66,12 +66,12 @@ func TestLoadDeploymentProvenanceFromRuntime(t *testing.T) {
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	content := `{"commit":"abc123","branch":"go-only-migration","deployed_at":"2026-09-27T03:35:13Z","verified":true}`
+	content := `{"commit":"abc123","branch":"develop","deployed_at":"2026-09-27T03:35:13Z","verified":true}`
 	if err := os.WriteFile(filepath.Join(runtimeDir, ".deployment.json"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got := loadDeploymentProvenance()
-	if got["available"] != true || got["commit"] != "abc123" || got["branch"] != "go-only-migration" || got["verified"] != true {
+	if got["available"] != true || got["commit"] != "abc123" || got["branch"] != "develop" || got["verified"] != true {
 		t.Fatalf("unexpected deployment provenance: %#v", got)
 	}
 }

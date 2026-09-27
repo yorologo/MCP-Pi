@@ -1,6 +1,6 @@
 # Installation
 
-install.sh is the canonical user install/reinstall/rollback entrypoint for the 1.5.0-rc.1 Go-only candidate. scripts/deploy-pi.sh is a separate maintainer exact-commit promotion path.
+install.sh is the canonical user install/reinstall/rollback entrypoint for the 1.5.0-rc.2 Go-only candidate. scripts/deploy-pi.sh is a separate maintainer exact-commit promotion path.
 
 ## Supported path
 

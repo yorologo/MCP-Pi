@@ -2,7 +2,7 @@
 
 ## Overview
 
-MCP-Pi 1.5.0-rc.1 uses github.com/modelcontextprotocol/go-sdk v1.7.0. MCP transport and the canonical Gateway Core live in the same Go process.
+MCP-Pi 1.5.0-rc.2 uses github.com/modelcontextprotocol/go-sdk v1.7.0. MCP transport and the canonical Gateway Core live in the same Go process.
 
 ## Boundaries
 

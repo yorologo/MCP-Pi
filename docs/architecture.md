@@ -1,6 +1,6 @@
 # Architecture
 
-MCP-Pi 1.5.0-rc.1 is a Go-only security gateway. The reference appliance centralizes MCP transport, policy, audit, Admin and lifecycle logic in one executable; Targets perform the delegated work.
+MCP-Pi 1.5.0-rc.2 is a Go-only security gateway. The reference appliance centralizes MCP transport, policy, audit, Admin and lifecycle logic in one executable; Targets perform the delegated work.
 
 ## Components
 

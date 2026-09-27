@@ -145,6 +145,7 @@ var defaultSettings = [][2]string{
 	{"max_write_bytes", "262144"},
 	{"max_diff_bytes", "65536"},
 	{"activity_retention", "5000"},
+	{"admin_timezone", "UTC"},
 }
 
 // Open opens the MCP-Pi registry with conservative SQLite settings suitable for

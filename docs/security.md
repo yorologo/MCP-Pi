@@ -1,6 +1,6 @@
 # Security model
 
-MCP-Pi 1.5.0-rc.1 applies KISS + Least Privilege + Deny by Default + Fail Closed.
+MCP-Pi 1.5.0-rc.2 applies KISS + Least Privilege + Deny by Default + Fail Closed.
 
 ## Core invariants
 
@@ -58,3 +58,7 @@ NoNewPrivileges remains enabled. Reboot is requested through systemd-logind with
 ## Audit
 
 Critical mutation/reboot/maintenance paths must not report success when required audit persistence fails. Audit data must not contain credentials or private key material.
+
+## Privileged Target execution
+
+`run_command` and allowlisted `run_task` share the same effective-privilege gate. If the Target transport is already root/Administrator or otherwise crosses the configured privilege boundary, an explicit `target_admin` grant plus the Target privilege policy and any required human approval must pass before execution. Privilege probing fails closed when the effective level cannot be established.

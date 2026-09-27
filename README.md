@@ -6,7 +6,7 @@ MCP-Pi is a small private MCP security gateway for delegating controlled work to
 
 | Contract | Candidate source |
 | --- | --- |
-| Gateway | 1.5.0-rc.1 |
+| Gateway | 1.5.0-rc.2 |
 | Runtime | Go-only |
 | Core API | 1 |
 | Bridge API | 1 |
@@ -14,7 +14,7 @@ MCP-Pi is a small private MCP security gateway for delegating controlled work to
 | Registry schema | 5 |
 | MCP protocol | 2026-07-28 |
 
-The source candidate is 1.5.0-rc.1. Production remains a separate authority until an exact candidate commit is deployed and accepted. Historical immutable releases remain under docs/releases and Git tags.
+The source candidate is 1.5.0-rc.2. Production remains a separate authority until an exact candidate commit is deployed and accepted. Historical immutable releases remain under docs/releases and Git tags.
 
 ## Security model
 

@@ -1,6 +1,6 @@
 # Configuration
 
-This document describes the 1.5.0-rc.1 Go-only runtime.
+This document describes the 1.5.0-rc.2 Go-only runtime.
 
 ## Paths
 
@@ -25,6 +25,8 @@ Common local environment values:
 - MCP_ADMIN_SECRET_FILE — exact file containing the secure-cookie signing secret.
 
 The signing secret is local private state. Regenerating it invalidates existing Admin sessions.
+
+`admin_timezone` is stored in the existing Registry settings table and defaults to `UTC`. It accepts an IANA time-zone identifier such as `America/Mexico_City`. The setting affects Admin presentation and date filters only; audit timestamps remain stored in UTC. Invalid zone identifiers are rejected.
 
 ## Targets and Projects
 

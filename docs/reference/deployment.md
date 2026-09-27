@@ -1,6 +1,6 @@
 # Deployment guide
 
-This is the maintainer path for promoting an exact 1.5.0-rc.1 Go-only candidate. It is not the normal user installer.
+This is the maintainer path for promoting an exact 1.5.0-rc.2 Go-only candidate. It is not the normal user installer.
 
 ## Production target
 

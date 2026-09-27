@@ -1,6 +1,6 @@
 # Admin Console
 
-The Admin Console in MCP-Pi 1.5.0-rc.1 is served by the same Go binary and Registry used by MCP.
+The Admin Console in MCP-Pi 1.5.0-rc.2 is served by the same Go binary and Registry used by MCP.
 
 ## Access
 
@@ -18,6 +18,8 @@ Interactive password entry is hidden. The signing secret comes from MCP_ADMIN_SE
 
 Admin manages Targets, Projects, AI Clients, Grants, Settings, Activity, System and Maintenance.
 
+Activity Audit stores its immutable timestamps in UTC but displays them in the configured Admin IANA time zone. LIVE mode reuses HTMX polling every three seconds and preserves the active filters; no WebSocket service is required.
+
 ## Administrative tables
 
 Mutations check Store errors before reporting success. Related multi-step Registry updates use the existing transaction mechanism where atomicity is required.
@@ -28,7 +30,7 @@ Use AI Clients → Grants to add, edit, toggle or delete explicit capabilities. 
 
 ## Target privilege policy
 
-Administrative Target capability is distinct from ordinary shell access. Configure the target_admin grant and Target policy deliberately.
+Administrative Target capability is distinct from ordinary shell access. Configure the target_admin grant and Target policy deliberately. Both arbitrary `run_command` execution and allowlisted `run_task` execution fail closed when the effective Target transport is privileged unless the `target_admin` gate and Target policy/approval pass.
 
 ## Security
 

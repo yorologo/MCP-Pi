@@ -16,7 +16,7 @@
     <table class="data-table w-full" data-admin-table data-search-label="Filter targets...">
       <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
         <tr>
-          <th class="py-3 px-4" data-sort-key="target">Target ID</th>
+          <th class="py-3 px-4" data-sort-key="target">Target</th>
           <th class="py-3 px-4" data-sort-key="platform">Platform</th>
           <th class="py-3 px-4" data-sort-key="projects" data-sort-type="number">Projects</th>
           <th class="py-3 px-4" data-sort-key="privilege">Privilege</th>
@@ -28,10 +28,8 @@
         {% for t in targets %}
         <tr class="hover:bg-slate-900/40">
           <td class="py-3 px-4">
-            <div class="font-mono font-medium text-white">{{ t.id }}</div>
-            {% if t.display_name and t.display_name != t.id %}
-              <div class="text-[11px] text-slate-400">{{ t.display_name }}</div>
-            {% endif %}
+            <div class="font-medium text-white">{{ t.display_name or t.id }}</div>
+            <div class="text-[11px] font-mono text-slate-500">{{ t.id }}</div>
           </td>
           <td class="py-3 px-4">{{ t.platform }}</td>
           <td class="py-3 px-4" data-sort-value="{{ t.project_count }}">

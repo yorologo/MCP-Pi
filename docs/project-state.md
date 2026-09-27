@@ -1,8 +1,8 @@
 # Current project state
 
-This file tracks source/integration state, not live production. The current candidate is MCP-Pi Gateway 1.5.0-rc.1 on go-only-migration.
+This file tracks source/integration state, not live production. The current source candidate is MCP-Pi Gateway 1.5.0-rc.2 on `develop`.
 
-main remains stable release history; production is not assumed to match this branch until exact-commit deployment and acceptance. Historical releases remain under docs/releases and Git tags.
+`main` currently points at the previously promoted 1.5.0-rc.1 candidate commit, so it is not used as the integration branch. Do not advance it again until a candidate from `develop` passes validation and is deliberately promoted. Historical releases remain under docs/releases and Git tags.
 
 ## Live production authority
 
@@ -17,7 +17,7 @@ Do not copy a mutable production version or SHA into this file and then treat pr
 
 ## Current source contract
 
-    Gateway candidate: 1.5.0-rc.1
+    Gateway candidate: 1.5.0-rc.2
     Runtime: Go-only
     Core API: 1
     Bridge API: 1

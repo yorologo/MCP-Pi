@@ -189,8 +189,6 @@ func URLFor(endpoint string, args ...interface{}) string {
 		return "/maintenance/backup"
 	case "admin.maintenance_repair":
 		return "/maintenance/repair"
-	case "admin.maintenance_rollback":
-		return "/maintenance/rollback"
 	case "auth.login":
 		if len(args) > 0 && fmt.Sprint(args[0]) != "" {
 			return fmt.Sprintf("/login?next=%s", url.QueryEscape(fmt.Sprint(args[0])))

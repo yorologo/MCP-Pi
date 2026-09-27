@@ -258,3 +258,72 @@ func TestRunTask(t *testing.T) {
 		t.Fatalf("expected TASK_NOT_FOUND, got: %+v", resp)
 	}
 }
+
+func TestRunTaskPrivilegeGatingOnElevatedTransport(t *testing.T) {
+	core, fake, ctx := seededExecutionCore(t)
+
+	if _, err := core.store.DB().ExecContext(ctx, `
+INSERT INTO project_tasks(target_id, project_id, task_name, argv_json, timeout, enabled)
+VALUES ('target-elevated', 'MCP_Local', 'audit-task', '["id"]', 30, 1);
+INSERT INTO grants(client_id, target_id, project_id, capability, enabled)
+VALUES ('test-client', 'target-elevated', 'MCP_Local', 'execute', 1);
+`); err != nil {
+		t.Fatal(err)
+	}
+
+	fake.facts = map[string]any{
+		"probe_status": "ok",
+		"privilege": map[string]any{
+			"current_level":              "root",
+			"maximum_level":              "root",
+			"backend":                    "privileged-ssh",
+			"backend_ready":              true,
+			"transport_already_elevated": true,
+			"shell_can_elevate":          false,
+		},
+	}
+
+	resp := core.RunTask(ctx, "req-task-elevated-1", "test-client", "target-elevated", "MCP_Local", "audit-task")
+	if resp.OK || resp.Error == nil || resp.Error.Code != "PRIVILEGE_GRANT_REQUIRED" {
+		t.Fatalf("expected PRIVILEGE_GRANT_REQUIRED, got: %+v", resp)
+	}
+	if fake.lastCommand != "" {
+		t.Fatalf("task executed before target_admin authorization: %q", fake.lastCommand)
+	}
+
+	if _, err := core.store.DB().ExecContext(ctx, `
+INSERT INTO grants(client_id, target_id, project_id, capability, enabled)
+VALUES ('test-client', 'target-elevated', 'MCP_Local', 'target_admin', 1);
+`); err != nil {
+		t.Fatal(err)
+	}
+
+	resp = core.RunTask(ctx, "req-task-elevated-2", "test-client", "target-elevated", "MCP_Local", "audit-task")
+	if resp.OK || resp.Error == nil || resp.Error.Code != "PRIVILEGE_APPROVAL_REQUIRED" {
+		t.Fatalf("expected PRIVILEGE_APPROVAL_REQUIRED, got: %+v", resp)
+	}
+
+	if err := core.store.SetPrivilegeApproval(ctx, "target-elevated", "ask_always", "test-client", "MCP_Local", ""); err != nil {
+		t.Fatal(err)
+	}
+	resp = core.RunTask(ctx, "req-task-elevated-3", "test-client", "target-elevated", "MCP_Local", "audit-task")
+	if !resp.OK {
+		t.Fatalf("expected authorized elevated task to execute, got: %+v", resp.Error)
+	}
+	if fake.lastCommand != "'id'" {
+		t.Fatalf("unexpected task command: %q", fake.lastCommand)
+	}
+}
+
+func TestRunTaskFailsClosedWhenPrivilegeProbeUnavailable(t *testing.T) {
+	core, fake, ctx := seededExecutionCore(t)
+	fake.factsErr = remote.NewError("SSH_TIMEOUT", "probe timed out", -1)
+
+	resp := core.RunTask(ctx, "req-task-probe", "test-client", "termux-main", "MCP_Local", "build")
+	if resp.OK || resp.Error == nil || resp.Error.Code != "PRIVILEGE_STATUS_UNAVAILABLE" {
+		t.Fatalf("expected PRIVILEGE_STATUS_UNAVAILABLE, got: %+v", resp)
+	}
+	if fake.lastCommand != "" {
+		t.Fatalf("task executed after failed privilege probe: %q", fake.lastCommand)
+	}
+}

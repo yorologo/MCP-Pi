@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/flosch/pongo2/v6"
+	"mcp-gateway-adapter/internal/buildinfo"
 	"mcp-gateway-adapter/internal/core"
 	"mcp-gateway-adapter/internal/discovery"
 	"mcp-gateway-adapter/internal/policy"
@@ -72,21 +73,14 @@ func getUptimeSec() int {
 	return int(f)
 }
 
-func invokeStatus(res map[string]any) (bool, string) {
-	if res == nil {
-		return false, "no response from core"
-	}
-	ok, _ := res["ok"].(bool)
-	if ok {
+func coreResponseStatus(res core.Response) (bool, string) {
+	if res.OK {
 		return true, ""
 	}
-	errMsg := "unknown error"
-	if errMap, isMap := res["error"].(map[string]any); isMap {
-		if m, isStr := errMap["message"].(string); isStr && m != "" {
-			errMsg = m
-		}
+	if res.Error != nil && res.Error.Message != "" {
+		return false, res.Error.Message
 	}
-	return false, errMsg
+	return false, "unknown error"
 }
 
 func safeLocalRedirect(val string) string {
@@ -212,59 +206,89 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	gwEnabledStr, _ := s.cfg.Store.GetSetting(r.Context(), "gateway_enabled", "true")
-	gwEnabled := gwEnabledStr == "true"
-	writesEnabledStr, _ := s.cfg.Store.GetSetting(r.Context(), "writes_enabled", "false")
-	writesEnabled := writesEnabledStr == "true"
+	ctx := r.Context()
+	gwEnabledStr, err := s.cfg.Store.GetSetting(ctx, "gateway_enabled", "true")
+	if err != nil {
+		http.Error(w, "Failed to load gateway state.", http.StatusInternalServerError)
+		return
+	}
+	writesEnabledStr, err := s.cfg.Store.GetSetting(ctx, "writes_enabled", "false")
+	if err != nil {
+		http.Error(w, "Failed to load writes state.", http.StatusInternalServerError)
+		return
+	}
 
-	targets, _ := s.cfg.Store.ListTargets(r.Context())
-	totalTargets := len(targets)
-	onlineTargets := 0
-	for _, t := range targets {
-		if t.Enabled {
-			onlineTargets++
+	targets, targetsErr := s.cfg.Store.ListTargets(ctx)
+	totalTargets := 0
+	enabledTargets := 0
+	if targetsErr == nil {
+		totalTargets = len(targets)
+		for _, target := range targets {
+			if target.Enabled {
+				enabledTargets++
+			}
 		}
 	}
 
-	projects, _ := s.cfg.Store.ListProjects(r.Context(), "")
-	totalProjects := len(projects)
+	projects, projectsErr := s.cfg.Store.ListProjects(ctx, "")
+	totalProjects := 0
+	if projectsErr == nil {
+		totalProjects = len(projects)
+	}
 
-	clients, _ := s.cfg.Store.ListClients(r.Context())
-	totalClients := len(clients)
+	clients, clientsErr := s.cfg.Store.ListClients(ctx)
+	totalClients := 0
+	if clientsErr == nil {
+		totalClients = len(clients)
+	}
 
-	totalRequests, _ := s.cfg.Store.GetActivityCount(r.Context())
-	recentActivity, _ := s.cfg.Store.ListActivity(r.Context(), 8, 0, registry.ActivityFilter{})
-	deniedCount := 0
-	for _, a := range recentActivity {
-		if !a.Success {
-			deniedCount++
+	totalRequests, activityCountErr := s.cfg.Store.GetActivityCount(ctx)
+	recentActivity, recentActivityErr := s.cfg.Store.ListActivity(ctx, 8, 0, registry.ActivityFilter{})
+
+	loc, timezoneName, err := loadAdminLocation(ctx, s.cfg.Store)
+	if err != nil {
+		http.Error(w, "Failed to load display time zone.", http.StatusInternalServerError)
+		return
+	}
+	if recentActivityErr == nil {
+		recentActivity, err = localizeActivity(recentActivity, loc)
+		if err != nil {
+			http.Error(w, "Failed to render activity timestamps.", http.StatusInternalServerError)
+			return
 		}
 	}
 
-	uptimeSec := getUptimeSec()
-
-	// MCP Adapter online check
-	mcpOnline := false
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:8090", 150*time.Millisecond)
-	if err == nil {
-		mcpOnline = true
-		conn.Close()
+	mcpReady := false
+	readyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	if req, err := http.NewRequestWithContext(readyCtx, http.MethodGet, "http://127.0.0.1:8090/ready", nil); err == nil {
+		client := &http.Client{Timeout: 500 * time.Millisecond}
+		if resp, err := client.Do(req); err == nil {
+			mcpReady = resp.StatusCode == http.StatusOK
+			_ = resp.Body.Close()
+		}
 	}
 
 	s.render(w, r, "dashboard.html", pongo2.Context{
-		"gateway_enabled": gwEnabled,
-		"writes_enabled":  writesEnabled,
-		"gateway_version": s.cfg.Version,
-		"total_targets":   totalTargets,
-		"online_targets":  onlineTargets,
-		"total_projects":  totalProjects,
-		"total_clients":   totalClients,
-		"total_requests":  totalRequests,
-		"denied_count":    deniedCount,
-		"uptime_sec":      uptimeSec,
-		"recent_activity": recentActivity,
-		"mcp_online":      mcpOnline,
-		"section":         "dashboard",
+		"gateway_enabled":          gwEnabledStr == "true",
+		"writes_enabled":           writesEnabledStr == "true",
+		"gateway_version":          s.cfg.Version,
+		"total_targets":            totalTargets,
+		"enabled_targets":          enabledTargets,
+		"targets_available":        targetsErr == nil,
+		"total_projects":           totalProjects,
+		"projects_available":       projectsErr == nil,
+		"total_clients":            totalClients,
+		"clients_available":        clientsErr == nil,
+		"total_requests":           totalRequests,
+		"activity_count_available": activityCountErr == nil,
+		"recent_activity":          recentActivity,
+		"activity_available":       recentActivityErr == nil,
+		"timezone":                 timezoneName,
+		"uptime_sec":               getUptimeSec(),
+		"mcp_ready":                mcpReady,
+		"mcp_protocol":             buildinfo.MCPProtocol,
+		"section":                  "dashboard",
 	})
 }
 
@@ -567,13 +591,11 @@ func (s *Server) handleTargetTest(w http.ResponseWriter, r *http.Request, target
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	sess := getSession(r)
-	res := s.cfg.Core.Invoke(ctx, core.Invocation{ClientID: sess.Username}, "target_status", map[string]interface{}{
-		"target": targetID,
-	})
+	res := s.cfg.Core.TargetStatus(ctx, "", targetID)
 
 	returnTo := r.FormValue("return_to")
 	dest := "/targets"
@@ -581,7 +603,7 @@ func (s *Server) handleTargetTest(w http.ResponseWriter, r *http.Request, target
 		dest = fmt.Sprintf("/targets/%s/edit", targetID)
 	}
 
-	if ok, errMsg := invokeStatus(res); ok {
+	if ok, errMsg := coreResponseStatus(res); ok {
 		sess.Flash(fmt.Sprintf("Connection test passed for Target '%s'.", targetID), "success")
 	} else {
 		sess.Flash(fmt.Sprintf("Connection test failed for Target '%s': %s", targetID, errMsg), "danger")
@@ -1161,35 +1183,105 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	live := r.URL.Query().Get("live") == "1"
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page < 1 {
+	if page < 1 || live {
 		page = 1
 	}
 	limit := 25
 	offset := (page - 1) * limit
 
-	filter := registry.ActivityFilter{
-		Actor:     r.URL.Query().Get("actor"),
-		Action:    r.URL.Query().Get("action"),
-		TargetID:  r.URL.Query().Get("target_id"),
-		ProjectID: r.URL.Query().Get("project_id"),
-		Result:    r.URL.Query().Get("result"),
-		From:      r.URL.Query().Get("from"),
-		To:        r.URL.Query().Get("to"),
+	loc, timezoneName, err := loadAdminLocation(ctx, s.cfg.Store)
+	if err != nil {
+		http.Error(w, "Failed to load display time zone.", http.StatusInternalServerError)
+		return
+	}
+	actorFilter := r.URL.Query().Get("actor")
+	actionFilter := r.URL.Query().Get("action")
+	targetFilter := r.URL.Query().Get("target_id")
+	projectFilter := r.URL.Query().Get("project_id")
+	resultFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("result")))
+	if resultFilter != "" && resultFilter != "pass" && resultFilter != "deny" {
+		http.Error(w, "Invalid result filter.", http.StatusBadRequest)
+		return
+	}
+	fromFilter := r.URL.Query().Get("from")
+	toFilter := r.URL.Query().Get("to")
+
+	fromUTC, err := localFilterToUTC(fromFilter, loc)
+	if err != nil {
+		http.Error(w, "Invalid From date/time filter.", http.StatusBadRequest)
+		return
+	}
+	toUTC, err := localFilterToUTC(toFilter, loc)
+	if err != nil {
+		http.Error(w, "Invalid To date/time filter.", http.StatusBadRequest)
+		return
+	}
+	if fromUTC != "" && toUTC != "" && fromUTC > toUTC {
+		http.Error(w, "From date/time must not be after To date/time.", http.StatusBadRequest)
+		return
 	}
 
-	total, _ := s.cfg.Store.GetActivityCountFiltered(r.Context(), filter)
+	filter := registry.ActivityFilter{
+		Actor:     actorFilter,
+		Action:    actionFilter,
+		TargetID:  targetFilter,
+		ProjectID: projectFilter,
+		Result:    strings.ToUpper(resultFilter),
+		From:      fromUTC,
+		To:        toUTC,
+	}
+	displayFilters := map[string]string{
+		"actor":      actorFilter,
+		"action":     actionFilter,
+		"target_id":  targetFilter,
+		"project_id": projectFilter,
+		"result":     resultFilter,
+		"from":       fromFilter,
+		"to":         toFilter,
+	}
+
+	total, err := s.cfg.Store.GetActivityCountFiltered(ctx, filter)
+	if err != nil {
+		http.Error(w, "Failed to count activity.", http.StatusInternalServerError)
+		return
+	}
 	totalPages := int(math.Ceil(float64(total) / float64(limit)))
 	if totalPages < 1 {
 		totalPages = 1
 	}
 
-	items, _ := s.cfg.Store.ListActivity(r.Context(), limit, offset, filter)
+	items, err := s.cfg.Store.ListActivity(ctx, limit, offset, filter)
+	if err != nil {
+		http.Error(w, "Failed to load activity.", http.StatusInternalServerError)
+		return
+	}
+	items, err = localizeActivity(items, loc)
+	if err != nil {
+		http.Error(w, "Failed to render activity timestamps.", http.StatusInternalServerError)
+		return
+	}
 
 	buildURL := func(p int) string {
 		q := r.URL.Query()
 		q.Set("page", strconv.Itoa(p))
 		return "/activity?" + q.Encode()
+	}
+	buildLiveURL := func(enabled bool) string {
+		q := r.URL.Query()
+		q.Del("page")
+		if enabled {
+			q.Set("live", "1")
+		} else {
+			q.Del("live")
+		}
+		encoded := q.Encode()
+		if encoded == "" {
+			return "/activity"
+		}
+		return "/activity?" + encoded
 	}
 
 	prevURL := ""
@@ -1200,17 +1292,25 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	if page < totalPages {
 		nextURL = buildURL(page + 1)
 	}
+	clearURL := "/activity"
+	if live {
+		clearURL = "/activity?live=1"
+	}
 
 	s.render(w, r, "activity.html", pongo2.Context{
-		"items":       items,
-		"page":        page,
-		"total_pages": totalPages,
-		"total":       total,
-		"prev_url":    prevURL,
-		"next_url":    nextURL,
-		"live":        r.URL.Query().Get("live") == "1",
-		"filters":     r.URL.Query(),
-		"section":     "activity",
+		"items":          items,
+		"page":           page,
+		"total_pages":    totalPages,
+		"total":          total,
+		"prev_url":       prevURL,
+		"next_url":       nextURL,
+		"live":           live,
+		"live_url":       buildLiveURL(true),
+		"pause_live_url": buildLiveURL(false),
+		"clear_url":      clearURL,
+		"filters":        displayFilters,
+		"timezone":       timezoneName,
+		"section":        "activity",
 	})
 }
 
@@ -1255,14 +1355,21 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/settings", http.StatusFound)
 			return
 		}
+		adminTimezone, err := validateAdminTimezone(r.FormValue("admin_timezone"))
+		if err != nil {
+			getSession(r).Flash(err.Error(), "danger")
+			http.Redirect(w, r, "/settings", http.StatusFound)
+			return
+		}
 
-		s.RecordAudit(r, "update_settings_attempt", "", "", true, "", "Update operational limits", true)
+		s.RecordAudit(r, "update_settings_attempt", "", "", true, "", "Update operational limits and display preferences", true)
 		values := map[string]string{
 			"default_timeout":     strconv.Itoa(timeout),
 			"max_output_bytes":    strconv.Itoa(maxOutput),
 			"max_file_read_bytes": strconv.Itoa(maxRead),
 			"max_write_bytes":     strconv.Itoa(maxWrite),
 			"activity_retention":  strconv.Itoa(retention),
+			"admin_timezone":      adminTimezone,
 		}
 		if s.failStoreMutation(w, r, "update_settings", "", "", s.cfg.Store.SetSettings(ctx, values)) {
 			return
@@ -1313,6 +1420,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
 		return
 	}
+	_, adminTimezone, err := loadAdminLocation(ctx, s.cfg.Store)
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
 
 	settings := map[string]interface{}{
 		"gateway_enabled":     gwEnabled == "true",
@@ -1323,6 +1435,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"max_file_read_bytes": maxRead,
 		"max_write_bytes":     maxWrite,
 		"activity_retention":  retention,
+		"admin_timezone":      adminTimezone,
 	}
 
 	s.render(w, r, "settings.html", pongo2.Context{
@@ -1433,40 +1546,81 @@ func (s *Server) handleSettingsToggleShell(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleMaintenance(w http.ResponseWriter, r *http.Request) {
-	home, _ := os.UserHomeDir()
+	ctx := r.Context()
+	loc, timezoneName, err := loadAdminLocation(ctx, s.cfg.Store)
+	if err != nil {
+		http.Error(w, "Failed to load display time zone.", http.StatusInternalServerError)
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to resolve gateway home.", http.StatusInternalServerError)
+		return
+	}
 	backupDir := filepath.Join(home, ".local", "share", "mcp-gateway", "backups")
-	entries, _ := os.ReadDir(backupDir)
+	entries, err := os.ReadDir(backupDir)
+	backupError := ""
+	if err != nil && !os.IsNotExist(err) {
+		backupError = err.Error()
+	}
 
 	var backups []map[string]interface{}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".db") {
-			info, err := e.Info()
-			if err == nil {
-				backups = append(backups, map[string]interface{}{
-					"name":    e.Name(),
-					"size_kb": info.Size() / 1024,
-					"mtime":   info.ModTime().Format(time.RFC3339),
-				})
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".db") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			backupError = err.Error()
+			continue
+		}
+		backups = append(backups, map[string]interface{}{
+			"name":    entry.Name(),
+			"size_kb": info.Size() / 1024,
+			"mtime":   info.ModTime().In(loc).Format(time.RFC3339),
+		})
+	}
+
+	doctor := s.cfg.Core.GatewayDoctor(ctx, "", core.DoctorOptions{CheckTargets: false})
+	overallStatus := "ERROR"
+	var checks []core.DoctorCheck
+	if doctor.OK {
+		if result, ok := doctor.Result.(map[string]any); ok {
+			if status, ok := result["status"].(string); ok && status != "" {
+				overallStatus = status
+			}
+			if doctorChecks, ok := result["checks"].([]core.DoctorCheck); ok {
+				checks = doctorChecks
 			}
 		}
 	}
 
+	info := buildinfo.Current()
+	sdkVersion := info.MCPSDKVersion
+	if sdkVersion == "" {
+		sdkVersion = "unknown"
+	}
 	compat := map[string]interface{}{
-		"bridge_api_version":      1,
-		"tool_catalog_version":    4,
-		"registry_schema_version": 5,
+		"gateway_version":         info.GatewayVersion,
+		"core_api_version":        info.CoreAPIVersion,
+		"bridge_api_version":      info.BridgeAPIVersion,
+		"tool_catalog_version":    info.ToolCatalogVersion,
+		"registry_schema_version": registry.SchemaVersion,
 		"mcp": map[string]interface{}{
-			"protocol": "2026-07-28",
-			"sdk":      "mcp-golang",
-			"version":  "v1.4.0",
+			"protocol": info.MCPProtocol,
+			"sdk":      "go-sdk",
+			"version":  sdkVersion,
 		},
 	}
 
 	s.render(w, r, "maintenance.html", pongo2.Context{
-		"overall_status": "HEALTHY",
+		"overall_status": overallStatus,
+		"checks":         checks,
 		"compat":         compat,
 		"tool_count":     len(core.CatalogTools()),
 		"backups":        backups,
+		"backup_error":   backupError,
+		"timezone":       timezoneName,
 		"section":        "maintenance",
 	})
 }
@@ -1477,12 +1631,12 @@ func (s *Server) handleMaintenanceDoctor(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	sess := getSession(r)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	res := s.cfg.Core.Invoke(ctx, core.Invocation{ClientID: sess.Username}, "gateway_doctor", nil)
-	if ok, errMsg := invokeStatus(res); ok {
-		sess.Flash("Doctor diagnostics passed: PRAGMA integrity check OK.", "success")
+	res := s.cfg.Core.GatewayDoctor(ctx, "", core.DoctorOptions{CheckTargets: true})
+	if ok, errMsg := coreResponseStatus(res); ok {
+		sess.Flash("Doctor diagnostics completed successfully.", "success")
 	} else {
 		sess.Flash(fmt.Sprintf("Doctor reported issues: %s", errMsg), "danger")
 	}
@@ -1495,12 +1649,12 @@ func (s *Server) handleMaintenanceBackup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	sess := getSession(r)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	res := s.cfg.Core.Invoke(ctx, core.Invocation{ClientID: sess.Username}, "gateway_backup", nil)
-	if ok, errMsg := invokeStatus(res); ok {
-		sess.Flash("Online VACUUM backup created successfully.", "success")
+	res := s.cfg.Core.GatewayBackup(ctx, "", sess.Username, "")
+	if ok, errMsg := coreResponseStatus(res); ok {
+		sess.Flash("Verified online Registry backup created successfully.", "success")
 	} else {
 		sess.Flash(fmt.Sprintf("Backup failed: %s", errMsg), "danger")
 	}
@@ -1513,27 +1667,15 @@ func (s *Server) handleMaintenanceRepair(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	sess := getSession(r)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	res := s.cfg.Core.Invoke(ctx, core.Invocation{ClientID: sess.Username}, "gateway_maintenance", map[string]interface{}{
-		"action": "vacuum",
-	})
-	if ok, errMsg := invokeStatus(res); ok {
-		sess.Flash("SQLite VACUUM and integrity repair completed.", "success")
+	res := s.cfg.Core.GatewayMaintenance(ctx, "", sess.Username)
+	if ok, errMsg := coreResponseStatus(res); ok {
+		sess.Flash("Safe gateway maintenance completed successfully.", "success")
 	} else {
 		sess.Flash(fmt.Sprintf("Maintenance action failed: %s", errMsg), "danger")
 	}
-	http.Redirect(w, r, "/maintenance", http.StatusFound)
-}
-
-func (s *Server) handleMaintenanceRollback(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	sess := getSession(r)
-	sess.Flash("Rollback requires maintainer runner: scripts/run-resumable.sh rollback", "warning")
 	http.Redirect(w, r, "/maintenance", http.StatusFound)
 }
 

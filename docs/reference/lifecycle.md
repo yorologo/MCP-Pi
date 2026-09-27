@@ -1,6 +1,6 @@
 # MCP Gateway lifecycle and operations
 
-MCP-Pi 1.5.0-rc.1 keeps lifecycle responsibilities in the Go CLI while thin shell scripts orchestrate operating-system services and release files.
+MCP-Pi 1.5.0-rc.2 keeps lifecycle responsibilities in the Go CLI while thin shell scripts orchestrate operating-system services and release files.
 
 ## Runtime tree
 

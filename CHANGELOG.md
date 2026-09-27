@@ -2,6 +2,33 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
+## 1.5.0-rc.2 — candidate
+
+### Security
+- `run_task` now reuses the same effective Target privilege gate as `run_command`; allowlisted tasks cannot execute through an already root/Administrator transport without explicit `target_admin` authorization and the configured privilege policy/approval.
+- Privilege probing for task execution fails closed when the effective level cannot be established.
+
+### Fixed
+- Activity Audit LIVE now has functional enable/pause URLs, preserves active filters, and activates the existing HTMX three-second polling path.
+- Activity result filters normalize PASS/DENY consistently instead of silently missing lowercase form values.
+- Nested numeric values rendered by the Admin Console preserve integer semantics instead of becoming `.000000` floats.
+- Maintenance & Diagnostics now consumes real Doctor/build metadata, invokes the existing maintenance contract correctly, and no longer exposes a non-existent web rollback path.
+- Dashboard wording distinguishes enabled configuration from reachability and uses MCP `/ready` rather than a raw TCP listener check.
+
+### Added
+- Admin Console display time zone setting using IANA identifiers. Audit storage remains UTC; Activity timestamps and date filters are converted at the presentation boundary.
+- Focused regression coverage for effective task privilege, Activity LIVE, time-zone conversion, result filtering, numeric presentation and Maintenance contracts.
+
+### Changed
+- Admin tables prioritize display names while retaining stable Target/Project/Client keys as secondary operational metadata; internal Grant IDs are no longer a primary table column.
+- Current recovery documentation distinguishes release-bundle Registry backup/restore from the maintainer-only source-checkout appliance backup helper.
+- Removed the unused backup-manifest example that duplicated metadata generated directly by the maintainer backup helper and was otherwise shipped without a consumer.
+- Integration work is documented on `develop`; the retired `go-only-migration` branch is no longer part of active CI.
+
+### Compatibility
+- Gateway candidate advances from 1.5.0-rc.1 to 1.5.0-rc.2.
+- Core API, Bridge API, Tool Catalog, MCP protocol and Registry schema remain unchanged.
+
 ## 1.4.0 — 2026-09-24
 
 ### Added

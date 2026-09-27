@@ -4,7 +4,7 @@
 
 | Contract | Value |
 | --- | --- |
-| Gateway | 1.5.0-rc.1 |
+| Gateway | 1.5.0-rc.2 |
 | Runtime | Go-only |
 | Core API | 1 |
 | Bridge API | 1 |
@@ -46,4 +46,4 @@ Authorization remains independent of transport. Authentication, client identity,
 
 ## Release identity
 
-Do not reuse an immutable published version number for changed software. 1.5.0-rc.1 is a prerelease candidate until later validation justifies promotion.
+Do not reuse an immutable published version number for changed software. 1.5.0-rc.2 is a prerelease candidate until later validation justifies promotion.

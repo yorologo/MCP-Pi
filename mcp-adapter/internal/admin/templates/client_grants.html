@@ -19,7 +19,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="flex items-center justify-between gap-4">
       <div>
-        <h2 class="text-lg font-semibold text-white">{% if editing_grant %}Edit Grant #{{ editing_grant.id }}{% else %}Add Grant{% endif %}</h2>
+        <h2 class="text-lg font-semibold text-white">{% if editing_grant %}Edit Grant{% else %}Add Grant{% endif %}</h2>
         <p class="text-xs text-slate-400">Prefer the narrowest Target, Project and capability that meets the need.</p>
       </div>
       {% if editing_grant %}<a href="{{ url_for('admin.client_grants', client.id) }}" class="btn-secondary">Cancel edit</a>{% endif %}
@@ -31,14 +31,14 @@
         <select id="grant-target" name="target_id" class="field font-mono" required>
           <option value="">Select Target</option>
           <option value="*" {% if editing_grant and editing_grant.target_id == '*' %}selected{% endif %}>* (all targets)</option>
-          {% for target in targets %}<option value="{{ target.id }}" {% if editing_grant and editing_grant.target_id == target.id %}selected{% endif %}>{{ target.id }}{% if not target.enabled %} (disabled){% endif %}</option>{% endfor %}
+          {% for target in targets %}<option value="{{ target.id }}" {% if editing_grant and editing_grant.target_id == target.id %}selected{% endif %}>{{ target.display_name or target.id }} · {{ target.id }}{% if not target.enabled %} (disabled){% endif %}</option>{% endfor %}
         </select>
       </div>
       <div>
         <label for="grant-project" class="field-label">Project</label>
         <select id="grant-project" name="project_id" class="field font-mono" required>
           <option value="*" {% if not editing_grant or not editing_grant.project_id or editing_grant.project_id == '*' %}selected{% endif %}>* (all projects in scope)</option>
-          {% for project in projects %}<option value="{{ project.id }}" {% if editing_grant and editing_grant.project_id == project.id %}selected{% endif %}>{{ project.target_id }} / {{ project.id }}{% if not project.enabled %} (disabled){% endif %}</option>{% endfor %}
+          {% for project in projects %}<option value="{{ project.id }}" {% if editing_grant and editing_grant.project_id == project.id %}selected{% endif %}>{{ project.display_name or project.id }} · {{ project.target_id }} / {{ project.id }}{% if not project.enabled %} (disabled){% endif %}</option>{% endfor %}
         </select>
       </div>
     </div>
@@ -102,7 +102,6 @@
     <table id="grants-table" class="data-table w-full" data-admin-table data-search-label="Filter grants..." data-high-impact-toggle="true">
       <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
         <tr>
-          <th class="py-3 px-4" data-sort-key="id">ID</th>
           <th class="py-3 px-4" data-sort-key="target">Target</th>
           <th class="py-3 px-4" data-sort-key="project">Project</th>
           <th class="py-3 px-4" data-sort-key="capability">Capability</th>
@@ -114,7 +113,6 @@
         {% for grant in grants %}
         {% set high_impact = '*' in grant.capability or 'target_admin' in grant.capability %}
         <tr data-high-impact="{% if high_impact %}true{% else %}false{% endif %}" class="hover:bg-slate-900/40 {% if high_impact %}bg-amber-950/10{% endif %}">
-          <td class="py-3 px-4 font-mono">#{{ grant.id }}</td>
           <td class="py-3 px-4 font-mono">{{ grant.target_id }}</td>
           <td class="py-3 px-4 font-mono">{{ grant.project_id or '*' }}</td>
           <td class="py-3 px-4 font-mono text-indigo-300">
@@ -131,12 +129,12 @@
             <a href="{{ url_for('admin.client_grants', client.id, grant.id) }}#grant-form" class="btn-secondary">Edit</a>
             <form method="POST" action="{{ url_for('admin.client_grant_delete', client.id, grant.id) }}" class="inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="px-3 py-2 rounded border border-rose-800 bg-rose-950/60 text-rose-300" data-confirm="Delete grant #{{ grant.id }} for {{ client.id }}?">Delete</button>
+              <button type="submit" class="px-3 py-2 rounded border border-rose-800 bg-rose-950/60 text-rose-300" data-confirm="Delete {{ grant.capability }} grant for {{ client.id }}?">Delete</button>
             </form>
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="6" class="py-6 text-center text-slate-500">No grants configured for this client.</td></tr>
+        <tr><td colspan="5" class="py-6 text-center text-slate-500">No grants configured for this client.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -146,11 +144,11 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div>
       <h2 class="text-lg font-semibold text-white">Check Effective Access</h2>
-      <p class="text-xs text-slate-400">Checks ordinary tool access through <code>authorize_client()</code>. A privileged <code>run_command</code> additionally requires explicit <code>target_admin</code> plus the Target privilege policy/approval.</p>
+      <p class="text-xs text-slate-400">Checks ordinary tool access through <code>authorize_client()</code>. Execution on an already privileged Target, including <code>run_command</code> and allowlisted <code>run_task</code>, additionally requires explicit <code>target_admin</code> plus the Target privilege policy/approval.</p>
     </div>
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <div><label for="check-target" class="field-label">Target</label><select id="check-target" name="target_id" class="field font-mono"><option value="*">* (no Target constraint)</option>{% for target in targets %}<option value="{{ target.id }}">{{ target.id }}</option>{% endfor %}</select></div>
-      <div><label for="check-project" class="field-label">Project</label><select id="check-project" name="project_id" class="field font-mono"><option value="*">* (no Project constraint)</option>{% for project in projects %}<option value="{{ project.id }}">{{ project.target_id }} / {{ project.id }}</option>{% endfor %}</select></div>
+      <div><label for="check-target" class="field-label">Target</label><select id="check-target" name="target_id" class="field font-mono"><option value="*">* (no Target constraint)</option>{% for target in targets %}<option value="{{ target.id }}">{{ target.display_name or target.id }} · {{ target.id }}</option>{% endfor %}</select></div>
+      <div><label for="check-project" class="field-label">Project</label><select id="check-project" name="project_id" class="field font-mono"><option value="*">* (no Project constraint)</option>{% for project in projects %}<option value="{{ project.id }}">{{ project.display_name or project.id }} · {{ project.target_id }} / {{ project.id }}</option>{% endfor %}</select></div>
       <div><label for="check-tool" class="field-label">Tool</label><select id="check-tool" name="tool_name" class="field font-mono" required>{% for tool in tool_names %}<option value="{{ tool }}">{{ tool }}</option>{% endfor %}</select></div>
     </div>
     <div class="flex justify-end"><button type="submit" class="btn-primary">Check Access</button></div>

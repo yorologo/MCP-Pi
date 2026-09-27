@@ -16,7 +16,7 @@ MCP-Pi documentation is split by authority.
 - [Admin Console](admin-console.md)
 - [Project state](project-state.md)
 
-These documents describe the 1.5.0-rc.1 Go-only source candidate. They do not claim that production has already been promoted.
+These documents describe the 1.5.0-rc.2 Go-only source candidate. They do not claim that production has already been promoted.
 
 ## REFERENCE — deep technical detail
 

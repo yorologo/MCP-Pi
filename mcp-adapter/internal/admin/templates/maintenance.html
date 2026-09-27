@@ -28,7 +28,7 @@
         <h2 class="text-base font-semibold text-white flex items-center gap-2">
           <span>🩺</span> Doctor Health Check
         </h2>
-        <span class="px-2.5 py-1 text-xs font-semibold rounded-full border {% if overall_status == 'HEALTHY' %}bg-emerald-950 border-emerald-800 text-emerald-300{% elif overall_status == 'DEGRADED' %}bg-amber-950 border-amber-800 text-amber-300{% else %}bg-rose-950 border-rose-800 text-rose-300{% endif %}">
+        <span class="px-2.5 py-1 text-xs font-semibold rounded-full border {% if overall_status == 'HEALTHY' %}bg-emerald-950 border-emerald-800 text-emerald-300{% elif overall_status == 'WARNING' %}bg-amber-950 border-amber-800 text-amber-300{% else %}bg-rose-950 border-rose-800 text-rose-300{% endif %}">
           {{ overall_status }}
         </span>
       </div>
@@ -61,7 +61,7 @@
         <form method="POST" action="{{ url_for('admin.maintenance_repair') }}" class="w-full sm:w-auto">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn w-full border-amber-800 bg-amber-950/60 text-amber-300 hover:bg-amber-900">
-            🔨 Execute Safe Repair
+            🔨 Run Safe Maintenance
           </button>
         </form>
       </div>
@@ -99,13 +99,13 @@
         </div>
         <div class="flex flex-col gap-1 sm:flex-row sm:justify-between">
           <span class="text-slate-400">MCP SDK:</span>
-          <span class="font-mono text-slate-200">{{ compat.mcp.sdk }} v{{ compat.mcp.version }}</span>
+          <span class="font-mono text-slate-200">{{ compat.mcp.sdk }} {{ compat.mcp.version }}</span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Bottom Grid: Backups & Release Rollback -->
+  <!-- Bottom Grid: Backups & Rollback Guidance -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Backups Management -->
     <div class="card space-y-4 p-4 shadow sm:p-6">
@@ -113,8 +113,14 @@
         <h2 class="text-base font-semibold text-white flex items-center gap-2">
           <span>📦</span> Database Backups
         </h2>
-        <span class="text-xs text-slate-400">{{ backups|length }} backups found</span>
+        <span class="text-xs text-slate-400">{{ backups|length }} backups found · {{ timezone }}</span>
       </div>
+
+      {% if backup_error %}
+      <div class="rounded border border-amber-900/60 bg-amber-950/20 px-3 py-2 text-xs text-amber-300">
+        Backup directory could not be read: {{ backup_error }}
+      </div>
+      {% endif %}
 
       <div class="max-h-60 overflow-y-auto divide-y divide-slate-800/60 text-sm">
         {% if backups %}
@@ -136,37 +142,18 @@
     <!-- Release & Rollback -->
     <div class="card space-y-4 p-4 shadow sm:p-6">
       <h2 class="text-base font-semibold text-white flex items-center gap-2">
-        <span>🔄</span> Release Management & Rollback
+        <span>🔄</span> Release Rollback
       </h2>
       <p class="text-xs text-slate-400">
-        MCP Gateway supports versioned releases and instant rollback to the previous version if schema compatibility permits.
+        Rollback is intentionally kept out of the web console because it mutates the running control plane and requires maintainer-level host access.
       </p>
-
-      <div class="space-y-3 text-sm">
-        <div class="flex flex-col gap-1 border-b border-slate-800/60 pb-2 sm:flex-row sm:justify-between">
-          <span class="text-slate-400">Active Release Target:</span>
-          <span class="max-w-xs break-all font-mono text-xs text-indigo-400 sm:text-right">{{ current_target }}</span>
-        </div>
-        <div class="flex flex-col gap-1 border-b border-slate-800/60 pb-2 sm:flex-row sm:justify-between">
-          <span class="text-slate-400">Previous Release:</span>
-          <span class="max-w-xs break-all font-mono text-xs text-slate-300 sm:text-right">{{ previous_target or 'None available' }}</span>
-        </div>
+      <div class="rounded border border-slate-800 bg-slate-950/60 p-3">
+        <div class="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Canonical installer-managed rollback</div>
+        <code class="block break-all text-xs text-indigo-300">sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback</code>
       </div>
-
-      <div class="flex items-center justify-between pt-2">
-        {% if previous_target %}
-        <form method="POST" action="{{ url_for('admin.maintenance_rollback') }}" class="inline">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" data-confirm="Rollback active release to previous version?" class="btn w-full border-amber-500 bg-amber-600 text-white hover:bg-amber-500 sm:w-auto">
-            ⏪ Rollback to Previous Version
-          </button>
-        </form>
-        {% else %}
-        <button disabled class="btn-secondary w-full sm:w-auto">
-          No Previous Release to Rollback
-        </button>
-        {% endif %}
-      </div>
+      <p class="text-[11px] text-slate-500">
+        Use the deployment runbook for maintainer exact-commit rollbacks. Do not create a second rollback mechanism from Admin.
+      </p>
     </div>
   </div>
 </div>

@@ -1,6 +1,6 @@
 # Controlled write architecture
 
-Structured filesystem mutation is a Go Core capability in MCP-Pi 1.5.0-rc.1. It is separate from trusted Target shell.
+Structured filesystem mutation is a Go Core capability in MCP-Pi 1.5.0-rc.2. It is separate from trusted Target shell.
 
 ## Authorization flow
 

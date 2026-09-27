@@ -68,6 +68,7 @@ func TestFreshRegistrySafeDefaults(t *testing.T) {
 		"writes_enabled":  "false",
 		"shell_enabled":   "false",
 		"default_timeout": "30",
+		"admin_timezone":  "UTC",
 	} {
 		got, err := store.GetSetting(ctx, key, "")
 		if err != nil {
@@ -114,6 +115,7 @@ func TestCurrentDocumentationDescribesGoOnlyCandidate(t *testing.T) {
 		"scripts/benchmark_runtime.py",
 		"Flask Admin",
 		"Flask session",
+		"go-only-migration",
 	}
 	for _, rel := range current {
 		data, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(rel)))

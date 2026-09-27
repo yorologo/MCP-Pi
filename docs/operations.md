@@ -17,7 +17,7 @@ gateway_enabled gates operations globally. writes_enabled gates structured mutat
 
 ## Target privilege
 
-Administrative Target execution requires normal authorization plus target_admin and the Target privilege policy. Do not use general sudo on the appliance as a substitute.
+Administrative Target execution requires normal authorization plus target_admin and the Target privilege policy. The same effective-privilege gate protects both run_command and allowlisted run_task execution. Do not use general sudo on the appliance as a substitute.
 
 ## Backup
 
@@ -25,11 +25,7 @@ Registry-only online backup:
 
     sudo -u mcp-gateway mcp-gateway backup
 
-Disaster-recovery appliance bundle:
-
-    sudo scripts/backup-appliance.sh
-
-If BACKUP_AGE_RECIPIENT is set, backup-appliance refuses plaintext fallback when age is unavailable.
+This is the canonical backup operation shipped in release bundles. A source checkout also contains scripts/backup-appliance.sh for maintainer-only host-level disaster-recovery archives; it is not part of the release bundle interface.
 
 ## Maintenance
 

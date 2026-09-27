@@ -36,26 +36,26 @@
   <!-- Metric Cards -->
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="card p-5">
-      <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Targets Online</div>
-      <div class="text-2xl font-bold text-white mt-2">{{ online_targets }} <span class="text-sm font-normal text-slate-500">/ {{ total_targets }}</span></div>
-      <div class="text-xs text-slate-500 mt-1">Configured SSH targets</div>
+      <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Enabled Targets</div>
+      <div class="text-2xl font-bold text-white mt-2">{% if targets_available %}{{ enabled_targets }} <span class="text-sm font-normal text-slate-500">/ {{ total_targets }}</span>{% else %}<span class="text-base text-amber-300">Unavailable</span>{% endif %}</div>
+      <div class="text-xs text-slate-500 mt-1">Enabled configuration / total Targets</div>
     </div>
 
     <div class="card p-5">
-      <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Active Projects</div>
-      <div class="text-2xl font-bold text-white mt-2">{{ total_projects }}</div>
-      <div class="text-xs text-slate-500 mt-1">Scoped project directories</div>
+      <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Projects</div>
+      <div class="text-2xl font-bold text-white mt-2">{% if projects_available %}{{ total_projects }}{% else %}<span class="text-base text-amber-300">Unavailable</span>{% endif %}</div>
+      <div class="text-xs text-slate-500 mt-1">Scoped project configurations</div>
     </div>
 
     <div class="card p-5">
       <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">AI Clients</div>
-      <div class="text-2xl font-bold text-white mt-2">{{ total_clients }}</div>
+      <div class="text-2xl font-bold text-white mt-2">{% if clients_available %}{{ total_clients }}{% else %}<span class="text-base text-amber-300">Unavailable</span>{% endif %}</div>
       <div class="text-xs text-slate-500 mt-1">Registered consumer identities</div>
     </div>
 
     <div class="card p-5">
       <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Audit Log Items</div>
-      <div class="text-2xl font-bold text-white mt-2">{{ total_requests }}</div>
+      <div class="text-2xl font-bold text-white mt-2">{% if activity_count_available %}{{ total_requests }}{% else %}<span class="text-base text-amber-300">Unavailable</span>{% endif %}</div>
       <div class="text-xs text-slate-500 mt-1">Requests recorded</div>
     </div>
   </div>
@@ -73,7 +73,7 @@
         <table class="min-w-[36rem] w-full text-left text-xs">
           <thead class="text-slate-400 border-b border-slate-800">
             <tr>
-              <th class="py-2 px-3">Time</th>
+              <th class="py-2 px-3">Time ({{ timezone }})</th>
               <th class="py-2 px-3">Action</th>
               <th class="py-2 px-3">Target / Project</th>
               <th class="py-2 px-3">Status</th>
@@ -97,7 +97,7 @@
             </tr>
             {% empty %}
             <tr>
-              <td colspan="4" class="py-4 text-center text-slate-500">No activity logged yet</td>
+              <td colspan="4" class="py-4 text-center text-slate-500">{% if activity_available %}No activity logged yet{% else %}Activity unavailable{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -118,10 +118,6 @@
           <span class="break-all font-mono text-slate-200 sm:text-right">{{ request.host }}</span>
         </div>
         <div class="flex flex-col gap-1 border-b border-slate-900 py-2 sm:flex-row sm:justify-between">
-          <span class="text-slate-400">Pi-hole Protection</span>
-          <span class="font-mono text-emerald-400">Preserved (Untouched)</span>
-        </div>
-        <div class="flex flex-col gap-1 border-b border-slate-900 py-2 sm:flex-row sm:justify-between">
           <span class="text-slate-400">Controlled Writes</span>
           {% if writes_enabled %}
             <span class="font-mono text-amber-400 font-semibold flex items-center gap-1">
@@ -138,19 +134,19 @@
           <div class="space-y-1.5">
             <div class="flex justify-between">
               <span class="text-slate-400">MCP Adapter</span>
-              {% if mcp_online %}
+              {% if mcp_ready %}
                 <span class="font-mono text-emerald-400 font-semibold flex items-center gap-1">
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> ONLINE
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> READY
                 </span>
               {% else %}
                 <span class="font-mono text-slate-500 flex items-center gap-1">
-                  <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span> OFFLINE
+                  <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span> NOT READY
                 </span>
               {% endif %}
             </div>
             <div class="flex justify-between">
               <span class="text-slate-400">Protocol</span>
-              <span class="font-mono text-slate-300">2026-07-28</span>
+              <span class="font-mono text-slate-300">{{ mcp_protocol }}</span>
             </div>
             <div class="flex justify-between">
               <span class="text-slate-400">Transport</span>

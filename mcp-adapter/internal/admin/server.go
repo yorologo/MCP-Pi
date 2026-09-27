@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -302,10 +303,37 @@ func toTemplateData(v any) any {
 			return v
 		}
 		var out any
-		if err := json.Unmarshal(b, &out); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.UseNumber()
+		if err := dec.Decode(&out); err != nil {
 			return v
 		}
-		return out
+		return normalizeTemplateNumbers(out)
+	}
+}
+
+func normalizeTemplateNumbers(v any) any {
+	switch value := v.(type) {
+	case json.Number:
+		if i, err := value.Int64(); err == nil {
+			return i
+		}
+		if f, err := value.Float64(); err == nil {
+			return f
+		}
+		return value.String()
+	case []any:
+		for i := range value {
+			value[i] = normalizeTemplateNumbers(value[i])
+		}
+		return value
+	case map[string]any:
+		for key, item := range value {
+			value[key] = normalizeTemplateNumbers(item)
+		}
+		return value
+	default:
+		return v
 	}
 }
 
@@ -421,7 +449,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/maintenance/doctor", s.requireAuth(s.handleMaintenanceDoctor))
 	s.mux.HandleFunc("/maintenance/backup", s.requireAuth(s.handleMaintenanceBackup))
 	s.mux.HandleFunc("/maintenance/repair", s.requireAuth(s.handleMaintenanceRepair))
-	s.mux.HandleFunc("/maintenance/rollback", s.requireAuth(s.handleMaintenanceRollback))
 
 	// System
 	s.mux.HandleFunc("/system", s.requireAuth(s.handleSystem))

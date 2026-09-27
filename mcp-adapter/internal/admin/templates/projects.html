@@ -23,7 +23,7 @@
     <table class="data-table w-full" data-admin-table data-search-label="Filter projects...">
       <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
         <tr>
-          <th class="py-3 px-4" data-sort-key="project">Target / Project ID</th>
+          <th class="py-3 px-4" data-sort-key="project">Project</th>
           <th class="py-3 px-4" data-sort-key="root">Root Path</th>
           <th class="py-3 px-4" data-sort-key="permissions">Permissions</th>
           <th class="py-3 px-4" data-sort-key="status">Status</th>
@@ -34,8 +34,8 @@
         {% for p in projects %}
         <tr class="hover:bg-slate-900/40">
           <td class="py-3 px-4">
-            <div class="font-mono font-medium text-white">{{ p.id }}</div>
-            <div class="text-[11px] text-slate-500 font-mono">Target: {{ p.target_id }}</div>
+            <div class="font-medium text-white">{{ p.display_name or p.id }}</div>
+            <div class="text-[11px] text-slate-500 font-mono">{{ p.target_id }} / {{ p.id }}</div>
           </td>
           <td class="max-w-xs break-all py-3 px-4 font-mono text-slate-300">{{ p.root }}</td>
           <td class="py-3 px-4">

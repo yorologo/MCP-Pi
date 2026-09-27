@@ -1,6 +1,6 @@
 # Getting started
 
-The current source candidate is MCP-Pi 1.5.0-rc.1 and uses a Go-only appliance runtime.
+The current source candidate is MCP-Pi 1.5.0-rc.2 and uses a Go-only appliance runtime.
 
 ## 1. Requirements
 
