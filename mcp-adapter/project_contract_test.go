@@ -203,4 +203,17 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	if !strings.Contains(deployer, "SQLite integrity: ok; schema: (4|5);") {
 		t.Fatal("deployment must validate rollback backup integrity/schema without migration")
 	}
+
+	candidateValidation := []string{
+		`sudo sha256sum "$candidate/bin/mcp-gateway-adapter"`,
+		`sudo "$candidate/bin/mcp-gateway-adapter" version --json`,
+		`sudo "$candidate/install.sh" --check`,
+		`sudo find "$candidate"`,
+		`sudo systemd-analyze verify "$candidate/config/systemd/$unit"`,
+	}
+	for _, required := range candidateValidation {
+		if !strings.Contains(deployer, required) {
+			t.Errorf("root-owned deployment candidate validation missing %q", required)
+		}
+	}
 }

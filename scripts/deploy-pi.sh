@@ -225,12 +225,12 @@ sudo mkdir -p "$candidate"
 sudo cp -a "$pkg/." "$candidate/"
 sudo chown -R root:root "$candidate"
 sudo chmod 0755 "$candidate/bin/mcp-gateway-adapter" "$candidate/bin/mcp-gateway" "$candidate/bin/mcp-gateway-client-stdio" "$candidate/install.sh"
-test "$(sha256sum "$candidate/bin/mcp-gateway-adapter" | awk '{print $1}')" = "$expected_sha"
-"$candidate/bin/mcp-gateway-adapter" version --json | grep -q '"registry_schema_version": 5'
-"$candidate/install.sh" --check >/dev/null
-if find "$candidate" -type f \( -name '*.py' -o -name requirements.txt \) -print -quit | grep -q .; then exit 45; fi
+test "$(sudo sha256sum "$candidate/bin/mcp-gateway-adapter" | awk '{print $1}')" = "$expected_sha"
+sudo "$candidate/bin/mcp-gateway-adapter" version --json | grep -q '"registry_schema_version": 5'
+sudo "$candidate/install.sh" --check >/dev/null
+if sudo find "$candidate" -type f \( -name '*.py' -o -name requirements.txt \) -print -quit | grep -q .; then exit 45; fi
 for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service; do
-    systemd-analyze verify "$candidate/config/systemd/$unit"
+    sudo systemd-analyze verify "$candidate/config/systemd/$unit"
 done
 REMOTE
 
