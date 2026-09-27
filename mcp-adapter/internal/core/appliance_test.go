@@ -59,6 +59,31 @@ func TestGatewayStatus(t *testing.T) {
 	}
 }
 
+func TestLoadDeploymentProvenanceFromRuntime(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MCP_GATEWAY_HOME", home)
+	runtimeDir := filepath.Join(home, "mcp-gateway")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"commit":"abc123","branch":"go-only-migration","deployed_at":"2026-09-27T03:35:13Z","verified":true}`
+	if err := os.WriteFile(filepath.Join(runtimeDir, ".deployment.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := loadDeploymentProvenance()
+	if got["available"] != true || got["commit"] != "abc123" || got["branch"] != "go-only-migration" || got["verified"] != true {
+		t.Fatalf("unexpected deployment provenance: %#v", got)
+	}
+}
+
+func TestLoadDeploymentProvenanceMissing(t *testing.T) {
+	t.Setenv("MCP_GATEWAY_HOME", t.TempDir())
+	got := loadDeploymentProvenance()
+	if got["available"] != false {
+		t.Fatalf("missing deployment provenance must be unavailable: %#v", got)
+	}
+}
+
 func TestGatewayBackup(t *testing.T) {
 	core, ctx, _, backupDir := seededApplianceCore(t)
 
@@ -103,6 +128,17 @@ func TestGatewayDoctor(t *testing.T) {
 	controlPath, ok := resMap["control_path"].(map[string]any)
 	if !ok || controlPath["gateway_core"] == nil {
 		t.Fatalf("expected control_path with gateway_core, got %+v", controlPath)
+	}
+}
+
+func TestGatewayDoctorUsesTargetReachabilityTimeout(t *testing.T) {
+	c, fake, _ := seededRemoteCore(t)
+	resp := c.GatewayDoctor(context.Background(), "req-doc-targets", DoctorOptions{CheckTargets: true})
+	if !resp.OK {
+		t.Fatalf("GatewayDoctor failed: %+v", resp.Error)
+	}
+	if fake.lastCommandTimeout != targetReachabilityTimeout {
+		t.Fatalf("doctor target timeout=%s want=%s", fake.lastCommandTimeout, targetReachabilityTimeout)
 	}
 }
 

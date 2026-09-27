@@ -15,6 +15,8 @@ import (
 	"mcp-gateway-adapter/internal/remote"
 )
 
+const targetReachabilityTimeout = 10 * time.Second
+
 func (c *Core) TargetStatus(ctx context.Context, requestID, targetID string) Response {
 	started := time.Now()
 	target, err := c.store.GetTarget(ctx, targetID, false)
@@ -30,7 +32,7 @@ func (c *Core) TargetStatus(ctx context.Context, requestID, targetID string) Res
 		ctx,
 		target,
 		"hostname",
-		remote.CommandOptions{Timeout: 10 * time.Second},
+		remote.CommandOptions{Timeout: targetReachabilityTimeout},
 	)
 	if err != nil {
 		return errorResponse("target_status", remoteCodeOr(err, "SSH_FAILED"), err.Error(), requestID, targetID, "", started)

@@ -20,9 +20,11 @@ import (
 type fakeRemote struct {
 	lastCanonicalCandidate string
 	lastReadLimit          int64
+	lastCommandTimeout     time.Duration
 }
 
-func (f *fakeRemote) RunCommand(_ context.Context, _ registry.Target, command string, _ remote.CommandOptions) (remote.CommandResult, error) {
+func (f *fakeRemote) RunCommand(_ context.Context, _ registry.Target, command string, options remote.CommandOptions) (remote.CommandResult, error) {
+	f.lastCommandTimeout = options.Timeout
 	if command == "hostname" {
 		return remote.CommandResult{ExitCode: 0, Stdout: "remote-box\n", DurationMS: 12}, nil
 	}
@@ -160,7 +162,7 @@ func normalizedResponse(t *testing.T, response Response) map[string]any {
 }
 
 func TestTargetStatusPreservesPythonEnvelopeSemantics(t *testing.T) {
-	c, _, _ := seededRemoteCore(t)
+	c, fake, _ := seededRemoteCore(t)
 	got := c.TargetStatus(context.Background(), "", "t")
 	if !got.OK || got.Tool != "target_status" || got.Target != "t" {
 		t.Fatalf("target_status envelope=%+v", got)
@@ -178,6 +180,10 @@ func TestTargetStatusPreservesPythonEnvelopeSemantics(t *testing.T) {
 	facts, ok := result["facts"].(map[string]any)
 	if !ok || facts["probe_status"] != "ok" || facts["arch"] != "armv6l" {
 		t.Fatalf("target_status facts=%#v", result["facts"])
+	}
+
+	if fake.lastCommandTimeout != targetReachabilityTimeout {
+		t.Fatalf("target_status timeout=%s want=%s", fake.lastCommandTimeout, targetReachabilityTimeout)
 	}
 
 	missing := c.TargetStatus(context.Background(), "", "missing")

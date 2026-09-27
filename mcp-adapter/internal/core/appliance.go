@@ -254,7 +254,7 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 					})
 					continue
 				}
-				res, err := c.remote.RunCommand(ctx, target, "hostname", remote.CommandOptions{Timeout: 5 * time.Second})
+				res, err := c.remote.RunCommand(ctx, target, "hostname", remote.CommandOptions{Timeout: targetReachabilityTimeout})
 				if err != nil || !res.OK() {
 					failed++
 					msg := "target probe failed"
@@ -686,17 +686,24 @@ func loadDeploymentProvenance() map[string]any {
 	if home == "" {
 		home = "/home/mcp-gateway"
 	}
-	provPath := filepath.Join(home, ".config", "mcp-gateway", "deployment.json")
-	data, err := os.ReadFile(provPath)
-	if err != nil {
-		return map[string]any{
-			"deployed_at": "",
-			"git_sha":     "",
-		}
+
+	paths := []string{
+		filepath.Join(home, "mcp-gateway", ".deployment.json"),
+		filepath.Join(home, ".config", "mcp-gateway", "deployment.json"),
 	}
-	var out map[string]any
-	_ = json.Unmarshal(data, &out)
-	return out
+	for _, provPath := range paths {
+		data, err := os.ReadFile(provPath)
+		if err != nil {
+			continue
+		}
+		var out map[string]any
+		if err := json.Unmarshal(data, &out); err != nil {
+			return map[string]any{"available": false}
+		}
+		out["available"] = true
+		return out
+	}
+	return map[string]any{"available": false}
 }
 
 func round2(v float64) float64 {
