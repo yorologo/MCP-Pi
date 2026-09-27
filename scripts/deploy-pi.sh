@@ -10,8 +10,6 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_BASE="${TMPDIR:-${PREFIX:-/data/data/com.termux/files/usr}/tmp}"
 REMOTE_TARGET_DIR=/home/mcp-gateway/mcp-gateway
 REMOTE_DATA_DIR=/home/mcp-gateway/.local/share/mcp-gateway
-REMOTE_DB="$REMOTE_DATA_DIR/gateway.db"
-RUNTIME_UNITS="mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service"
 
 fail(){ echo "ERROR: $*" >&2; exit 1; }
 
@@ -98,27 +96,6 @@ TUNNEL_WAS_ENABLED=0
 
 cleanup_local(){ rm -rf "$STAGE_DIR"; }
 trap cleanup_local EXIT
-
-restore_units_remote='
-current="$1"; unit_backup="$2"
-for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service; do
-    if sudo test -f "$unit_backup/$unit"; then
-        sudo install -o root -g root -m 0644 "$unit_backup/$unit" "/etc/systemd/system/$unit"
-    elif sudo test -f "$unit_backup/$unit.absent"; then
-        sudo systemctl disable "$unit" >/dev/null 2>&1 || true
-        sudo rm -f "/etc/systemd/system/$unit"
-    fi
-done
-if sudo test -f "$unit_backup/49-mcp-gateway-reboot.rules"; then
-    sudo install -o root -g root -m 0644 "$unit_backup/49-mcp-gateway-reboot.rules" /etc/polkit-1/rules.d/49-mcp-gateway-reboot.rules
-elif sudo test -f "$unit_backup/49-mcp-gateway-reboot.rules.absent"; then
-    sudo rm -f /etc/polkit-1/rules.d/49-mcp-gateway-reboot.rules
-fi
-if sudo test -f "$unit_backup/mcp-gateway-tunnel-check"; then
-    sudo install -o root -g root -m 0755 "$unit_backup/mcp-gateway-tunnel-check" /usr/local/bin/mcp-gateway-tunnel-check
-fi
-sudo systemctl daemon-reload
-'
 
 rollback() {
     echo "ROLLBACK: restoring previous runtime, Registry and system assets..." >&2
