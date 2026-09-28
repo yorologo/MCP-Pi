@@ -198,6 +198,44 @@ func TestGeminiIngressSupportsPrivateTunnelRoute(t *testing.T) {
 	}
 }
 
+func TestCloudflaredConnectorLifecycleContract(t *testing.T) {
+	unitData, err := os.ReadFile(filepath.Join("..", "config", "systemd", "mcp-gateway-cloudflared.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(unitData)
+	for _, required := range []string{
+		"Wants=network-online.target mcp-gateway-gemini.service",
+		"After=network-online.target mcp-gateway-gemini.service",
+		"ExecCondition=/usr/bin/test -s /home/mcp-gateway/.config/mcp-gateway/cloudflared.token",
+		"ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate run --token-file /home/mcp-gateway/.config/mcp-gateway/cloudflared.token",
+		"Restart=on-failure",
+	} {
+		if !strings.Contains(unit, required) {
+			t.Errorf("cloudflared unit missing %q", required)
+		}
+	}
+	if strings.Contains(unit, "Requires=mcp-gateway-gemini.service") {
+		t.Error("cloudflared must not stop permanently when Gemini is restarted")
+	}
+
+	installData, err := os.ReadFile(filepath.Join("..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(installData), "systemctl is-enabled --quiet mcp-gateway-cloudflared") {
+		t.Error("installer must preserve explicitly enabled cloudflared service")
+	}
+
+	deployData, err := os.ReadFile(filepath.Join("..", "scripts", "deploy-pi.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(deployData), "CLOUDFLARED_WAS_ENABLED") {
+		t.Error("deploy acceptance must preserve cloudflared enabled state")
+	}
+}
+
 func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	readText := func(rel string) string {
 		t.Helper()
@@ -213,7 +251,7 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	if activation < 0 {
 		t.Fatal("installer activation/migration boundary is missing")
 	}
-	stopRel := strings.Index(installer[activation:], "systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin")
+	stopRel := strings.Index(installer[activation:], "systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-cloudflared mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin")
 	migrateRel := strings.Index(installer[activation:], "migrate -db \"$DB_PATH\"")
 	if stopRel < 0 || migrateRel < 0 || stopRel >= migrateRel {
 		t.Fatal("installer must stop database users before explicit Registry migration")

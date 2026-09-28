@@ -32,6 +32,8 @@ Optional:
 
 `mcp-gateway-gemini.service` is a second isolated MCP ingress for `gemini-main`. It listens on `0.0.0.0:8092` specifically so a private Cloudflare Tunnel hostname route can reach the service through the appliance LAN address, and it is installed disabled by default. Enable it only after creating `/home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token` as private mutable state and configuring the `gemini-main` client/grants in Admin. The ingress still requires that dedicated Bearer token; its HTTP Host allowlist keeps the loopback defaults and adds only `gemini-mcp.internal`, so unrelated Host headers remain rejected.
 
+`mcp-gateway-cloudflared.service` is the optional private connector for that ingress. It is installed disabled by default and uses `/home/mcp-gateway/.config/mcp-gateway/cloudflared.token` as private mutable state. When explicitly enabled, upgrades preserve that state and restart/verify the connector after the Gemini ingress. The unit uses `Wants=` rather than `Requires=` for Gemini so a short Gemini restart does not permanently stop the tunnel.
+
 Stop the base control plane:
 
     sudo systemctl stop mcp-gateway-mcp mcp-gateway-admin

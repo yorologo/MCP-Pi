@@ -1,0 +1,27 @@
+[Unit]
+Description=MCP-Pi Cloudflare private connector
+After=network-online.target mcp-gateway-gemini.service
+Wants=network-online.target mcp-gateway-gemini.service
+
+[Service]
+Type=simple
+User=mcp-gateway
+Group=mcp-gateway
+ExecCondition=/usr/bin/test -x /usr/local/bin/cloudflared
+ExecCondition=/usr/bin/test -s /home/mcp-gateway/.config/mcp-gateway/cloudflared.token
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate run --token-file /home/mcp-gateway/.config/mcp-gateway/cloudflared.token
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/home/mcp-gateway/.config/mcp-gateway/cloudflared.token
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
