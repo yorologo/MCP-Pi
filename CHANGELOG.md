@@ -2,7 +2,7 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
-## 1.5.0-rc.5 — candidate
+## 1.5.0 — stable
 
 ### Security
 - Security-sensitive Admin mutations now record their successful Activity entry in the same SQLite transaction as the authorization/state change; audit failure rolls the mutation back.

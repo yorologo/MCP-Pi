@@ -13,7 +13,7 @@ Project contract tests and the installer require these authorities to agree. Thi
 
 Normal runtime open is non-migrating and requires the runtime's current schema.
 
-The explicit `migrate` command is the only supported schema transformation path. The current candidate supports fresh creation and the directly tested previous-schema upgrade encoded by Registry migrations.
+The explicit `migrate` command is the only supported schema transformation path. The current stable release supports fresh creation and the directly tested previous-schema upgrade encoded by Registry migrations.
 
 `status`, service startup, Doctor and `restore` never migrate as a side effect. Restore preserves the backup schema exactly.
 
