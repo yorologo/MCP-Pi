@@ -68,6 +68,7 @@ func runMCPServer(args []string) {
 	clientIDFlag := fs.String("client-id", "", "Authenticated AI client identifier")
 	authTokenFlag := fs.String("auth-token", "", "Shared secret Bearer auth token for authenticating HTTP clients")
 	authTokenFileFlag := fs.String("auth-token-file", "", "Path to file containing shared Bearer auth token")
+	allowedHostsFlag := fs.String("allowed-hosts", "", "Comma-separated additional Host headers allowed by the HTTP transport")
 	versionFlag := fs.Bool("version", false, "Print version information")
 
 	if err := fs.Parse(args); err != nil {
@@ -109,6 +110,13 @@ func runMCPServer(args []string) {
 		token = strings.TrimSpace(envToken)
 	}
 	bridgeConfig.AuthToken = token
+
+	for _, host := range strings.Split(*allowedHostsFlag, ",") {
+		host = strings.TrimSpace(host)
+		if host != "" {
+			bridgeConfig.AllowedHosts = append(bridgeConfig.AllowedHosts, host)
+		}
+	}
 
 	if *clientIDFlag != "" {
 		bridgeConfig.ClientID = strings.TrimSpace(*clientIDFlag)

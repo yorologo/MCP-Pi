@@ -46,6 +46,6 @@ Projects define authorized roots and read/write enablement. Unix-like Targets us
 
 Private bearer/token material remains under the service config directory and outside Git/logs.
 
-The primary ChatGPT ingress uses `tunnel-mcp.token` on `127.0.0.1:8090`. An optional Gemini ingress uses a distinct `gemini-mcp.token` on `127.0.0.1:8092` and a distinct Registry identity, `gemini-main`. The Gemini unit is installed disabled and the installer never invents or copies that token into release artifacts.
+The primary ChatGPT ingress uses `tunnel-mcp.token` on `127.0.0.1:8090`. An optional Gemini ingress uses a distinct `gemini-mcp.token` on `127.0.0.1:8092` and a distinct Registry identity, `gemini-main`. The Gemini unit is installed disabled and the installer never invents or copies that token into release artifacts. The `serve-mcp -allowed-hosts` option may add narrowly scoped HTTP Host values without weakening the default loopback-only Host check; the packaged Gemini unit adds only `gemini-mcp.internal`.
 
 External ingress remains replaceable infrastructure. The OpenAI secure tunnel is optional and base installation does not enable it automatically. A Cloudflare Tunnel or another provider-specific edge may forward to the Gemini loopback service, but provider credentials and tunnel configuration remain private mutable state outside MCP-Pi Core/Registry policy.

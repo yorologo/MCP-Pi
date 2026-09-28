@@ -413,7 +413,26 @@ func TestHostAndOriginSecurity(t *testing.T) {
 		t.Errorf("expected 403 for attacker.com Host, got %d", rr3.Code)
 	}
 
-	// Case 4: Valid Origin (http://localhost:3000) -> 200
+	// Case 4: Explicit private tunnel hostname is allowed only when configured.
+	securedPrivate := SecurityMiddleware(mux, "gemini-mcp.internal")
+	reqPrivate, _ := http.NewRequest("GET", "/live", nil)
+	reqPrivate.Host = "gemini-mcp.internal:8092"
+	rrPrivate := httptest.NewRecorder()
+	securedPrivate.ServeHTTP(rrPrivate, reqPrivate)
+	if rrPrivate.Code != http.StatusOK {
+		t.Errorf("expected 200 for explicitly allowed private Host, got %d", rrPrivate.Code)
+	}
+
+	// The explicit allowlist must not weaken rejection of unrelated hosts.
+	reqPrivateBad, _ := http.NewRequest("GET", "/live", nil)
+	reqPrivateBad.Host = "attacker.com:8092"
+	rrPrivateBad := httptest.NewRecorder()
+	securedPrivate.ServeHTTP(rrPrivateBad, reqPrivateBad)
+	if rrPrivateBad.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for unlisted Host with private allowlist, got %d", rrPrivateBad.Code)
+	}
+
+	// Case 5: Valid Origin (http://localhost:3000) -> 200
 	req4, _ := http.NewRequest("GET", "/live", nil)
 	req4.Host = "127.0.0.1:8090"
 	req4.Header.Set("Origin", "http://localhost:3000")
@@ -423,7 +442,7 @@ func TestHostAndOriginSecurity(t *testing.T) {
 		t.Errorf("expected 200 for localhost Origin, got %d", rr4.Code)
 	}
 
-	// Case 5: Malicious Origin (http://evil.com) -> 403
+	// Case 6: Malicious Origin (http://evil.com) -> 403
 	req5, _ := http.NewRequest("GET", "/live", nil)
 	req5.Host = "127.0.0.1:8090"
 	req5.Header.Set("Origin", "http://evil.com")
@@ -433,7 +452,7 @@ func TestHostAndOriginSecurity(t *testing.T) {
 		t.Errorf("expected 403 for evil.com Origin, got %d", rr5.Code)
 	}
 
-	// Case 6: Request body size limit (> 1 MiB rejected)
+	// Case 7: Request body size limit (> 1 MiB rejected)
 	bigBody := bytes.Repeat([]byte("a"), 1048576+100)
 	req6, _ := http.NewRequest("POST", "/live", bytes.NewReader(bigBody))
 	req6.Host = "127.0.0.1:8090"

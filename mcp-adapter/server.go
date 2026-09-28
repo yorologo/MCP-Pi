@@ -83,10 +83,11 @@ func adapterVersion(state *AdapterState) string {
 // BridgeConfig keeps the historical boundary name to avoid a broad rename.
 // It intentionally contains no subprocess or Python fallback configuration.
 type BridgeConfig struct {
-	Core      *core.Core
-	DBPath    string
-	ClientID  string
-	AuthToken string
+	Core         *core.Core
+	DBPath       string
+	ClientID     string
+	AuthToken    string
+	AllowedHosts []string
 }
 
 func DefaultBridgeConfig() *BridgeConfig {
@@ -185,18 +186,35 @@ func generateRequestID() string {
 }
 
 // SecurityMiddleware enforces Host and Origin protection, plus body size limits.
-func SecurityMiddleware(next http.Handler) http.Handler {
+// Loopback hosts are always trusted. Additional hosts must be explicitly supplied
+// by the caller (for example, a private tunnel hostname).
+func SecurityMiddleware(next http.Handler, extraAllowedHosts ...string) http.Handler {
+	allowedHosts := map[string]struct{}{
+		"127.0.0.1": {},
+		"localhost": {},
+	}
+	for _, host := range extraAllowedHosts {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host == "" {
+			continue
+		}
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		allowedHosts[host] = struct{}{}
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 1. Limit request body size to 1 MiB
 		r.Body = http.MaxBytesReader(w, r.Body, 1048576)
 
-		// 2. Validate Host header (must be 127.0.0.1 or localhost)
-		host := r.Host
+		// 2. Validate Host header against loopback plus the explicit allowlist.
+		host := strings.ToLower(strings.TrimSpace(r.Host))
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
 		}
-		if host != "127.0.0.1" && host != "localhost" {
-			http.Error(w, "Forbidden: Invalid Host header (loopback only)", http.StatusForbidden)
+		if _, ok := allowedHosts[host]; !ok {
+			http.Error(w, "Forbidden: Invalid Host header", http.StatusForbidden)
 			return
 		}
 
@@ -1086,9 +1104,14 @@ func RunHTTP(ctx context.Context, server *mcp.Server, bindAddr string, state *Ad
 		w.Write(resp)
 	})
 
+	var allowedHosts []string
+	if bridge != nil {
+		allowedHosts = bridge.AllowedHosts
+	}
+
 	srv := &http.Server{
 		Addr:           bindAddr,
-		Handler:        SecurityMiddleware(mux),
+		Handler:        SecurityMiddleware(mux, allowedHosts...),
 		ReadTimeout:    60 * time.Second,
 		WriteTimeout:   60 * time.Second,
 		MaxHeaderBytes: 65536,

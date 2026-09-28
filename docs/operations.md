@@ -30,7 +30,7 @@ Optional:
     mcp-gateway-gemini.service
     mcp-gateway-tunnel.service
 
-`mcp-gateway-gemini.service` is a second isolated MCP ingress for `gemini-main`. It binds only to `127.0.0.1:8092` and is installed disabled by default. Enable it only after creating `/home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token` as private mutable state and configuring the `gemini-main` client/grants in Admin.
+`mcp-gateway-gemini.service` is a second isolated MCP ingress for `gemini-main`. It binds only to `127.0.0.1:8092` and is installed disabled by default. Enable it only after creating `/home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token` as private mutable state and configuring the `gemini-main` client/grants in Admin. Its HTTP Host allowlist keeps the loopback defaults and adds only `gemini-mcp.internal` for the optional private-tunnel path; unrelated Host headers remain rejected.
 
 Stop the base control plane:
 
