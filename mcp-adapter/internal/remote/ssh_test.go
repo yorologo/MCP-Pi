@@ -93,6 +93,82 @@ func TestRunCommandHonorsContextAndDoesNotNeedNetworkForValidation(t *testing.T)
 	}
 }
 
+func privilegedSSHShim(t *testing.T, allowRoot bool) *SSHTransport {
+	t.Helper()
+	shim := filepath.Join(t.TempDir(), "ssh-priv-shim")
+	rootAction := "exit 255"
+	if allowRoot {
+		rootAction = "printf '0\\n'; exit 0"
+	}
+	script := "#!/bin/sh\n" +
+		"user=\"\"\n" +
+		"last=\"\"\n" +
+		"for arg\n" +
+		"do\n" +
+		"  case \"$arg\" in User=*) user=$(printf '%s' \"$arg\" | cut -d= -f2-) ;; esac\n" +
+		"  last=\"$arg\"\n" +
+		"done\n" +
+		"if [ \"$user\" = \"root\" ]; then " + rootAction + "; fi\n" +
+		"exec sh -c \"$last\"\n"
+	if err := os.WriteFile(shim, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return &SSHTransport{
+		SSHBinary:      shim,
+		IdentityFile:   "/tmp/test-key",
+		MaxOutputBytes: defaultMaxOutput,
+		DefaultTimeout: 10 * time.Second,
+	}
+}
+
+func TestProbeFactsVerifiesConfiguredPrivilegedSSHUser(t *testing.T) {
+	transport := privilegedSSHShim(t, true)
+	target := localTarget()
+	target.PrivilegeUser = "root"
+
+	facts, err := transport.ProbeFacts(context.Background(), target, false, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privilege, ok := facts["privilege"].(map[string]any)
+	if !ok {
+		t.Fatalf("privilege facts missing: %#v", facts)
+	}
+	if got := privilege["backend"]; got != "privileged-ssh" {
+		t.Fatalf("backend=%v want=privileged-ssh", got)
+	}
+	if got := privilege["backend_ready"]; got != true {
+		t.Fatalf("backend_ready=%v want=true", got)
+	}
+	if got := privilege["maximum_level"]; got != "root" {
+		t.Fatalf("maximum_level=%v want=root", got)
+	}
+}
+
+func TestProbeFactsFailsClosedWhenConfiguredPrivilegedSSHUserCannotAuthenticate(t *testing.T) {
+	transport := privilegedSSHShim(t, false)
+	target := localTarget()
+	target.PrivilegeUser = "root"
+
+	facts, err := transport.ProbeFacts(context.Background(), target, false, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privilege, ok := facts["privilege"].(map[string]any)
+	if !ok {
+		t.Fatalf("privilege facts missing: %#v", facts)
+	}
+	if got := privilege["backend"]; got != "privileged-ssh" {
+		t.Fatalf("backend=%v want=privileged-ssh", got)
+	}
+	if got := privilege["backend_ready"]; got != false {
+		t.Fatalf("backend_ready=%v want=false", got)
+	}
+	if reason, _ := privilege["backend_reason"].(string); !strings.Contains(reason, "could not be verified") {
+		t.Fatalf("backend_reason=%q", reason)
+	}
+}
+
 func TestLimitedBufferTruncatesWithoutShortWrite(t *testing.T) {
 	var buffer limitedBuffer
 	buffer.max = 4

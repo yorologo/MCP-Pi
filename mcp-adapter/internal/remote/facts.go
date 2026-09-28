@@ -33,6 +33,52 @@ func nullableFact(value string) any {
 	return value
 }
 
+func (s *SSHTransport) probePrivilegedSSH(
+	ctx context.Context,
+	target registry.Target,
+	timeout time.Duration,
+) (string, bool, string) {
+	privilegedUser := strings.TrimSpace(target.PrivilegeUser)
+	if privilegedUser == "" {
+		return "", false, ""
+	}
+
+	privilegedTarget := target
+	privilegedTarget.User = privilegedUser
+
+	command := "id -u"
+	expectedLevel := "root"
+	if isWindowsTarget(target) {
+		command = buildPowerShellCommand(
+			"$ErrorActionPreference='Stop';" +
+				"$id=[Security.Principal.WindowsIdentity]::GetCurrent();" +
+				"$principal=New-Object Security.Principal.WindowsPrincipal($id);" +
+				"if($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){Write-Output 'administrator'}else{Write-Output 'standard'}",
+		)
+		expectedLevel = "administrator"
+	}
+
+	result, err := s.RunCommand(ctx, privilegedTarget, command, CommandOptions{Timeout: timeout})
+	if err != nil {
+		return "", false, "Configured privileged SSH user could not be verified"
+	}
+	if !result.OK() {
+		return "", false, "Configured privileged SSH user could not be verified"
+	}
+
+	observed := strings.ToLower(strings.TrimSpace(result.Stdout))
+	if isWindowsTarget(target) {
+		if observed != expectedLevel {
+			return "", false, "Configured privileged SSH user is not Administrator"
+		}
+		return expectedLevel, true, ""
+	}
+	if observed != "0" {
+		return "", false, "Configured privileged SSH user is not root"
+	}
+	return expectedLevel, true, ""
+}
+
 func (s *SSHTransport) ProbeFacts(
 	ctx context.Context,
 	target registry.Target,
@@ -173,6 +219,21 @@ func (s *SSHTransport) ProbeFacts(
 		facts["os_release"] = map[string]any{
 			"id":         nullableFact(osID),
 			"version_id": nullableFact(osVersion),
+		}
+	}
+
+	if strings.TrimSpace(target.PrivilegeUser) != "" {
+		privilege := facts["privilege"].(map[string]any)
+		privilege["backend"] = "privileged-ssh"
+		privilege["backend_ready"] = false
+		privilege["backend_reason"] = "Configured privileged SSH user could not be verified"
+
+		if level, ready, reason := s.probePrivilegedSSH(ctx, target, timeout); ready {
+			privilege["maximum_level"] = level
+			privilege["backend_ready"] = true
+			privilege["backend_reason"] = nil
+		} else if reason != "" {
+			privilege["backend_reason"] = reason
 		}
 	}
 	return facts, nil
