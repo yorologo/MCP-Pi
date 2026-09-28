@@ -45,10 +45,10 @@ ADMIN_ENV=${CONFIG_DIR}/admin.env
 TUNNEL_CHECK=${BIN_DIR}/mcp-gateway-tunnel-check
 CLI_LINK=${BIN_DIR}/mcp-gateway
 DB_PATH=${DATA_DIR}/gateway.db
-RUNTIME_UNITS="mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service"
+RUNTIME_UNITS="mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-gemini.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service"
 
 required_source() {
-    for path in         bin/mcp-gateway         bin/mcp-gateway-client-stdio         config/systemd/mcp-gateway-admin.service         config/systemd/mcp-gateway-mcp.service         config/systemd/mcp-gateway-tunnel.service         config/systemd/mcp-gateway-maintenance.service         config/systemd/mcp-gateway-maintenance.timer         config/systemd/mcp-gateway-postboot.service         config/systemd/mcp-gateway-tunnel-check         config/polkit/49-mcp-gateway-reboot.rules         compatibility.json manifest.json; do
+    for path in         bin/mcp-gateway         bin/mcp-gateway-client-stdio         config/systemd/mcp-gateway-admin.service         config/systemd/mcp-gateway-mcp.service         config/systemd/mcp-gateway-gemini.service         config/systemd/mcp-gateway-tunnel.service         config/systemd/mcp-gateway-maintenance.service         config/systemd/mcp-gateway-maintenance.timer         config/systemd/mcp-gateway-postboot.service         config/systemd/mcp-gateway-tunnel-check         config/polkit/49-mcp-gateway-reboot.rules         compatibility.json manifest.json; do
         [ -e "${SOURCE_DIR}/${path}" ] || fail "release source is missing: ${path}"
     done
 }
@@ -253,11 +253,20 @@ restore_system_files() {
 }
 
 restart_runtime() {
-    systemctl reset-failed mcp-gateway-admin mcp-gateway-mcp mcp-gateway-tunnel mcp-gateway-postboot 2>/dev/null || true
+    systemctl reset-failed mcp-gateway-admin mcp-gateway-mcp mcp-gateway-gemini mcp-gateway-tunnel mcp-gateway-postboot 2>/dev/null || true
     systemctl restart mcp-gateway-admin
     wait_url http://127.0.0.1/login 45 || fail "mcp-gateway-admin did not become ready"
     systemctl restart mcp-gateway-mcp
     wait_url http://127.0.0.1:8090/ready 60 || fail "mcp-gateway-mcp did not become ready"
+    if systemctl is-enabled --quiet mcp-gateway-gemini 2>/dev/null; then
+        if [ -s "${CONFIG_DIR}/gemini-mcp.token" ]; then
+            systemctl restart mcp-gateway-gemini
+            wait_url http://127.0.0.1:8092/ready 60 || fail "mcp-gateway-gemini did not become ready"
+        else
+            warn "Gemini MCP service is enabled but gemini-mcp.token is missing; leaving it stopped"
+            systemctl stop mcp-gateway-gemini 2>/dev/null || true
+        fi
+    fi
     systemctl restart mcp-gateway-postboot.service
     systemctl start mcp-gateway-maintenance.timer
     if systemctl is-enabled --quiet mcp-gateway-tunnel 2>/dev/null; then
@@ -283,6 +292,7 @@ rollback_runtime() {
     systemctl stop mcp-gateway-maintenance.timer 2>/dev/null || true
     systemctl stop mcp-gateway-maintenance.service 2>/dev/null || true
     systemctl stop mcp-gateway-tunnel 2>/dev/null || true
+    systemctl stop mcp-gateway-gemini 2>/dev/null || true
     systemctl stop mcp-gateway-postboot 2>/dev/null || true
     systemctl stop mcp-gateway-mcp 2>/dev/null || true
     systemctl stop mcp-gateway-admin 2>/dev/null || true
@@ -336,7 +346,7 @@ install_exit() {
         if [ "$ACTIVATED" -eq 1 ] && [ -d "$PREVIOUS_DIR" ]; then
             rollback_runtime
         elif [ "$ACTIVATED" -eq 1 ]; then
-            systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
+            systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
             restore_registry_for_rollback
             rm -rf "$INSTALL_DIR"
             restore_system_files
@@ -387,7 +397,7 @@ else
 fi
 
 echo "[5/9] Activating root-owned runtime and migrating Registry with services stopped..."
-systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
+systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
 CONTROL_PLANE_STOPPED=1
 rm -rf "$PREVIOUS_DIR"
 [ ! -d "$INSTALL_DIR" ] || mv "$INSTALL_DIR" "$PREVIOUS_DIR"

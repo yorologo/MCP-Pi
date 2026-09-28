@@ -1,0 +1,28 @@
+[Unit]
+Description=MCP Gateway Gemini MCP Adapter (Streamable HTTP)
+After=network.target mcp-gateway-admin.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=mcp-gateway
+Group=mcp-gateway
+WorkingDirectory=/home/mcp-gateway/mcp-gateway
+ExecCondition=/usr/bin/test -s /home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token
+ExecStart=/home/mcp-gateway/mcp-gateway/bin/mcp-gateway serve-mcp -transport http -bind 127.0.0.1:8092 -auth-token-file /home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token -client-id gemini-main
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictRealtime=true
+LockPersonality=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

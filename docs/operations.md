@@ -27,7 +27,10 @@ Automation:
 
 Optional:
 
+    mcp-gateway-gemini.service
     mcp-gateway-tunnel.service
+
+`mcp-gateway-gemini.service` is a second isolated MCP ingress for `gemini-main`. It binds only to `127.0.0.1:8092` and is installed disabled by default. Enable it only after creating `/home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token` as private mutable state and configuring the `gemini-main` client/grants in Admin.
 
 Stop the base control plane:
 
@@ -82,6 +85,7 @@ systemd/journald is the canonical runtime log:
 
     journalctl -u mcp-gateway-admin
     journalctl -u mcp-gateway-mcp
+    journalctl -u mcp-gateway-gemini
     journalctl -u mcp-gateway-maintenance
     journalctl -u mcp-gateway-postboot
 

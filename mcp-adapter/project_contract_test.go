@@ -195,7 +195,7 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	if activation < 0 {
 		t.Fatal("installer activation/migration boundary is missing")
 	}
-	stopRel := strings.Index(installer[activation:], "systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin")
+	stopRel := strings.Index(installer[activation:], "systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin")
 	migrateRel := strings.Index(installer[activation:], "migrate -db \"$DB_PATH\"")
 	if stopRel < 0 || migrateRel < 0 || stopRel >= migrateRel {
 		t.Fatal("installer must stop database users before explicit Registry migration")
