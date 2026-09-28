@@ -156,7 +156,7 @@
               <label for="privilege-approval-scope" class="field-label">Approval scope</label>
               <select id="privilege-approval-scope" name="scope" class="field font-mono">
                 {% for scope in privilege_scopes %}
-                  <option value="{{ scope.value|e }}">{{ scope.client_id }} / {{ scope.project_id }}</option>
+                  <option value="{{ scope.value }}">{{ scope.client_id }} / {{ scope.project_id }}</option>
                 {% endfor %}
               </select>
             </div>

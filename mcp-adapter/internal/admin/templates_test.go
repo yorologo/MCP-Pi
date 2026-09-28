@@ -34,3 +34,17 @@ func TestAllTemplatesCompile(t *testing.T) {
 		t.Fatalf("WalkDir failed: %v", err)
 	}
 }
+
+func TestTargetPrivilegeScopeValueIsEscapedExactlyOnce(t *testing.T) {
+	body, err := fs.ReadFile(templatesFS, "templates/target_form.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(body)
+	if strings.Contains(src, "scope.value|e") {
+		t.Fatal("privilege scope value must rely on pongo2 autoescape; explicit escape double-encodes JSON")
+	}
+	if !strings.Contains(src, `value="{{ scope.value }}"`) {
+		t.Fatal("privilege scope option must render the JSON value through normal autoescape")
+	}
+}
