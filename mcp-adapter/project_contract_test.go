@@ -180,6 +180,24 @@ func TestOperationalContractsRemainExplicit(t *testing.T) {
 	}
 }
 
+func TestGeminiIngressSupportsPrivateTunnelRoute(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "config", "systemd", "mcp-gateway-gemini.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(data)
+	for _, required := range []string{
+		"-bind 0.0.0.0:8092",
+		"-auth-token-file /home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token",
+		"-client-id gemini-main",
+		"-allowed-hosts gemini-mcp.internal",
+	} {
+		if !strings.Contains(unit, required) {
+			t.Errorf("Gemini service missing private-tunnel contract token %q", required)
+		}
+	}
+}
+
 func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	readText := func(rel string) string {
 		t.Helper()
