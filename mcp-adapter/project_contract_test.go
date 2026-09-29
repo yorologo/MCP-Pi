@@ -262,6 +262,12 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	if !strings.Contains(installer, "verify_source_integrity") || !strings.Contains(installer, "sha256sum -c SHA256SUMS") {
 		t.Fatal("installer must verify release-bundle checksums before mutation")
 	}
+	if !strings.Contains(installer, "json_number_array_file") || !strings.Contains(installer, "registry_upgrade_from") {
+		t.Fatal("installer backup schema validation must reuse the candidate registry_upgrade_from contract")
+	}
+	if strings.Contains(installer, "schema: (4|5)") {
+		t.Fatal("installer backup schema validation must not freeze a historical schema allowlist")
+	}
 
 	deployer := readText("scripts/deploy-pi.sh")
 	for _, forbidden := range []string{

@@ -127,6 +127,12 @@ json_number_text() {
     printf '%s\n' "$text" | sed -n "s/.*\"${key}\":[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n1
 }
 
+json_number_array_file() {
+    file=$1
+    key=$2
+    sed -n "/\"${key}\"[[:space:]]*:/,/]/p" "$file" | grep -Eo '[0-9][0-9]*' | tr '\n' ' '
+}
+
 verify_source_integrity() {
     if [ -f "${SOURCE_DIR}/SHA256SUMS" ]; then
         command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify release bundles"
@@ -398,7 +404,14 @@ if [ -f "$DB_PATH" ]; then
     stamp=$(date -u +%Y%m%dT%H%M%SZ)
     db_backup="${DATA_DIR}/backups/gateway-pre-install-${stamp}.db"
     backup_output=$(as_service "$STAGE/bin/mcp-gateway-adapter" backup -db "$DB_PATH" "$db_backup")
-    printf '%s\n' "$backup_output" | grep -Eq 'SQLite integrity: ok; schema: (4|5);' || fail "Registry backup has unsupported schema or failed integrity validation"
+    printf '%s\n' "$backup_output" | grep -Fq 'SQLite integrity: ok;' || fail "Registry backup failed integrity validation"
+    backup_schema=$(printf '%s\n' "$backup_output" | sed -n 's/.*schema: \([0-9][0-9]*\);.*/\1/p' | head -n1)
+    [ -n "$backup_schema" ] || fail "Registry backup did not report a schema version"
+    supported_backup_schemas=$(json_number_array_file "${SOURCE_DIR}/manifest.json" registry_upgrade_from)
+    case " $supported_backup_schemas " in
+        *" $backup_schema "*) ;;
+        *) fail "Registry backup schema $backup_schema is not supported by this candidate" ;;
+    esac
     printf '%s\n' "$db_backup" > "$UNIT_BACKUP/registry-backup.path"
     echo "      Registry backup: $db_backup"
 else

@@ -2,7 +2,18 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
-## 1.6.1 — candidate
+## 1.6.2 — candidate
+
+### Fixed
+- Carries forward the 1.6.1 authorization-scope correction for safe observability and Target-only status checks.
+- Installer pre-activation backup validation now derives accepted Registry schemas from manifest.json registry_upgrade_from instead of a stale hard-coded 4/5 regex. This restores safe repeat upgrades when the live Registry is already schema 6.
+- Added an operational contract regression that rejects a frozen historical backup-schema allowlist.
+
+### Validation
+- v1.6.1 remains immutable as a failed deployment candidate. Its deployment stopped fail-closed before service shutdown or runtime replacement, so production remained on 1.6.0.
+- 1.6.2 must repeat exact-SHA CI, ARMv6 preflight, canonical install and live client authorization acceptance.
+
+## 1.6.1 — failed deployment candidate
 
 ### Fixed
 - Authorization scope evaluation now follows each tool's real request dimensions: safe gateway observability (health, list_targets, gateway_status, gateway_doctor) remains usable from an existing scoped capability grant, and target_status evaluates Target scope without inventing a Project requirement.
@@ -10,7 +21,8 @@ All notable user-visible changes are documented here. Historical release details
 - Added regression coverage for the production-discovered case where a scoped wildcard grant advertised safe observability in the catalog but invocation was denied after the 1.6.0 scope hardening.
 
 ### Validation
-- 1.6.0 remains immutable. This patch receives a new version/tag and must repeat exact-SHA CI, ARMv6 deployment and live client acceptance before promotion is considered complete.
+- Exact-SHA CI passed and v1.6.1 was published immutably, but deployment stopped before activation because the installer backup check accepted only schemas 4/5 while the live Registry was already schema 6.
+- No service shutdown, runtime replacement or Registry mutation occurred during the failed 1.6.1 activation attempt.
 
 ## 1.6.0 — stable
 
