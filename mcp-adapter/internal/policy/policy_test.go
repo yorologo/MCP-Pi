@@ -247,14 +247,18 @@ func TestAuthorizationEnforcesExecutionScope(t *testing.T) {
 		tool         string
 		allowed      bool
 	}{
-		{name: "global tool rejects project-scoped capability", capability: "reboot", grantTarget: "t", grantProject: "p", tool: "gateway_reboot"},
-		{name: "global tool rejects project-scoped admin", capability: "admin", grantTarget: "t", grantProject: "p", tool: "gateway_reboot"},
-		{name: "global tool rejects project-scoped wildcard", capability: "*", grantTarget: "t", grantProject: "p", tool: "gateway_reboot"},
-		{name: "global read rejects project-scoped read", capability: "read", grantTarget: "t", grantProject: "p", tool: "list_targets"},
-		{name: "target tool rejects project-scoped read", capability: "read", grantTarget: "t", grantProject: "p", targetID: "t", tool: "target_status"},
+		{name: "global sensitive tool rejects project-scoped capability", capability: "reboot", grantTarget: "t", grantProject: "p", tool: "gateway_reboot"},
+		{name: "global sensitive tool rejects project-scoped admin", capability: "admin", grantTarget: "t", grantProject: "p", tool: "gateway_reboot"},
+		{name: "global sensitive tool rejects project-scoped wildcard", capability: "*", grantTarget: "t", grantProject: "p", tool: "gateway_reboot"},
+		{name: "global backup rejects project-scoped wildcard", capability: "*", grantTarget: "t", grantProject: "p", tool: "gateway_backup"},
+		{name: "global observation accepts project-scoped read", capability: "read", grantTarget: "t", grantProject: "p", tool: "list_targets", allowed: true},
+		{name: "global status accepts project-scoped wildcard", capability: "*", grantTarget: "t", grantProject: "p", tool: "gateway_status", allowed: true},
+		{name: "global doctor accepts project-scoped wildcard", capability: "*", grantTarget: "t", grantProject: "p", tool: "gateway_doctor", allowed: true},
+		{name: "target tool accepts same-target project-scoped read", capability: "read", grantTarget: "t", grantProject: "p", targetID: "t", tool: "target_status", allowed: true},
+		{name: "target tool rejects different target", capability: "read", grantTarget: "t", grantProject: "p", targetID: "other", tool: "target_status"},
 		{name: "target tool accepts target-scoped read", capability: "read", grantTarget: "t", grantProject: "*", targetID: "t", tool: "target_status", allowed: true},
 		{name: "project tool accepts project-scoped read", capability: "read", grantTarget: "t", grantProject: "p", targetID: "t", projectID: "p", tool: "read_file", allowed: true},
-		{name: "global tool accepts global capability", capability: "reboot", grantTarget: "*", grantProject: "*", tool: "gateway_reboot", allowed: true},
+		{name: "global sensitive tool accepts global capability", capability: "reboot", grantTarget: "*", grantProject: "*", tool: "gateway_reboot", allowed: true},
 	}
 
 	for _, tc := range tests {
@@ -278,6 +282,71 @@ func TestAuthorizationEnforcesExecutionScope(t *testing.T) {
 				t.Fatalf("allowed=%v want=%v decision=%+v", decision.Allowed, tc.allowed, decision)
 			}
 		})
+	}
+}
+
+func TestScopedWildcardGrantKeepsSafeOperationalObservability(t *testing.T) {
+	store, db := policyStore(t)
+	addGrant(t, db, "*", "t", "p")
+
+	for _, tc := range []struct {
+		tool      string
+		targetID  string
+		projectID string
+		allowed   bool
+	}{
+		{tool: "health", allowed: true},
+		{tool: "list_targets", allowed: true},
+		{tool: "gateway_status", allowed: true},
+		{tool: "gateway_doctor", allowed: true},
+		{tool: "target_status", targetID: "t", allowed: true},
+		{tool: "read_file", targetID: "t", projectID: "p", allowed: true},
+		{tool: "gateway_backup"},
+		{tool: "gateway_maintenance"},
+		{tool: "gateway_reboot"},
+	} {
+		decision, err := AuthorizeClient(context.Background(), store, "client", tc.targetID, tc.projectID, tc.tool, false)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.tool, err)
+		}
+		if decision.Allowed != tc.allowed {
+			t.Fatalf("%s allowed=%v want=%v decision=%+v", tc.tool, decision.Allowed, tc.allowed, decision)
+		}
+	}
+}
+
+func TestCatalogedSafeObservabilityRemainsInvokableFromScopedWildcard(t *testing.T) {
+	store, db := policyStore(t)
+	addGrant(t, db, "*", "t", "p")
+
+	catalog, err := CatalogForClient(context.Background(), store, "client", []string{
+		"health", "list_targets", "gateway_status", "gateway_doctor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 4 {
+		t.Fatalf("safe observability catalog=%v want all four tools", catalog)
+	}
+
+	for _, tool := range catalog {
+		decision, err := AuthorizeClient(context.Background(), store, "client", "", "", tool, false)
+		if err != nil {
+			t.Fatalf("%s: %v", tool, err)
+		}
+		if !decision.Allowed {
+			t.Fatalf("catalog advertised %s but invocation was denied: %+v", tool, decision)
+		}
+	}
+
+	for _, tool := range []string{"gateway_backup", "gateway_maintenance", "gateway_reboot"} {
+		decision, err := AuthorizeClient(context.Background(), store, "client", "", "", tool, false)
+		if err != nil {
+			t.Fatalf("%s: %v", tool, err)
+		}
+		if decision.Allowed {
+			t.Fatalf("scoped wildcard unexpectedly authorized sensitive global tool %s", tool)
+		}
 	}
 }
 

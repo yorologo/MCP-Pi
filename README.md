@@ -2,7 +2,7 @@
 
 MCP-Pi is a small private MCP security gateway for delegating controlled work to authorized Targets. It does not run an LLM. One Go runtime authenticates clients, evaluates policy, audits decisions and performs bounded operations over pinned SSH.
 
-The latest stable release is **1.5.0**; the current `develop` source is the **1.6.0 candidate**. Production is a separate authority until an exact commit is deployed and accepted. Machine-readable runtime/API/schema/protocol metadata lives in `manifest.json`, `compatibility.json` and `mcp-gateway version --json`.
+The latest stable release is **1.6.0**; the current `develop` source is the **1.6.1 candidate**. Production is a separate authority until an exact commit is deployed and accepted. Machine-readable runtime/API/schema/protocol metadata lives in `manifest.json`, `compatibility.json` and `mcp-gateway version --json`.
 
 ## Security model
 

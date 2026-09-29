@@ -2,7 +2,17 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
-## 1.6.0 — candidate
+## 1.6.1 — candidate
+
+### Fixed
+- Authorization scope evaluation now follows each tool's real request dimensions: safe gateway observability (health, list_targets, gateway_status, gateway_doctor) remains usable from an existing scoped capability grant, and target_status evaluates Target scope without inventing a Project requirement.
+- Sensitive global operations (gateway_backup, gateway_maintenance, gateway_reboot) continue to require a genuinely global grant scope.
+- Added regression coverage for the production-discovered case where a scoped wildcard grant advertised safe observability in the catalog but invocation was denied after the 1.6.0 scope hardening.
+
+### Validation
+- 1.6.0 remains immutable. This patch receives a new version/tag and must repeat exact-SHA CI, ARMv6 deployment and live client acceptance before promotion is considered complete.
+
+## 1.6.0 — stable
 
 ### Security
 - The critical gateway_enabled kill-switch setting now fails closed when its required Registry row is missing instead of inheriting the fresh-install default at runtime.

@@ -143,7 +143,7 @@ func AuthorizeClient(
 
 	matched := false
 	for _, grant := range grants {
-		if grantCapabilityMatches(grant, allowedCaps, true) && (forCatalog || grantScopeMatches(grant, targetID, projectID)) {
+		if grantCapabilityMatches(grant, allowedCaps, true) && (forCatalog || grantToolScopeMatches(toolName, grant, targetID, projectID)) {
 			matched = true
 			break
 		}
@@ -265,22 +265,44 @@ func grantCapabilityMatches(
 	return allowCapabilityWildcard && capability == "*"
 }
 
-func grantScopeMatches(grant registry.Grant, targetID, projectID string) bool {
+func grantToolScopeMatches(toolName string, grant registry.Grant, targetID, projectID string) bool {
+	switch toolName {
+	case "health", "list_targets", "gateway_status", "gateway_doctor":
+		// These tools expose read-only gateway/target inventory and have no
+		// resource scope in their request contract. Capability is still required,
+		// but a Project-scoped capability must not make the advertised tool unusable.
+		return true
+	case "target_status":
+		// Target status has a Target dimension but no Project dimension.
+		// Missing Target is left to argument validation instead of changing the
+		// error into a scope denial.
+		if strings.TrimSpace(targetID) == "" {
+			return true
+		}
+		return grantTargetScopeMatches(grant, targetID)
+	default:
+		return grantScopeMatches(grant, targetID, projectID)
+	}
+}
+
+func grantTargetScopeMatches(grant registry.Grant, targetID string) bool {
 	targetScope := strings.TrimSpace(grant.TargetID)
 	if targetScope == "" {
 		targetScope = "*"
 	}
+	if targetID == "" {
+		return targetScope == "*"
+	}
+	return targetScope == "*" || targetScope == targetID
+}
+
+func grantScopeMatches(grant registry.Grant, targetID, projectID string) bool {
+	if !grantTargetScopeMatches(grant, targetID) {
+		return false
+	}
 	projectScope := strings.TrimSpace(grant.ProjectID)
 	if projectScope == "" {
 		projectScope = "*"
-	}
-
-	if targetID == "" {
-		if targetScope != "*" {
-			return false
-		}
-	} else if targetScope != "*" && targetScope != targetID {
-		return false
 	}
 
 	if projectID == "" {
