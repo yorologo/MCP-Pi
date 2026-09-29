@@ -203,6 +203,41 @@ func TestPostbootWaitsForRealMCPReadiness(t *testing.T) {
 	}
 }
 
+func TestPostbootRunsAfterOptionalIngressStartup(t *testing.T) {
+	unitData, err := os.ReadFile(filepath.Join("..", "config", "systemd", "mcp-gateway-postboot.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(unitData)
+	for _, token := range []string{
+		"After=mcp-gateway-mcp.service mcp-gateway-admin.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service",
+	} {
+		if !strings.Contains(unit, token) {
+			t.Errorf("postboot unit missing ordering contract token %q", token)
+		}
+	}
+
+	installData, err := os.ReadFile(filepath.Join("..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := string(installData)
+	start := strings.Index(installer, "restart_runtime() {")
+	end := strings.Index(installer, "restore_registry_for_rollback() {")
+	if start < 0 || end <= start {
+		t.Fatalf("installer restart_runtime bounds missing: start=%d end=%d", start, end)
+	}
+	restartRuntime := installer[start:end]
+	tunnel := strings.Index(restartRuntime, "systemctl restart mcp-gateway-tunnel")
+	postboot := strings.Index(restartRuntime, "systemctl restart mcp-gateway-postboot.service")
+	if tunnel < 0 || postboot < 0 {
+		t.Fatalf("restart_runtime missing tunnel/postboot restart commands: tunnel=%d postboot=%d", tunnel, postboot)
+	}
+	if tunnel > postboot {
+		t.Fatal("restart_runtime must start the optional tunnel before postboot Doctor")
+	}
+}
+
 func TestGeminiIngressSupportsPrivateTunnelRoute(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "config", "systemd", "mcp-gateway-gemini.service"))
 	if err != nil {

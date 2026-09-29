@@ -2,7 +2,17 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
-## 1.6.4 — candidate
+## 1.6.5 — candidate
+
+### Fixed
+- Post-boot Doctor now observes optional ingress services after their startup order instead of racing them: the installer starts the optional OpenAI tunnel before postboot verification, and the postboot unit orders itself after Gemini, Cloudflare and the tunnel without making any of them hard dependencies.
+- This removes the transient `Optional Tunnel: enabled but not active` warning seen during successful deployments while preserving optional-service semantics and fail-closed readiness for required MCP services.
+
+### Validation
+- 1.6.4 is the currently accepted production release. Its exact-SHA deployment, Registry schema 6, postboot readiness gate, Cloudflare provenance checks and live Shizuku behavior were verified on the ARMv6 appliance.
+- 1.6.5 must repeat exact-SHA CI, reproducible ARMv6 bundle validation, canonical deployment and live postboot acceptance before replacing 1.6.4.
+
+## 1.6.4 — stable
 
 ### Fixed
 - Post-boot verification now gates on the real MCP `/ready` endpoint using bounded native `curl` retries instead of a fixed five-second delay. This removes the ARMv6 startup race where the service process was active but not yet responsive enough for Doctor.
@@ -10,7 +20,7 @@ All notable user-visible changes are documented here. Historical release details
 
 ### Validation
 - `v1.6.3` remains immutable. Its production deployment failed at post-boot readiness and was automatically rolled back to the accepted 1.6.2 runtime.
-- 1.6.4 must repeat exact-SHA CI, reproducible ARMv6 bundle validation, canonical deployment and live post-boot acceptance before it can replace 1.6.2 in production.
+- Exact-SHA CI, reproducible ARMv6 bundle validation, canonical deployment and live post-boot acceptance passed; 1.6.4 became the accepted production release.
 
 ## 1.6.3 — tagged; production acceptance failed
 

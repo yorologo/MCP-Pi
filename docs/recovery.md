@@ -1,6 +1,6 @@
 # Recovery
 
-Recovery for the 1.6.2 Go-only stable runtime deliberately uses the same lifecycle primitives as normal operation.
+Recovery for the 1.6.4 Go-only stable runtime deliberately uses the same lifecycle primitives as normal operation.
 
 ## 1. Diagnose before mutating
 

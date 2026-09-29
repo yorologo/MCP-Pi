@@ -281,11 +281,11 @@ restart_runtime() {
             systemctl stop mcp-gateway-cloudflared 2>/dev/null || true
         fi
     fi
-    systemctl restart mcp-gateway-postboot.service
-    systemctl start mcp-gateway-maintenance.timer
     if systemctl is-enabled --quiet mcp-gateway-tunnel 2>/dev/null; then
         if [ -s "${CONFIG_DIR}/tunnel.env" ] && [ -x /usr/local/bin/openai-tunnel-client ]; then systemctl restart mcp-gateway-tunnel; else warn "tunnel is enabled but credentials/client are incomplete; leaving it stopped"; systemctl stop mcp-gateway-tunnel 2>/dev/null || true; fi
     fi
+    systemctl restart mcp-gateway-postboot.service
+    systemctl start mcp-gateway-maintenance.timer
 }
 
 restore_registry_for_rollback() {
