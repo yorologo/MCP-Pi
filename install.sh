@@ -42,6 +42,7 @@ POLKIT_RULE=${POLKIT_DIR}/49-mcp-gateway-reboot.rules
 BIN_DIR=/usr/local/bin
 TOKEN_FILE=${CONFIG_DIR}/tunnel-mcp.token
 ADMIN_ENV=${CONFIG_DIR}/admin.env
+BOOTSTRAP_TOKEN=${CONFIG_DIR}/admin-bootstrap.token
 TUNNEL_CHECK=${BIN_DIR}/mcp-gateway-tunnel-check
 CLI_LINK=${BIN_DIR}/mcp-gateway
 DB_PATH=${DATA_DIR}/gateway.db
@@ -391,15 +392,19 @@ validate_adapter "$STAGE/bin/mcp-gateway-adapter"
 
 echo "[3/9] Preparing local secrets and safe runtime defaults..."
 if [ ! -s "$TOKEN_FILE" ]; then umask 077; generate_secret > "$TOKEN_FILE"; chmod 0600 "$TOKEN_FILE"; chown "$SERVICE_USER:$SERVICE_GROUP" "$TOKEN_FILE"; fi
-if [ ! -s "$ADMIN_ENV" ]; then
+if [ ! -e "$ADMIN_ENV" ]; then
     host=$(hostname -s 2>/dev/null || printf 'mcp-pi')
-    { echo "MCP_ADMIN_HOST=127.0.0.1"; echo "MCP_ADMIN_PORT=80"; echo "MCP_ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost,${host}"; } > "$ADMIN_ENV"
-    chmod 0600 "$ADMIN_ENV"
-    chown "$SERVICE_USER:$SERVICE_GROUP" "$ADMIN_ENV"
+    host_lower=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
+    if [ "$host_lower" != "mcp-pi" ]; then
+        printf 'MCP_ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost,%s\n' "$host" > "$ADMIN_ENV"
+        chmod 0600 "$ADMIN_ENV"
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$ADMIN_ENV"
+    fi
 fi
 
 echo "[4/9] Backing up Registry with Go (no migration while services are active)..."
 save_system_files
+FRESH_REGISTRY=0
 if [ -f "$DB_PATH" ]; then
     stamp=$(date -u +%Y%m%dT%H%M%SZ)
     db_backup="${DATA_DIR}/backups/gateway-pre-install-${stamp}.db"
@@ -415,6 +420,7 @@ if [ -f "$DB_PATH" ]; then
     printf '%s\n' "$db_backup" > "$UNIT_BACKUP/registry-backup.path"
     echo "      Registry backup: $db_backup"
 else
+    FRESH_REGISTRY=1
     touch "$UNIT_BACKUP/registry.absent"
 fi
 
@@ -430,6 +436,15 @@ find "$INSTALL_DIR" -type d -exec chmod 0755 {} +
 chmod 0755 "$INSTALL_DIR/bin/mcp-gateway" "$INSTALL_DIR/bin/mcp-gateway-client-stdio" "$INSTALL_DIR/bin/mcp-gateway-adapter" "$INSTALL_DIR/install.sh"
 as_service "$INSTALL_DIR/bin/mcp-gateway-adapter" migrate -db "$DB_PATH"
 as_service "$INSTALL_DIR/bin/mcp-gateway-adapter" status -db "$DB_PATH" >/dev/null
+if [ "$FRESH_REGISTRY" -eq 1 ]; then
+    rm -f "$BOOTSTRAP_TOKEN"
+    if [ "$RUN_SETUP" -ne 1 ] || [ ! -t 0 ]; then
+        umask 077
+        generate_secret > "$BOOTSTRAP_TOKEN"
+        chmod 0600 "$BOOTSTRAP_TOKEN"
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$BOOTSTRAP_TOKEN"
+    fi
+fi
 
 echo "[6/9] Installing systemd and least-privilege policy assets..."
 for unit in $RUNTIME_UNITS; do install -o root -g root -m 0644 "$INSTALL_DIR/config/systemd/$unit" "${SYSTEMD_DIR}/${unit}"; done
@@ -449,7 +464,13 @@ echo "[9/9] Initial admin bootstrap..."
 if [ "$RUN_SETUP" -eq 1 ] && [ -t 0 ]; then
     as_service "$INSTALL_DIR/bin/mcp-gateway" setup -db "$DB_PATH" || fail "initial setup did not complete"
 else
-    echo "      Run: sudo -u ${SERVICE_USER} mcp-gateway setup -db ${DB_PATH}"
+    if [ "$FRESH_REGISTRY" -eq 1 ] && [ -s "$BOOTSTRAP_TOKEN" ]; then
+        echo "      Initial Web setup: http://127.0.0.1/setup"
+        echo "      Bootstrap token: sudo cat $BOOTSTRAP_TOKEN"
+        echo "      The token expires after 15 minutes and is deleted after successful setup."
+    else
+        echo "      Run: sudo -u ${SERVICE_USER} mcp-gateway setup -db ${DB_PATH}"
+    fi
 fi
 
 trap - 0 HUP INT TERM

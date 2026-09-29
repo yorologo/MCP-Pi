@@ -236,7 +236,7 @@ func inspectCloudflaredDependency(ctx context.Context, binaryPath, tokenPath str
 
 	file, err := os.Open(resolved)
 	if err != nil {
-		evidence.Message = "cloudflared binary cannot be read for provenance: " + err.Error()
+		evidence.Message = "cloudflared binary cannot be read for fingerprinting: " + err.Error()
 		return evidence
 	}
 	hash := sha256.New()
@@ -278,7 +278,7 @@ func inspectCloudflaredDependency(ctx context.Context, binaryPath, tokenPath str
 	}
 
 	evidence.Passed = true
-	evidence.Message = "cloudflared binary SHA-256 provenance and private token metadata verified"
+	evidence.Message = "cloudflared binary SHA-256 fingerprint and private token metadata verified"
 	return evidence
 }
 
@@ -392,7 +392,7 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		diskMsg = fmt.Sprintf("Low root disk space: %v GB free", free)
 	}
 	checks = append(checks, DoctorCheck{
-		Name: "Storage Space", Passed: diskPassed, Message: diskMsg, Severity: "warning", Required: true,
+		Name: "Storage Space", Passed: diskPassed, Message: diskMsg, Severity: "warning", Required: false,
 	})
 
 	mem := getMemoryInfo()
@@ -403,7 +403,7 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		memMsg = fmt.Sprintf("Low available memory: %v MB", avail)
 	}
 	checks = append(checks, DoctorCheck{
-		Name: "Memory Resources", Passed: memPassed, Message: memMsg, Severity: "warning", Required: true,
+		Name: "Memory Resources", Passed: memPassed, Message: memMsg, Severity: "warning", Required: false,
 	})
 
 	targetStatus := "SKIP"
@@ -486,11 +486,16 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 	if applianceSystemdAvailable() {
 		adminActive := serviceIsActive(gatewayAdminServiceUnit)
 		mcpActive := serviceIsActive(gatewayMCPServiceUnit)
-		servicesPassed := adminActive && mcpActive
+		adminReady, adminReadyMsg := httpEndpointReady(ctx, "http://127.0.0.1/login")
+		servicesPassed := adminActive && mcpActive && adminReady
 		checks = append(checks,
 			DoctorCheck{
 				Name: "Admin Service", Passed: adminActive,
 				Message: serviceStateMessage(gatewayAdminServiceUnit, adminActive), Severity: "error", Required: true,
+			},
+			DoctorCheck{
+				Name: "Admin Readiness", Passed: adminReady,
+				Message: adminReadyMsg, Severity: "error", Required: true,
 			},
 			DoctorCheck{
 				Name: "MCP Service", Passed: mcpActive,
@@ -514,15 +519,18 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 			Message: enabledStateMessage(gatewayMaintenanceTimerUnit, timerEnabled), Severity: "warning", Required: true,
 		})
 
-		postbootFailed := serviceIsFailed(gatewayPostbootServiceUnit)
-		checks = append(checks, DoctorCheck{
-			Name: "Post-Boot Verification", Passed: !postbootFailed,
-			Message: failedStateMessage(gatewayPostbootServiceUnit, postbootFailed), Severity: "error", Required: true,
-		})
+		postbootPassed := true
+		if os.Getenv("MCP_GATEWAY_POSTBOOT") != "1" {
+			postbootPassed = serviceIsActive(gatewayPostbootServiceUnit)
+			checks = append(checks, DoctorCheck{
+				Name: "Post-Boot Verification", Passed: postbootPassed,
+				Message: serviceStateMessage(gatewayPostbootServiceUnit, postbootPassed), Severity: "error", Required: true,
+			})
+		}
 
 		applianceStatus, applianceMsg = "FAIL", "required appliance service/readiness checks failed"
-		if servicesPassed && mcpReady && !postbootFailed {
-			applianceStatus, applianceMsg = "PASS", "Admin/MCP services active and MCP readiness verified"
+		if servicesPassed && mcpReady && postbootPassed {
+			applianceStatus, applianceMsg = "PASS", "Admin/MCP services and readiness verified"
 		}
 
 		if serviceIsEnabled(gatewayTunnelServiceUnit) {
@@ -577,7 +585,7 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 	} else {
 		checks = append(checks, DoctorCheck{
 			Name: "Appliance Services", Passed: false,
-			Message: applianceMsg, Severity: "warning", Required: true,
+			Message: applianceMsg, Severity: "warning", Required: false,
 		})
 	}
 
@@ -601,16 +609,7 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		"targets":           map[string]string{"status": targetStatus, "message": targetMsg},
 	}
 
-	passedCnt, failedCnt, warnCnt := 0, 0, 0
-	for _, ch := range checks {
-		if ch.Passed {
-			passedCnt++
-		} else if ch.Severity == "warning" {
-			warnCnt++
-		} else if ch.Required {
-			failedCnt++
-		}
-	}
+	passedCnt, failedCnt, warnCnt := summarizeDoctorChecks(checks)
 
 	overall := "HEALTHY"
 	if failedCnt > 0 {
@@ -651,6 +650,20 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		return errorResponseWithResult("gateway_doctor", "DOCTOR_FAILED", "Doctor detected required check failures", res, requestID, "", "", started)
 	}
 	return successResponse("gateway_doctor", res, requestID, "", "", started)
+}
+
+func summarizeDoctorChecks(checks []DoctorCheck) (passed, failed, warnings int) {
+	for _, check := range checks {
+		switch {
+		case check.Passed:
+			passed++
+		case check.Required:
+			failed++
+		default:
+			warnings++
+		}
+	}
+	return passed, failed, warnings
 }
 
 func (c *Core) GatewayMaintenance(ctx context.Context, requestID, actor string) Response {
@@ -1062,8 +1075,9 @@ func loadDeploymentProvenance() map[string]any {
 		home = "/home/mcp-gateway"
 	}
 
+	runtimeDir := filepath.Join(home, "mcp-gateway")
 	paths := []string{
-		filepath.Join(home, "mcp-gateway", ".deployment.json"),
+		filepath.Join(runtimeDir, ".deployment.json"),
 		filepath.Join(home, ".config", "mcp-gateway", "deployment.json"),
 	}
 	for _, provPath := range paths {
@@ -1073,12 +1087,52 @@ func loadDeploymentProvenance() map[string]any {
 		}
 		var out map[string]any
 		if err := json.Unmarshal(data, &out); err != nil {
-			return map[string]any{"available": false}
+			return map[string]any{"available": false, "verified": false}
 		}
 		out["available"] = true
+
+		recordedVerified, _ := out["verified"].(bool)
+		out["recorded_verified"] = recordedVerified
+		out["verified"] = false
+
+		expectedCommit, _ := out["commit"].(string)
+		expectedAdapter, _ := out["adapter_sha256"].(string)
+		runtimeName, _ := out["runtime"].(string)
+		if !recordedVerified || expectedCommit == "" || expectedAdapter == "" || runtimeName != "go-only" {
+			out["verification_message"] = "deployment record is incomplete or was not previously accepted"
+			return out
+		}
+
+		deployedSHA, err := os.ReadFile(filepath.Join(runtimeDir, ".deployed-git-sha"))
+		if err != nil || strings.TrimSpace(string(deployedSHA)) != expectedCommit {
+			out["verification_message"] = "live deployed commit does not match deployment record"
+			return out
+		}
+
+		adapter, err := os.Open(filepath.Join(runtimeDir, "bin", "mcp-gateway-adapter"))
+		if err != nil {
+			out["verification_message"] = "live adapter is unavailable"
+			return out
+		}
+		hash := sha256.New()
+		_, copyErr := io.Copy(hash, adapter)
+		closeErr := adapter.Close()
+		if copyErr != nil || closeErr != nil {
+			out["verification_message"] = "live adapter could not be hashed"
+			return out
+		}
+		liveAdapter := hex.EncodeToString(hash.Sum(nil))
+		out["live_adapter_sha256"] = liveAdapter
+		if !strings.EqualFold(liveAdapter, expectedAdapter) {
+			out["verification_message"] = "live adapter SHA-256 does not match deployment record"
+			return out
+		}
+
+		out["verified"] = true
+		out["verification_message"] = "live commit, runtime, and adapter SHA-256 match deployment record"
 		return out
 	}
-	return map[string]any{"available": false}
+	return map[string]any{"available": false, "verified": false}
 }
 
 func round2(v float64) float64 {

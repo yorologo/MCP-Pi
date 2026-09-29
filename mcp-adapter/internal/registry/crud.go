@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -235,6 +236,120 @@ func (s *Store) DeleteProject(ctx context.Context, targetID, projectID string) e
 		}
 		return nil
 	})
+}
+
+func normalizeTaskDefinition(targetID, projectID, taskName string, task Task) (string, string, string, Task, string, error) {
+	normalizedTarget, err := ValidateStableID(targetID)
+	if err != nil {
+		return "", "", "", Task{}, "", fmt.Errorf("invalid target id: %w", err)
+	}
+	normalizedProject, err := ValidateStableID(projectID)
+	if err != nil {
+		return "", "", "", Task{}, "", fmt.Errorf("invalid project id: %w", err)
+	}
+	normalizedName, err := ValidateStableID(taskName)
+	if err != nil {
+		return "", "", "", Task{}, "", fmt.Errorf("invalid task name: %w", err)
+	}
+	if len(task.Argv) == 0 {
+		return "", "", "", Task{}, "", fmt.Errorf("task argv must contain at least one argument")
+	}
+	for _, arg := range task.Argv {
+		if arg == "" {
+			return "", "", "", Task{}, "", fmt.Errorf("task argv cannot contain empty arguments")
+		}
+	}
+	if task.Timeout == 0 {
+		task.Timeout = 30
+	}
+	if task.Timeout < 1 || task.Timeout > 3600 {
+		return "", "", "", Task{}, "", fmt.Errorf("task timeout must be between 1 and 3600 seconds")
+	}
+	rawArgv, err := json.Marshal(task.Argv)
+	if err != nil {
+		return "", "", "", Task{}, "", fmt.Errorf("encode task argv: %w", err)
+	}
+	return normalizedTarget, normalizedProject, normalizedName, task, string(rawArgv), nil
+}
+
+func addTaskExec(ctx context.Context, exec sqlExecer, targetID, projectID, taskName string, task Task) error {
+	targetID, projectID, taskName, task, rawArgv, err := normalizeTaskDefinition(targetID, projectID, taskName, task)
+	if err != nil {
+		return err
+	}
+	_, err = exec.ExecContext(ctx, `
+INSERT INTO project_tasks(target_id, project_id, task_name, argv_json, timeout, enabled)
+VALUES (?, ?, ?, ?, ?, ?)
+`, targetID, projectID, taskName, rawArgv, task.Timeout, boolInt(task.Enabled))
+	if err != nil {
+		return fmt.Errorf("add task: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) AddTask(ctx context.Context, targetID, projectID, taskName string, task Task) error {
+	return addTaskExec(ctx, s.db, targetID, projectID, taskName, task)
+}
+
+func updateTaskExec(ctx context.Context, exec sqlExecer, targetID, projectID, taskName string, task Task) error {
+	targetID, projectID, taskName, task, rawArgv, err := normalizeTaskDefinition(targetID, projectID, taskName, task)
+	if err != nil {
+		return err
+	}
+	res, err := exec.ExecContext(ctx, `
+UPDATE project_tasks
+SET argv_json = ?, timeout = ?, enabled = ?
+WHERE target_id = ? AND project_id = ? AND task_name = ?
+`, rawArgv, task.Timeout, boolInt(task.Enabled), targetID, projectID, taskName)
+	if err != nil {
+		return fmt.Errorf("update task: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect task update: %w", err)
+	}
+	if n == 0 {
+		return &LookupError{Code: "UNKNOWN_TASK", Message: fmt.Sprintf("task '%s' not found in project '%s/%s'", taskName, targetID, projectID)}
+	}
+	return nil
+}
+
+func (s *Store) UpdateTask(ctx context.Context, targetID, projectID, taskName string, task Task) error {
+	return updateTaskExec(ctx, s.db, targetID, projectID, taskName, task)
+}
+
+func deleteTaskExec(ctx context.Context, exec sqlExecer, targetID, projectID, taskName string) error {
+	targetID, err := ValidateStableID(targetID)
+	if err != nil {
+		return fmt.Errorf("invalid target id: %w", err)
+	}
+	projectID, err = ValidateStableID(projectID)
+	if err != nil {
+		return fmt.Errorf("invalid project id: %w", err)
+	}
+	taskName, err = ValidateStableID(taskName)
+	if err != nil {
+		return fmt.Errorf("invalid task name: %w", err)
+	}
+	res, err := exec.ExecContext(ctx,
+		"DELETE FROM project_tasks WHERE target_id = ? AND project_id = ? AND task_name = ?",
+		targetID, projectID, taskName,
+	)
+	if err != nil {
+		return fmt.Errorf("delete task: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect task delete: %w", err)
+	}
+	if n == 0 {
+		return &LookupError{Code: "UNKNOWN_TASK", Message: fmt.Sprintf("task '%s' not found in project '%s/%s'", taskName, targetID, projectID)}
+	}
+	return nil
+}
+
+func (s *Store) DeleteTask(ctx context.Context, targetID, projectID, taskName string) error {
+	return deleteTaskExec(ctx, s.db, targetID, projectID, taskName)
 }
 
 func addClientExec(ctx context.Context, exec sqlExecer, client Client) error {
@@ -553,7 +668,7 @@ func (s *Store) SetAdminPassword(ctx context.Context, username, passwordHash str
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO admin_users (username, password_hash, enabled, created_at)
 VALUES (?, ?, 1, ?)
-ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash
+ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash, enabled = 1
 `, username, passwordHash, now)
 	if err != nil {
 		return fmt.Errorf("set admin password: %w", err)

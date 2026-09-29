@@ -1,6 +1,6 @@
 # Documentation
 
-README.md is the onboarding entry point. The files below are authoritative only for the current source candidate; historical material is isolated under `docs/releases/` and `docs/archive/`.
+README.md is the onboarding entry point. The files below describe the current source architecture; publication/promotion state is intentionally kept outside source prose. Historical material is isolated under `docs/releases/` and `docs/archive/`.
 
 ## User / operator
 

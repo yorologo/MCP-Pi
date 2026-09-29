@@ -13,8 +13,6 @@ WorkingDirectory=/home/mcp-gateway/mcp-gateway
 Environment=MCP_GATEWAY_REGISTRY=sqlite
 Environment=MCP_GATEWAY_DB=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db
 Environment=MCP_ADMIN_SECRET_FILE=/home/mcp-gateway/.config/mcp-gateway/admin-secret
-Environment=MCP_ADMIN_HOST=127.0.0.1
-Environment=MCP_ADMIN_PORT=80
 Environment=MCP_ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost,mcp-pi
 EnvironmentFile=-/home/mcp-gateway/.config/mcp-gateway/admin.env
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
@@ -31,6 +29,10 @@ ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 RestrictSUIDSGID=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mcp-gateway/.local/share/mcp-gateway /home/mcp-gateway/.config/mcp-gateway
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
 WantedBy=multi-user.target

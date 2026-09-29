@@ -202,11 +202,11 @@ func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName strin
 
 	case "run_command":
 		target, okTarget := requiredString(args, "target")
+		project, okProject := requiredString(args, "project")
 		command, okCmd := requiredString(args, "command")
-		if !okTarget || !okCmd {
-			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target' and 'command' are required")
+		if !okTarget || !okProject || !okCmd {
+			return directError(toolName, "INVALID_ARGUMENTS", "Missing or invalid required arguments: 'target', 'project', and 'command' are required")
 		}
-		project, _ := args["project"].(string)
 		cwd, _ := args["cwd"].(string)
 		stdin, _ := args["stdin"].(string)
 		privilege, _ := args["privilege"].(string)

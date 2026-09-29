@@ -49,7 +49,7 @@ func (c *Core) TargetStatus(ctx context.Context, requestID, targetID string) Res
 		)
 	}
 
-	facts, err := transport.ProbeFacts(ctx, target, true, 12*time.Second)
+	facts, err := transport.ProbeFacts(ctx, target, true, true, 12*time.Second)
 	if err != nil {
 		facts = map[string]any{"probe_status": "unavailable", "reason": err.Error()}
 	}

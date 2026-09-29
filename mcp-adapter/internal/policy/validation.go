@@ -3,7 +3,6 @@ package policy
 import (
 	"fmt"
 	"path"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -231,108 +230,4 @@ func ValidateWriteSize(content []byte, maxBytes int) error {
 		)
 	}
 	return nil
-}
-
-type ValidatedTask struct {
-	Argv    []string `json:"argv"`
-	Timeout int      `json:"timeout"`
-}
-
-func ValidateTask(project map[string]any, taskName string) (ValidatedTask, error) {
-	tasks, _ := project["tasks"].(map[string]any)
-	rawTask, ok := tasks[taskName]
-	if !ok {
-		return ValidatedTask{}, validationError(
-			"TASK_NOT_ALLOWED",
-			fmt.Sprintf("Task '%s' is not allowlisted for this project", taskName),
-		)
-	}
-	task, ok := rawTask.(map[string]any)
-	if !ok {
-		return ValidatedTask{}, validationError("TASK_INVALID", fmt.Sprintf("Task '%s' has invalid argv", taskName))
-	}
-
-	enabled := true
-	if raw, exists := task["enabled"]; exists {
-		if value, ok := raw.(bool); ok {
-			enabled = value
-		} else {
-			enabled = false
-		}
-	}
-	if !enabled {
-		return ValidatedTask{}, validationError("TASK_NOT_ALLOWED", fmt.Sprintf("Task '%s' is disabled", taskName))
-	}
-
-	rawArgv, ok := task["argv"].([]any)
-	if !ok || len(rawArgv) == 0 {
-		return ValidatedTask{}, validationError("TASK_INVALID", fmt.Sprintf("Task '%s' has invalid argv", taskName))
-	}
-	argv := make([]string, 0, len(rawArgv))
-	for _, raw := range rawArgv {
-		arg, ok := raw.(string)
-		if !ok || arg == "" {
-			return ValidatedTask{}, validationError("TASK_INVALID", fmt.Sprintf("Task '%s' has invalid argv", taskName))
-		}
-		argv = append(argv, arg)
-	}
-
-	timeout := 30
-	if raw, exists := task["timeout"]; exists {
-		parsed, ok := pythonInt(raw)
-		if !ok {
-			return ValidatedTask{}, validationError("TASK_INVALID", fmt.Sprintf("Task '%s' has invalid timeout", taskName))
-		}
-		timeout = parsed
-	}
-	if timeout < 1 || timeout > 3600 {
-		return ValidatedTask{}, validationError(
-			"TASK_INVALID",
-			fmt.Sprintf("Task '%s' timeout must be between 1 and 3600 seconds", taskName),
-		)
-	}
-
-	return ValidatedTask{Argv: argv, Timeout: timeout}, nil
-}
-
-func pythonInt(value any) (int, bool) {
-	switch v := value.(type) {
-	case int:
-		return v, true
-	case int8:
-		return int(v), true
-	case int16:
-		return int(v), true
-	case int32:
-		return int(v), true
-	case int64:
-		return int(v), true
-	case uint:
-		return int(v), true
-	case uint8:
-		return int(v), true
-	case uint16:
-		return int(v), true
-	case uint32:
-		return int(v), true
-	case uint64:
-		if uint64(int(v)) != v {
-			return 0, false
-		}
-		return int(v), true
-	case float32:
-		return int(v), true
-	case float64:
-		return int(v), true
-	case string:
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		return n, err == nil
-	case bool:
-		if v {
-			return 1, true
-		}
-		return 0, true
-	default:
-		return 0, false
-	}
 }

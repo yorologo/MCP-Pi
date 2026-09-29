@@ -48,9 +48,12 @@ if grep -Eq 'minimum_python|"python"[[:space:]]*:' compatibility.json manifest.j
   fail "active metadata still declares Python runtime requirements"
 fi
 
-grep -Eq 'MCP_ADMIN_HOST=127\.0\.0\.1' install.sh ||
-  fail "installer does not default Admin to loopback"
-if grep -Eq 'MCP_ADMIN_HOST=0\.0\.0\.0' install.sh scripts/deploy-pi.sh; then
+grep -Eq 'host = "127\.0\.0\.1"' mcp-adapter/cli.go ||
+  fail "Go Admin runtime does not default to loopback"
+if grep -Eq '^Environment=MCP_ADMIN_HOST=' config/systemd/mcp-gateway-admin.service; then
+  fail "Admin systemd unit duplicates the Go bind default"
+fi
+if grep -Eq 'MCP_ADMIN_HOST=0\.0\.0\.0' install.sh scripts/deploy-pi.sh config/systemd/mcp-gateway-admin.service; then
   fail "lifecycle reintroduces wildcard Admin bind"
 fi
 

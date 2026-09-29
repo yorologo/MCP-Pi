@@ -2,7 +2,9 @@ package admin
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,6 +26,56 @@ import (
 	"mcp-gateway-adapter/internal/policy"
 	"mcp-gateway-adapter/internal/registry"
 )
+
+func parseProjectTaskForm(r *http.Request) (string, registry.Task, error) {
+	name := strings.TrimSpace(r.FormValue("task_name"))
+	if name == "" {
+		return "", registry.Task{}, fmt.Errorf("Task name is required")
+	}
+	rawArgv := strings.TrimSpace(r.FormValue("argv_json"))
+	var argv []string
+	if rawArgv == "" || json.Unmarshal([]byte(rawArgv), &argv) != nil || len(argv) == 0 {
+		return "", registry.Task{}, fmt.Errorf("Arguments must be a non-empty JSON string array")
+	}
+	for _, arg := range argv {
+		if arg == "" {
+			return "", registry.Task{}, fmt.Errorf("Arguments cannot contain empty strings")
+		}
+	}
+	timeout := 30
+	if rawTimeout := strings.TrimSpace(r.FormValue("timeout")); rawTimeout != "" {
+		parsed, err := strconv.Atoi(rawTimeout)
+		if err != nil || parsed < 1 || parsed > 3600 {
+			return "", registry.Task{}, fmt.Errorf("Timeout must be between 1 and 3600 seconds")
+		}
+		timeout = parsed
+	}
+	return name, registry.Task{
+		Argv:    argv,
+		Timeout: timeout,
+		Enabled: r.FormValue("task_enabled") == "on",
+	}, nil
+}
+
+func projectTaskRows(project registry.Project) []map[string]interface{} {
+	names := make([]string, 0, len(project.Tasks))
+	for name := range project.Tasks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	rows := make([]map[string]interface{}, 0, len(names))
+	for _, name := range names {
+		task := project.Tasks[name]
+		rawArgv, _ := json.Marshal(task.Argv)
+		rows = append(rows, map[string]interface{}{
+			"name":      name,
+			"argv_json": string(rawArgv),
+			"timeout":   task.Timeout,
+			"enabled":   task.Enabled,
+		})
+	}
+	return rows
+}
 
 func (s *Server) failStoreMutation(w http.ResponseWriter, r *http.Request, action, targetID, projectID string, err error) bool {
 	if err == nil {
@@ -151,9 +204,123 @@ func safeLocalRedirect(val string) string {
 // Authentication Handlers
 // ---------------------------------------------------------------------------
 
+const bootstrapTokenTTL = 15 * time.Minute
+
+func (s *Server) hasEnabledAdmin(ctx context.Context) (bool, error) {
+	admins, err := s.cfg.Store.ListAdminUsers(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, user := range admins {
+		if user.Enabled {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Server) readBootstrapToken() (string, error) {
+	info, err := os.Lstat(s.cfg.BootstrapTokenFile)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() <= 0 {
+		return "", fmt.Errorf("bootstrap token must be a non-empty regular file and not a symlink")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("bootstrap token permissions are too broad")
+	}
+	if time.Since(info.ModTime()) > bootstrapTokenTTL {
+		return "", fmt.Errorf("bootstrap token expired")
+	}
+	data, err := os.ReadFile(s.cfg.BootstrapTokenFile)
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", fmt.Errorf("bootstrap token is empty")
+	}
+	return token, nil
+}
+
+func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	hasAdmin, err := s.hasEnabledAdmin(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to inspect Admin bootstrap state.", http.StatusInternalServerError)
+		return
+	}
+	if hasAdmin {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	expectedToken, err := s.readBootstrapToken()
+	if err != nil {
+		http.Error(w, "Initial setup is unavailable; use the local CLI setup command.", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		s.render(w, r, "setup.html", nil)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data.", http.StatusBadRequest)
+		return
+	}
+
+	providedToken := strings.TrimSpace(r.FormValue("bootstrap_token"))
+	if len(providedToken) != len(expectedToken) || subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) != 1 {
+		s.RecordAudit(r, "admin_bootstrap_denied", "", "", false, "INVALID_BOOTSTRAP_TOKEN", "Initial Admin bootstrap token rejected", false)
+		s.renderStatus(w, r, "setup.html", pongo2.Context{"error": "Bootstrap token is invalid or expired."}, http.StatusForbidden)
+		return
+	}
+
+	password := r.FormValue("password")
+	confirmation := r.FormValue("password_confirm")
+	if password == "" || password != confirmation {
+		s.renderStatus(w, r, "setup.html", pongo2.Context{"error": "Passwords must be non-empty and match."}, http.StatusUnprocessableEntity)
+		return
+	}
+
+	hash, err := GeneratePasswordHash(password)
+	if err != nil {
+		http.Error(w, "Failed to prepare Admin credentials.", http.StatusInternalServerError)
+		return
+	}
+	if err := s.cfg.Store.SetAdminPassword(r.Context(), "admin", hash); err != nil {
+		http.Error(w, "Failed to store Admin credentials.", http.StatusInternalServerError)
+		return
+	}
+	if err := os.Remove(s.cfg.BootstrapTokenFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.RecordAudit(r, "admin_bootstrap_token_cleanup", "", "", false, "TOKEN_CLEANUP_FAILED", err.Error(), false)
+	}
+	s.RecordAudit(r, "admin_bootstrap", "", "", true, "", "Initial Admin user configured", false)
+	getSession(r).Flash("Initial Admin account configured. Sign in to continue.", "success")
+	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	sess := getSession(r)
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if sess.Username == "" {
+			hasAdmin, err := s.hasEnabledAdmin(r.Context())
+			if err != nil {
+				http.Error(w, "Failed to inspect Admin state.", http.StatusInternalServerError)
+				return
+			}
+			if !hasAdmin {
+				if _, err := s.readBootstrapToken(); err == nil {
+					http.Redirect(w, r, "/setup", http.StatusFound)
+					return
+				}
+			}
+		}
 		if sess.Username != "" {
 			http.Redirect(w, r, "/dashboard", http.StatusFound)
 			return
@@ -262,7 +429,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	gwEnabledStr, err := s.cfg.Store.GetSetting(ctx, "gateway_enabled", "true")
+	gatewayEnabled, err := s.cfg.Store.GetRequiredBoolSetting(ctx, "gateway_enabled")
 	if err != nil {
 		http.Error(w, "Failed to load gateway state.", http.StatusInternalServerError)
 		return
@@ -316,7 +483,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	mcpReady := s.cfg.Core.Health(ctx, "").OK
 
 	s.render(w, r, "dashboard.html", pongo2.Context{
-		"gateway_enabled":          gwEnabledStr == "true",
+		"gateway_enabled":          gatewayEnabled,
 		"writes_enabled":           writesEnabledStr == "true",
 		"gateway_version":          s.cfg.Version,
 		"total_targets":            totalTargets,
@@ -1101,6 +1268,72 @@ func (s *Server) handleProjectSubroutes(w http.ResponseWriter, r *http.Request) 
 	}
 	sess := getSession(r)
 
+	if action == "task-add" || action == "task-update" || action == "task-delete" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid form data.", http.StatusBadRequest)
+			return
+		}
+		editURL := fmt.Sprintf("/projects/%s/%s/edit", targetID, projectID)
+		taskName := strings.TrimSpace(r.FormValue("task_name"))
+
+		if action == "task-delete" {
+			if taskName == "" {
+				sess.Flash("Task name is required.", "danger")
+				http.Redirect(w, r, editURL, http.StatusFound)
+				return
+			}
+			if _, exists := project.Tasks[taskName]; !exists {
+				http.NotFound(w, r)
+				return
+			}
+			s.RecordAudit(r, "delete_task_attempt", targetID, projectID, true, "", fmt.Sprintf("Delete task '%s'", taskName), true)
+			activity := s.auditEntry(r, "delete_task", targetID, projectID, true, "", fmt.Sprintf("Deleted task '%s'", taskName))
+			if s.failStoreMutation(w, r, "delete_task", targetID, projectID, s.cfg.Store.DeleteTaskAudited(r.Context(), targetID, projectID, taskName, activity)) {
+				return
+			}
+			sess.Flash(fmt.Sprintf("Task '%s' deleted.", taskName), "success")
+			http.Redirect(w, r, editURL, http.StatusFound)
+			return
+		}
+
+		taskName, task, err := parseProjectTaskForm(r)
+		if err != nil {
+			sess.Flash(err.Error(), "danger")
+			http.Redirect(w, r, editURL, http.StatusFound)
+			return
+		}
+		if action == "task-add" {
+			if _, exists := project.Tasks[taskName]; exists {
+				sess.Flash(fmt.Sprintf("Task '%s' already exists.", taskName), "danger")
+				http.Redirect(w, r, editURL, http.StatusFound)
+				return
+			}
+			s.RecordAudit(r, "add_task_attempt", targetID, projectID, true, "", fmt.Sprintf("Add task '%s'", taskName), true)
+			activity := s.auditEntry(r, "add_task", targetID, projectID, true, "", fmt.Sprintf("Added task '%s'", taskName))
+			if s.failStoreMutation(w, r, "add_task", targetID, projectID, s.cfg.Store.AddTaskAudited(r.Context(), targetID, projectID, taskName, task, activity)) {
+				return
+			}
+			sess.Flash(fmt.Sprintf("Task '%s' added.", taskName), "success")
+		} else {
+			if _, exists := project.Tasks[taskName]; !exists {
+				http.NotFound(w, r)
+				return
+			}
+			s.RecordAudit(r, "update_task_attempt", targetID, projectID, true, "", fmt.Sprintf("Update task '%s'", taskName), true)
+			activity := s.auditEntry(r, "update_task", targetID, projectID, true, "", fmt.Sprintf("Updated task '%s'", taskName))
+			if s.failStoreMutation(w, r, "update_task", targetID, projectID, s.cfg.Store.UpdateTaskAudited(r.Context(), targetID, projectID, taskName, task, activity)) {
+				return
+			}
+			sess.Flash(fmt.Sprintf("Task '%s' updated.", taskName), "success")
+		}
+		http.Redirect(w, r, editURL, http.StatusFound)
+		return
+	}
+
 	if action == "edit" {
 		if r.Method == http.MethodGet {
 			targets, err := s.cfg.Store.ListTargets(r.Context())
@@ -1108,10 +1341,11 @@ func (s *Server) handleProjectSubroutes(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			s.render(w, r, "project_form.html", pongo2.Context{
-				"project": project,
-				"is_edit": true,
-				"targets": targets,
-				"section": "projects",
+				"project":   project,
+				"is_edit":   true,
+				"targets":   targets,
+				"task_rows": projectTaskRows(project),
+				"section":   "projects",
 			})
 			return
 		}
@@ -1135,10 +1369,11 @@ func (s *Server) handleProjectSubroutes(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			s.renderStatus(w, r, "project_form.html", pongo2.Context{
-				"project": project,
-				"is_edit": true,
-				"targets": targets,
-				"section": "projects",
+				"project":   project,
+				"is_edit":   true,
+				"targets":   targets,
+				"task_rows": projectTaskRows(project),
+				"section":   "projects",
 			}, http.StatusUnprocessableEntity)
 			return
 		}

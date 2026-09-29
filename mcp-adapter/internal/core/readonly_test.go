@@ -31,7 +31,7 @@ func (f *fakeRemote) RunCommand(_ context.Context, _ registry.Target, command st
 	return remote.CommandResult{ExitCode: 1, Stderr: "unexpected command"}, nil
 }
 
-func (f *fakeRemote) ProbeFacts(_ context.Context, _ registry.Target, _ bool, _ time.Duration) (map[string]any, error) {
+func (f *fakeRemote) ProbeFacts(_ context.Context, _ registry.Target, _ bool, _ bool, _ time.Duration) (map[string]any, error) {
 	return map[string]any{"probe_status": "ok", "arch": "armv6l"}, nil
 }
 

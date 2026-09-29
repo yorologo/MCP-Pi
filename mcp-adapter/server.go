@@ -858,7 +858,7 @@ func registerToolByName(server *mcp.Server, toolName string, bridge *BridgeConfi
 					},
 					"project": map[string]any{
 						"type":        "string",
-						"description": "Authorized project ID (defaults to active project)",
+						"description": "Explicit authorized project ID",
 					},
 					"cwd": map[string]any{
 						"type":        "string",
@@ -882,7 +882,7 @@ func registerToolByName(server *mcp.Server, toolName string, bridge *BridgeConfi
 						"description": "Privilege intent. Defaults to standard; required is governed by an explicit target_admin grant and the Target privilege policy.",
 					},
 				},
-				"required": []string{"target", "command"},
+				"required": []string{"target", "project", "command"},
 			},
 		}, handler)
 	}

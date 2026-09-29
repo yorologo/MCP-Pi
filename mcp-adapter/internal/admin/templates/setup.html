@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Initial Setup - MCP Gateway Admin{% endblock %}
+{% block content %}
+<div class="flex min-h-[calc(100vh-2.5rem)] items-center justify-center py-4">
+  <div class="card w-full max-w-md space-y-6 p-6 shadow-2xl sm:p-8">
+    <div class="text-center space-y-2">
+      <div class="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white text-xl mx-auto shadow-lg">π</div>
+      <h1 class="text-xl font-bold tracking-tight text-white">Initial Admin Setup</h1>
+      <p class="text-xs text-slate-400">Available only while no enabled Admin exists and the bootstrap token is valid.</p>
+    </div>
+
+    {% if error %}
+    <div class="p-3 bg-rose-950/80 border border-rose-800 text-rose-300 text-sm rounded-lg">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" action="/setup" class="space-y-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div>
+        <label for="bootstrap_token" class="field-label">Bootstrap token</label>
+        <input type="password" id="bootstrap_token" name="bootstrap_token" required autocomplete="off" class="field font-mono">
+      </div>
+      <div>
+        <label for="password" class="field-label">Admin password</label>
+        <input type="password" id="password" name="password" required autocomplete="new-password" class="field">
+      </div>
+      <div>
+        <label for="password_confirm" class="field-label">Confirm password</label>
+        <input type="password" id="password_confirm" name="password_confirm" required autocomplete="new-password" class="field">
+      </div>
+      <button type="submit" class="btn-primary w-full">Create Admin</button>
+    </form>
+
+    <div class="text-center text-xs text-slate-500">
+      The bootstrap token expires after 15 minutes and is deleted after successful setup.
+    </div>
+  </div>
+</div>
+{% endblock %}

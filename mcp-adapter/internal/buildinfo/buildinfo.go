@@ -6,10 +6,10 @@ import (
 )
 
 const (
-	GatewayVersion     = "1.6.5"
+	GatewayVersion     = "1.6.6"
 	CoreAPIVersion     = 1
 	BridgeAPIVersion   = 1
-	ToolCatalogVersion = 4
+	ToolCatalogVersion = 5
 	MCPProtocol        = "2026-07-28"
 )
 

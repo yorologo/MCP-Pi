@@ -90,6 +90,64 @@ func TestStoreReadsWithSingleConnectionPool(t *testing.T) {
 	}
 }
 
+func TestTaskCRUDPersistsTypedDefinition(t *testing.T) {
+	store, ctx := seededStore(t)
+
+	if err := store.AddTask(ctx, "t", "p", "build", Task{
+		Argv:    []string{"go", "test", "./..."},
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.GetProject(ctx, "t", "p", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, ok := project.Tasks["build"]
+	if !ok || !task.Enabled || task.Timeout != 30 || len(task.Argv) != 3 {
+		t.Fatalf("unexpected created task: %+v", task)
+	}
+
+	if err := store.UpdateTask(ctx, "t", "p", "build", Task{
+		Argv:    []string{"go", "vet", "./..."},
+		Timeout: 45,
+		Enabled: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	project, err = store.GetProject(ctx, "t", "p", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task = project.Tasks["build"]
+	if task.Enabled || task.Timeout != 45 || len(task.Argv) != 3 || task.Argv[1] != "vet" {
+		t.Fatalf("unexpected updated task: %+v", task)
+	}
+
+	if err := store.DeleteTask(ctx, "t", "p", "build"); err != nil {
+		t.Fatal(err)
+	}
+	project, err = store.GetProject(ctx, "t", "p", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := project.Tasks["build"]; exists {
+		t.Fatal("deleted task still present")
+	}
+
+	for name, task := range map[string]Task{
+		"empty":   {Argv: nil, Timeout: 30, Enabled: true},
+		"timeout": {Argv: []string{"true"}, Timeout: 3601, Enabled: true},
+	} {
+		if err := store.AddTask(ctx, "t", "p", name, task); err == nil {
+			t.Fatalf("invalid task %s was accepted", name)
+		}
+	}
+	if err := store.AddTask(ctx, "t", "p", "bad/task", Task{Argv: []string{"true"}, Timeout: 30, Enabled: true}); err == nil {
+		t.Fatal("unsafe task name was accepted")
+	}
+}
+
 func TestStoreNormalizesV5NullScopesToWildcardContract(t *testing.T) {
 	store, ctx := seededStore(t)
 	grants, err := store.ListGrants(ctx, "client")

@@ -16,9 +16,16 @@ ProtectKernelLogs=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
 RestrictSUIDSGID=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mcp-gateway/.local/share/mcp-gateway
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
 WorkingDirectory=/home/mcp-gateway/mcp-gateway
 Environment=MCP_GATEWAY_REGISTRY=sqlite
 Environment=MCP_GATEWAY_DB=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db
+Environment=MCP_GATEWAY_POSTBOOT=1
 ExecStartPre=/usr/bin/curl --fail --silent --show-error --retry 60 --retry-delay 1 --retry-max-time 90 --retry-connrefused --max-time 2 http://127.0.0.1:8090/ready
 ExecStart=/home/mcp-gateway/mcp-gateway/bin/mcp-gateway doctor
 RemainAfterExit=yes

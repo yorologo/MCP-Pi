@@ -1,6 +1,6 @@
 # Installation
 
-`install.sh` is the canonical install/reinstall/update/rollback engine. The latest stable release is 1.6.4 and the current source candidate is **1.6.5**; `scripts/deploy-pi.sh` is a maintainer promotion wrapper around the same installer, not a second activation engine.
+`install.sh` is the canonical install/reinstall/update/rollback engine. `scripts/deploy-pi.sh` is a maintainer promotion wrapper around the same installer, not a second activation engine. Publication status belongs to immutable Git tags/GitHub Releases rather than mutable source text.
 
 ## Supported path
 
@@ -9,7 +9,7 @@ Recommended appliance path:
     release bundle
       -> ./install.sh --check
       -> sudo ./install.sh
-      -> sudo -u mcp-gateway mcp-gateway setup
+      -> initial Admin setup (/setup one-time token or local CLI)
       -> Admin Console
       -> status / doctor
 
@@ -53,7 +53,7 @@ The installer:
 12. installs systemd/polkit assets;
 13. starts Admin/MCP, maintenance timer and postboot verification;
 14. runs Doctor;
-15. optionally runs interactive Admin setup.
+15. offers one-time Web bootstrap on a fresh non-interactive install, or optionally runs interactive CLI Admin setup.
 
 Persistent state remains outside the runtime tree:
 
@@ -77,6 +77,8 @@ Existing settings are preserved through normal update.
 
 ## Setup
 
+Interactive/local recovery path:
+
     sudo -u mcp-gateway mcp-gateway setup
 
 For non-interactive automation:
@@ -85,11 +87,13 @@ For non-interactive automation:
 
 Setup requires the Registry to already be current; it never creates or migrates schema.
 
-Do not place passwords in command arguments or Git. To install without interactive bootstrap, use:
+On a **fresh non-interactive** installation, the installer creates a private one-time token at:
 
-    sudo ./install.sh --no-setup
+    /home/mcp-gateway/.config/mcp-gateway/admin-bootstrap.token
 
-and run Setup later.
+The installer prints only the local command needed to read it. Visit `/setup`, supply that token and choose the Admin password. The token is mode `0600`, expires after 15 minutes, is accepted only while no enabled Admin exists, and is deleted after successful setup. If it expires, use the local CLI setup command.
+
+Do not place passwords or bootstrap tokens in command arguments, Git, logs or release artifacts. `sudo ./install.sh --no-setup` skips interactive CLI bootstrap; on a fresh Registry it still enables the bounded one-time Web setup flow.
 
 ## Rollback
 

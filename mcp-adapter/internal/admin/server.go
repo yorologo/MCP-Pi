@@ -23,14 +23,15 @@ import (
 
 // ServerConfig holds the parameters for running the Admin web console.
 type ServerConfig struct {
-	Host         string
-	Port         int
-	AllowedHosts []string
-	SecretFile   string
-	Store        *registry.Store
-	Core         *core.Core
-	Discovery    *discovery.TargetDiscovery
-	Version      string
+	Host               string
+	Port               int
+	AllowedHosts       []string
+	SecretFile         string
+	BootstrapTokenFile string
+	Store              *registry.Store
+	Core               *core.Core
+	Discovery          *discovery.TargetDiscovery
+	Version            string
 }
 
 // Server implements the complete Go-only Admin Web console.
@@ -60,6 +61,17 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 	if cfg.Version == "" {
 		cfg.Version = buildinfo.GatewayVersion
+	}
+	if strings.TrimSpace(cfg.BootstrapTokenFile) == "" {
+		if strings.TrimSpace(cfg.SecretFile) != "" {
+			cfg.BootstrapTokenFile = filepath.Join(filepath.Dir(cfg.SecretFile), "admin-bootstrap.token")
+		} else {
+			home := os.Getenv("MCP_GATEWAY_HOME")
+			if home == "" {
+				home = "/home/mcp-gateway"
+			}
+			cfg.BootstrapTokenFile = filepath.Join(home, ".config", "mcp-gateway", "admin-bootstrap.token")
+		}
 	}
 
 	sessionMgr, err := NewSessionManager(cfg.SecretFile)
@@ -424,6 +436,7 @@ func (s *Server) registerRoutes() {
 
 	// Auth routes
 	s.mux.HandleFunc("/login", s.handleLogin)
+	s.mux.HandleFunc("/setup", s.handleSetup)
 	s.mux.HandleFunc("/logout", s.handleLogout)
 
 	// Dashboard & Main

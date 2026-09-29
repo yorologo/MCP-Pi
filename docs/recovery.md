@@ -1,6 +1,6 @@
 # Recovery
 
-Recovery for the 1.6.4 Go-only stable runtime deliberately uses the same lifecycle primitives as normal operation.
+Recovery for the Go-only runtime deliberately uses the same lifecycle primitives as normal operation. Use immutable Git tags/GitHub Releases to identify a published version and live deployment evidence to identify what the appliance is actually running.
 
 ## 1. Diagnose before mutating
 

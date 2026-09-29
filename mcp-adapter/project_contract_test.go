@@ -84,7 +84,7 @@ func TestFreshRegistrySafeDefaults(t *testing.T) {
 	}
 }
 
-func TestCurrentDocumentationDescribesGoOnlyCandidate(t *testing.T) {
+func TestCurrentDocumentationDescribesGoOnlyRuntimeWithoutMutableReleaseLabels(t *testing.T) {
 	current := []string{
 		"README.md",
 		"AGENTS.md",
@@ -135,8 +135,14 @@ func TestCurrentDocumentationDescribesGoOnlyCandidate(t *testing.T) {
 	}
 	for _, rel := range []string{"README.md", "docs/installation.md", "docs/project-state.md"} {
 		data, _ := os.ReadFile(filepath.Join("..", filepath.FromSlash(rel)))
-		if !strings.Contains(string(data), buildinfo.GatewayVersion) {
-			t.Errorf("%s does not mention candidate %s", rel, buildinfo.GatewayVersion)
+		text := string(data)
+		for _, stale := range []string{"latest stable release", "current source candidate"} {
+			if strings.Contains(strings.ToLower(text), stale) {
+				t.Errorf("%s embeds mutable publication label %q", rel, stale)
+			}
+		}
+		if !strings.Contains(text, "Git") || !strings.Contains(text, "Release") {
+			t.Errorf("%s does not direct publication status to Git tags/releases", rel)
 		}
 	}
 }
@@ -147,7 +153,8 @@ func TestOperationalContractsRemainExplicit(t *testing.T) {
 			"--check",
 			"--rollback",
 			"INSTALL_VERIFIED",
-			"MCP_ADMIN_HOST=127.0.0.1",
+			"admin_bind_default=127.0.0.1",
+			"admin-bootstrap.token",
 			"mcp-gateway.previous-install",
 		},
 		"scripts/deploy-pi.sh": {

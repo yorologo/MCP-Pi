@@ -440,7 +440,7 @@
           "type": "string"
         },
         "project": {
-          "description": "Authorized project ID (defaults to active project)",
+          "description": "Explicit authorized project ID",
           "type": "string"
         },
         "stdin": {
@@ -458,6 +458,7 @@
       },
       "required": [
         "target",
+        "project",
         "command"
       ],
       "type": "object"

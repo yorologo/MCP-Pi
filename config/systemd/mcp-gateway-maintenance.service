@@ -15,6 +15,12 @@ ProtectKernelLogs=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
 RestrictSUIDSGID=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mcp-gateway/.local/share/mcp-gateway
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
 WorkingDirectory=/home/mcp-gateway/mcp-gateway
 Environment=MCP_GATEWAY_REGISTRY=sqlite
 Environment=MCP_GATEWAY_DB=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db

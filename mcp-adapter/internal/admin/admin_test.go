@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mcp-gateway-adapter/internal/buildinfo"
 	"mcp-gateway-adapter/internal/core"
@@ -619,5 +621,118 @@ func TestMalformedFormFailsClosedBeforeCSRF(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed form with valid CSRF header returned %d, want 400", rec.Code)
+	}
+}
+
+func TestProjectTaskAdminCRUD(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+
+	rec := httptest.NewRecorder()
+	srv.handleProjectSubroutes(rec, adminPostForm("/projects/test-target/test-proj/task-add", url.Values{
+		"task_name":    {"verify"},
+		"argv_json":    {`["go","test","./..."]`},
+		"timeout":      {"75"},
+		"task_enabled": {"on"},
+	}))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("task add status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	project, err := store.GetProject(context.Background(), "test-target", "test-proj", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, ok := project.Tasks["verify"]
+	if !ok || !task.Enabled || task.Timeout != 75 || len(task.Argv) != 3 || task.Argv[1] != "test" {
+		t.Fatalf("unexpected task after Admin add: %+v", task)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.handleProjectSubroutes(rec, adminPostForm("/projects/test-target/test-proj/task-update", url.Values{
+		"task_name": {"verify"},
+		"argv_json": {`["go","vet","./..."]`},
+		"timeout":   {"45"},
+	}))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("task update status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	project, err = store.GetProject(context.Background(), "test-target", "test-proj", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task = project.Tasks["verify"]
+	if task.Enabled || task.Timeout != 45 || task.Argv[1] != "vet" {
+		t.Fatalf("unexpected task after Admin update: %+v", task)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.handleProjectSubroutes(rec, adminPostForm("/projects/test-target/test-proj/task-delete", url.Values{
+		"task_name": {"verify"},
+	}))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("task delete status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	project, err = store.GetProject(context.Background(), "test-target", "test-proj", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := project.Tasks["verify"]; exists {
+		t.Fatal("Admin delete left task in Registry")
+	}
+}
+
+func TestInitialAdminWebSetupIsOneTimeAndReenablesDisabledAdmin(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	if _, err := store.DB().ExecContext(context.Background(), "UPDATE admin_users SET enabled=0 WHERE username='admin'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srv.cfg.BootstrapTokenFile, []byte("bootstrap-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	srv.handleSetup(rec, adminPostForm("/setup", url.Values{
+		"bootstrap_token":  {"bootstrap-secret"},
+		"password":         {"new-password"},
+		"password_confirm": {"new-password"},
+	}))
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("setup status=%d location=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+
+	adminUser, err := store.GetAdminUser(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adminUser == nil || !adminUser.Enabled {
+		t.Fatalf("bootstrap did not leave an enabled admin: %+v", adminUser)
+	}
+	if _, err := os.Stat(srv.cfg.BootstrapTokenFile); !os.IsNotExist(err) {
+		t.Fatalf("bootstrap token was not deleted: %v", err)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.handleSetup(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("setup remained available after admin creation: status=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestInitialAdminWebSetupRejectsExpiredToken(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	if _, err := store.DB().ExecContext(context.Background(), "DELETE FROM admin_users"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srv.cfg.BootstrapTokenFile, []byte("expired-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expired := time.Now().Add(-bootstrapTokenTTL - time.Minute)
+	if err := os.Chtimes(srv.cfg.BootstrapTokenFile, expired, expired); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	srv.handleSetup(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expired setup token status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

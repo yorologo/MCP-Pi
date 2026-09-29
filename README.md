@@ -2,7 +2,7 @@
 
 MCP-Pi is a small private MCP security gateway for delegating controlled work to authorized Targets. It does not run an LLM. One Go runtime authenticates clients, evaluates policy, audits decisions and performs bounded operations over pinned SSH.
 
-The latest stable release is **1.6.4**; the current `develop` source is the **1.6.5 candidate**. Production is a separate authority until an exact commit is deployed and accepted. Machine-readable runtime/API/schema/protocol metadata lives in `manifest.json`, `compatibility.json` and `mcp-gateway version --json`.
+Source version and compatibility are defined by `manifest.json`, `compatibility.json` and `mcp-gateway version --json`. Publication status is defined by immutable Git tags/GitHub Releases, while a running appliance is authoritative only for its own live deployment provenance and acceptance evidence.
 
 ## Security model
 
@@ -24,7 +24,7 @@ For the reference Raspberry Pi appliance, an official release bundle is preferre
     ./install.sh --check
     sudo ./install.sh
 
-The installer validates the bundle, creates/migrates the Registry explicitly, installs systemd units, starts Admin/MCP and runs Doctor. If interactive setup was skipped, configure the Admin user afterward:
+The installer validates the bundle, creates/migrates the Registry explicitly, installs systemd units, starts Admin/MCP and runs Doctor. On a fresh non-interactive install it creates a private 15-minute one-time bootstrap token for `/setup`; the installer prints only the local token-file path, never the token value. CLI setup remains the recovery path:
 
     sudo -u mcp-gateway mcp-gateway setup
 
@@ -46,7 +46,7 @@ See [Installation](docs/installation.md) for the complete lifecycle and [Admin C
 In Admin Console:
 
 1. add a Target and verify its pinned SSH identity;
-2. add a Project root;
+2. add a Project root and, when safer than arbitrary shell, configure its allowlisted Tasks;
 3. register the client that will use MCP-Pi;
 4. grant only the required capabilities;
 5. use **Check Effective Access** before enabling broader operations.

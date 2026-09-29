@@ -130,7 +130,7 @@ func TestProbeFactsVerifiesConfiguredPrivilegedSSHUser(t *testing.T) {
 	target := localTarget()
 	target.PrivilegeUser = "root"
 
-	facts, err := transport.ProbeFacts(context.Background(), target, false, 5*time.Second)
+	facts, err := transport.ProbeFacts(context.Background(), target, false, true, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestProbeFactsFailsClosedWhenConfiguredPrivilegedSSHUserCannotAuthenticate(
 	target := localTarget()
 	target.PrivilegeUser = "root"
 
-	facts, err := transport.ProbeFacts(context.Background(), target, false, 5*time.Second)
+	facts, err := transport.ProbeFacts(context.Background(), target, false, true, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestProbeFactsBoundsSlowShizukuReadinessWithoutDroppingGuard(t *testing.T) 
 
 	transport := localSSHShim(t)
 	start := time.Now()
-	facts, err := transport.ProbeFacts(context.Background(), localTarget(), false, 8*time.Second)
+	facts, err := transport.ProbeFacts(context.Background(), localTarget(), false, true, 8*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestProbeFactsVerifiesResponsiveShizukuUID(t *testing.T) {
 	t.Setenv("TERMUX_VERSION", "test")
 
 	transport := localSSHShim(t)
-	facts, err := transport.ProbeFacts(context.Background(), localTarget(), false, 5*time.Second)
+	facts, err := transport.ProbeFacts(context.Background(), localTarget(), false, true, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

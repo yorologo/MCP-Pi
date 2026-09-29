@@ -2,7 +2,7 @@
 
 This file records source/integration state, not live production.
 
-The latest stable release is **1.6.4** and `develop` currently carries the **1.6.5 candidate**. `develop` and `main` converge on the exact validated release SHA only after promotion.
+This file does not assign mutable `stable`/`candidate` labels to source commits. Use immutable Git tags/GitHub Releases for publication state, and live deployment provenance for the appliance actually running. `develop` and `main` converge on an exact validated release SHA only during an explicit promotion.
 
 Numeric build/API/catalog/schema/protocol values are not duplicated here; use `manifest.json`, `compatibility.json` and `mcp-gateway version --json`.
 

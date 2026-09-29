@@ -116,7 +116,7 @@ func (s *SSHTransport) probeShizukuUID(
 func (s *SSHTransport) ProbeFacts(
 	ctx context.Context,
 	target registry.Target,
-	includeBootID bool,
+	includeBootID, verifyPrivilegeBackend bool,
 	timeout time.Duration,
 ) (map[string]any, error) {
 	include := "0"
@@ -255,7 +255,7 @@ func (s *SSHTransport) ProbeFacts(
 		}
 	}
 
-	if strings.TrimSpace(target.PrivilegeUser) == "" {
+	if verifyPrivilegeBackend && strings.TrimSpace(target.PrivilegeUser) == "" {
 		features := facts["features"].(map[string]any)
 		privilege := facts["privilege"].(map[string]any)
 		if features["termux"] == true && features["shizuku"] == true && privilege["current_level"] != "root" {
@@ -274,7 +274,7 @@ func (s *SSHTransport) ProbeFacts(
 		}
 	}
 
-	if strings.TrimSpace(target.PrivilegeUser) != "" {
+	if verifyPrivilegeBackend && strings.TrimSpace(target.PrivilegeUser) != "" {
 		privilege := facts["privilege"].(map[string]any)
 		privilege["backend"] = "privileged-ssh"
 		privilege["backend_ready"] = false

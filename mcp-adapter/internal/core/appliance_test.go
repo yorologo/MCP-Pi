@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -97,16 +99,54 @@ func TestLoadDeploymentProvenanceFromRuntime(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_GATEWAY_HOME", home)
 	runtimeDir := filepath.Join(home, "mcp-gateway")
-	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(runtimeDir, "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	content := `{"commit":"abc123","branch":"develop","deployed_at":"2026-09-27T03:35:13Z","verified":true}`
+	adapterContent := []byte("adapter-binary")
+	sum := sha256.Sum256(adapterContent)
+	adapterSHA := hex.EncodeToString(sum[:])
+	if err := os.WriteFile(filepath.Join(runtimeDir, "bin", "mcp-gateway-adapter"), adapterContent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, ".deployed-git-sha"), []byte("abc123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf(`{"commit":"abc123","branch":"develop","deployed_at":"2026-09-27T03:35:13Z","adapter_sha256":%q,"runtime":"go-only","verified":true}`, adapterSHA)
 	if err := os.WriteFile(filepath.Join(runtimeDir, ".deployment.json"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got := loadDeploymentProvenance()
 	if got["available"] != true || got["commit"] != "abc123" || got["branch"] != "develop" || got["verified"] != true {
 		t.Fatalf("unexpected deployment provenance: %#v", got)
+	}
+	if got["recorded_verified"] != true || got["live_adapter_sha256"] != adapterSHA {
+		t.Fatalf("live verification evidence missing: %#v", got)
+	}
+}
+
+func TestLoadDeploymentProvenanceRejectsStaleAcceptedRecord(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MCP_GATEWAY_HOME", home)
+	runtimeDir := filepath.Join(home, "mcp-gateway")
+	if err := os.MkdirAll(filepath.Join(runtimeDir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "bin", "mcp-gateway-adapter"), []byte("changed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, ".deployed-git-sha"), []byte("abc123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"commit":"abc123","adapter_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtime":"go-only","verified":true}`
+	if err := os.WriteFile(filepath.Join(runtimeDir, ".deployment.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := loadDeploymentProvenance()
+	if got["recorded_verified"] != true || got["verified"] != false {
+		t.Fatalf("stale accepted record must not verify live: %#v", got)
+	}
+	if !strings.Contains(fmt.Sprint(got["verification_message"]), "does not match") {
+		t.Fatalf("missing mismatch evidence: %#v", got)
 	}
 }
 
@@ -143,7 +183,7 @@ func TestGatewayBackup(t *testing.T) {
 	}
 }
 
-func TestInspectCloudflaredDependencyReportsSafeProvenance(t *testing.T) {
+func TestInspectCloudflaredDependencyReportsSafeFingerprint(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "cloudflared")
 	token := filepath.Join(dir, "cloudflared.token")
@@ -166,7 +206,7 @@ func TestInspectCloudflaredDependencyReportsSafeProvenance(t *testing.T) {
 	}
 }
 
-func TestInspectCloudflaredDependencyDoesNotExecuteBinaryForProvenance(t *testing.T) {
+func TestInspectCloudflaredDependencyDoesNotExecuteBinaryForFingerprint(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "cloudflared")
 	token := filepath.Join(dir, "cloudflared.token")
@@ -186,7 +226,7 @@ func TestInspectCloudflaredDependencyDoesNotExecuteBinaryForProvenance(t *testin
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("cloudflared binary was executed during provenance inspection: %v", err)
 	}
-	if !strings.Contains(got.Message, "SHA-256 provenance") {
+	if !strings.Contains(got.Message, "SHA-256 fingerprint") {
 		t.Fatalf("dependency evidence did not explain provenance basis: %+v", got)
 	}
 }
@@ -208,6 +248,17 @@ func TestInspectCloudflaredDependencyRejectsBroadTokenPermissions(t *testing.T) 
 	got := inspectCloudflaredDependency(context.Background(), binary, token)
 	if got.Passed || !strings.Contains(got.Message, "permissions are too broad") {
 		t.Fatalf("broad token permissions were not rejected: %+v", got)
+	}
+}
+
+func TestSummarizeDoctorChecksRequiredFailureWinsOverWarningSeverity(t *testing.T) {
+	passed, failed, warnings := summarizeDoctorChecks([]DoctorCheck{
+		{Name: "required", Passed: false, Severity: "warning", Required: true},
+		{Name: "optional", Passed: false, Severity: "warning", Required: false},
+		{Name: "healthy", Passed: true, Severity: "error", Required: true},
+	})
+	if passed != 1 || failed != 1 || warnings != 1 {
+		t.Fatalf("unexpected Doctor summary: passed=%d failed=%d warnings=%d", passed, failed, warnings)
 	}
 }
 

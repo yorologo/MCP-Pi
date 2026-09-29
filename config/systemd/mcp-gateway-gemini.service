@@ -23,6 +23,12 @@ ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 RestrictSUIDSGID=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mcp-gateway/.local/share/mcp-gateway
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target

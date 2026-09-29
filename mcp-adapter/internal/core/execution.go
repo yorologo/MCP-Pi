@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -55,7 +54,7 @@ func (c *Core) authorizeExecutionPrivilege(
 	}
 
 	includeBootID := state.PolicyName == "ask_once_per_boot"
-	facts, err := transport.ProbeFacts(ctx, target, includeBootID, 10*time.Second)
+	facts, err := transport.ProbeFacts(ctx, target, includeBootID, privilegeRequest == "required", 10*time.Second)
 	if err != nil || facts == nil || facts["probe_status"] != "ok" {
 		reason := "Target privilege probe failed"
 		if facts != nil {
@@ -92,7 +91,7 @@ func (c *Core) authorizeExecutionPrivilege(
 	state.IndependentElevator, _ = privilegeInfo["independent_elevator"].(string)
 	state.TransportAlreadyElevated = state.CurrentLevel == "root" || state.CurrentLevel == "administrator"
 
-	if privilegeRequest != "required" && !state.TransportAlreadyElevated && !state.ShellCanElevate {
+	if privilegeRequest != "required" && !state.TransportAlreadyElevated {
 		return state, nil
 	}
 
@@ -161,16 +160,14 @@ func (c *Core) CheckRunCommandAccess(
 	ctx context.Context,
 	actor, targetID, projectID, privilegeRequest string,
 ) (ExecutionAccessCheck, error) {
-	privilegeRequest = strings.ToLower(strings.TrimSpace(privilegeRequest))
-	if privilegeRequest == "" {
-		privilegeRequest = "standard"
-	}
-	if privilegeRequest != "standard" && privilegeRequest != "required" {
+	normalizedPrivilege, err := policy.NormalizePrivilegeRequest(privilegeRequest)
+	if err != nil {
 		return ExecutionAccessCheck{
 			Code:   "INVALID_ARGUMENTS",
-			Reason: fmt.Sprintf("Invalid privilege value %q: must be standard or required", privilegeRequest),
+			Reason: err.Error(),
 		}, nil
 	}
+	privilegeRequest = normalizedPrivilege
 	if strings.TrimSpace(targetID) == "" || strings.TrimSpace(projectID) == "" {
 		return ExecutionAccessCheck{
 			Code:   "CONCRETE_SCOPE_REQUIRED",
@@ -259,31 +256,8 @@ func (c *Core) RunCommand(
 		return errorResponse("run_command", "TARGET_NOT_FOUND", fmt.Sprintf("Target '%s' is not configured", targetID), requestID, targetID, projectID, started)
 	}
 
-	if projectID == "" {
-		projects, err := c.store.ListProjects(ctx, targetID)
-		if err == nil && len(projects) > 0 {
-			for _, p := range projects {
-				if p.ID == "MCP_Local" {
-					projectID = "MCP_Local"
-					break
-				}
-			}
-			if projectID == "" {
-				if len(projects) == 1 {
-					projectID = projects[0].ID
-				} else {
-					sorted := make([]string, len(projects))
-					for i, p := range projects {
-						sorted[i] = p.ID
-					}
-					sort.Strings(sorted)
-					projectID = sorted[0]
-				}
-			}
-		}
-	}
-	if projectID == "" {
-		return errorResponse("run_command", "PROJECT_NOT_FOUND", "Trusted target shell requires a project scope for authorization and audit", requestID, targetID, projectID, started)
+	if strings.TrimSpace(projectID) == "" {
+		return errorResponse("run_command", "INVALID_ARGUMENTS", "Trusted target shell requires an explicit project scope for authorization and audit", requestID, targetID, projectID, started)
 	}
 
 	if blocked := c.operationalGate(ctx, "run_command", requestID, targetID, projectID); blocked != nil {
@@ -326,12 +300,9 @@ func (c *Core) RunCommand(
 		}
 	}
 
-	privReq := strings.ToLower(strings.TrimSpace(req.Privilege))
-	if privReq == "" {
-		privReq = "standard"
-	}
-	if privReq != "standard" && privReq != "required" {
-		return errorResponse("run_command", "INVALID_ARGUMENTS", fmt.Sprintf("Invalid privilege value '%s': must be standard or required", req.Privilege), requestID, targetID, projectID, started)
+	privReq, err := policy.NormalizePrivilegeRequest(req.Privilege)
+	if err != nil {
+		return errorResponse("run_command", "INVALID_ARGUMENTS", err.Error(), requestID, targetID, projectID, started)
 	}
 
 	privilegeState, privilegeErr := c.authorizeExecutionPrivilege(ctx, actor, targetID, projectID, privReq, target, transport, true)

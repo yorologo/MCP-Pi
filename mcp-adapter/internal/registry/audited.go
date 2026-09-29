@@ -26,6 +26,36 @@ func (s *Store) AddProjectAudited(ctx context.Context, project Project, activity
 	})
 }
 
+// AddTaskAudited creates an allowlisted Project task and records the mutation atomically.
+func (s *Store) AddTaskAudited(ctx context.Context, targetID, projectID, taskName string, task Task, activity Activity) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if err := addTaskExec(ctx, tx, targetID, projectID, taskName, task); err != nil {
+			return err
+		}
+		return recordActivityExec(ctx, tx, activity)
+	})
+}
+
+// UpdateTaskAudited updates an allowlisted Project task and records the mutation atomically.
+func (s *Store) UpdateTaskAudited(ctx context.Context, targetID, projectID, taskName string, task Task, activity Activity) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if err := updateTaskExec(ctx, tx, targetID, projectID, taskName, task); err != nil {
+			return err
+		}
+		return recordActivityExec(ctx, tx, activity)
+	})
+}
+
+// DeleteTaskAudited removes an allowlisted Project task and records the mutation atomically.
+func (s *Store) DeleteTaskAudited(ctx context.Context, targetID, projectID, taskName string, activity Activity) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if err := deleteTaskExec(ctx, tx, targetID, projectID, taskName); err != nil {
+			return err
+		}
+		return recordActivityExec(ctx, tx, activity)
+	})
+}
+
 // AddClientAudited creates an AI client and records the successful mutation atomically.
 func (s *Store) AddClientAudited(ctx context.Context, client Client, activity Activity) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {

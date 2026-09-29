@@ -13,13 +13,14 @@ import (
 
 type executionFakeRemote struct {
 	fakeRemote
-	lastCommand string
-	lastCWD     string
-	lastEnv     map[string]string
-	facts       map[string]any
-	factsErr    error
-	runErr      error
-	runResult   remote.CommandResult
+	lastCommand            string
+	lastCWD                string
+	lastEnv                map[string]string
+	facts                  map[string]any
+	factsErr               error
+	verifyPrivilegeBackend bool
+	runErr                 error
+	runResult              remote.CommandResult
 }
 
 func (f *executionFakeRemote) RunCommand(_ context.Context, _ registry.Target, command string, options remote.CommandOptions) (remote.CommandResult, error) {
@@ -32,7 +33,8 @@ func (f *executionFakeRemote) RunCommand(_ context.Context, _ registry.Target, c
 	return f.runResult, nil
 }
 
-func (f *executionFakeRemote) ProbeFacts(_ context.Context, _ registry.Target, _ bool, _ time.Duration) (map[string]any, error) {
+func (f *executionFakeRemote) ProbeFacts(_ context.Context, _ registry.Target, _ bool, verifyPrivilegeBackend bool, _ time.Duration) (map[string]any, error) {
+	f.verifyPrivilegeBackend = verifyPrivilegeBackend
 	if f.factsErr != nil {
 		return nil, f.factsErr
 	}
@@ -141,6 +143,41 @@ func seededExecutionCore(t *testing.T) (*Core, *executionFakeRemote, context.Con
 	return core, fake, ctx
 }
 
+func TestStandardRunCommandDoesNotDependOnPrivilegeBackendReadiness(t *testing.T) {
+	core, fake, ctx := seededExecutionCore(t)
+	fake.facts = map[string]any{
+		"probe_status": "ok",
+		"privilege": map[string]any{
+			"current_level":              "standard",
+			"maximum_level":              "elevated",
+			"backend":                    "shizuku",
+			"backend_ready":              false,
+			"transport_already_elevated": false,
+			"shell_can_elevate":          true,
+			"independent_elevator":       "shizuku",
+		},
+	}
+
+	check, err := core.CheckRunCommandAccess(ctx, "test-client", "termux-main", "MCP_Local", "standard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !check.Allowed {
+		t.Fatalf("standard access unexpectedly depended on privilege backend: %+v", check)
+	}
+	if fake.verifyPrivilegeBackend {
+		t.Fatal("standard access requested active privilege-backend verification")
+	}
+
+	resp := core.RunCommand(ctx, "req-standard", "test-client", "termux-main", "MCP_Local", "pwd", CommandRequest{Privilege: "standard"})
+	if !resp.OK {
+		t.Fatalf("standard execution unexpectedly failed: %+v", resp)
+	}
+	if fake.verifyPrivilegeBackend {
+		t.Fatal("standard execution requested active privilege-backend verification")
+	}
+}
+
 func TestCheckRunCommandAccessUsesPrivilegeGateWithoutConsumingApproval(t *testing.T) {
 	core, fake, ctx := seededExecutionCore(t)
 
@@ -185,18 +222,19 @@ func TestCheckRunCommandAccessUsesPrivilegeGateWithoutConsumingApproval(t *testi
 	}
 }
 
-func TestCheckRunCommandAccessMirrorsGuardForStandardShell(t *testing.T) {
+func TestStandardRunCommandStillGuardsAlreadyElevatedTransport(t *testing.T) {
 	core, fake, ctx := seededExecutionCore(t)
 	fake.facts = map[string]any{
 		"probe_status": "ok",
 		"boot_id":      "boot-test-1",
 		"privilege": map[string]any{
-			"current_level":        "standard",
-			"maximum_level":        "root",
-			"backend":              "shizuku",
-			"backend_ready":        true,
-			"shell_can_elevate":    true,
-			"independent_elevator": "shizuku",
+			"current_level":              "root",
+			"maximum_level":              "root",
+			"backend":                    "direct",
+			"backend_ready":              true,
+			"transport_already_elevated": true,
+			"shell_can_elevate":          false,
+			"independent_elevator":       nil,
 		},
 	}
 
@@ -205,15 +243,21 @@ func TestCheckRunCommandAccessMirrorsGuardForStandardShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	if check.Allowed || check.Code != "PRIVILEGE_GRANT_REQUIRED" {
-		t.Fatalf("guarded standard shell should require target_admin: %+v", check)
+		t.Fatalf("already-elevated standard transport should require target_admin: %+v", check)
 	}
 }
 
 func TestRunCommandBasics(t *testing.T) {
 	core, fake, ctx := seededExecutionCore(t)
 
+	// Missing project fails closed instead of guessing an authorization scope.
+	resp := core.RunCommand(ctx, "req-project", "test-client", "termux-main", "", "pwd", CommandRequest{})
+	if resp.OK || resp.Error.Code != "INVALID_ARGUMENTS" {
+		t.Fatalf("expected explicit project requirement, got: %+v", resp)
+	}
+
 	// Empty command fails
-	resp := core.RunCommand(ctx, "req-1", "test-client", "termux-main", "MCP_Local", "", CommandRequest{})
+	resp = core.RunCommand(ctx, "req-1", "test-client", "termux-main", "MCP_Local", "", CommandRequest{})
 	if resp.OK || resp.Error.Code != "INVALID_ARGUMENTS" {
 		t.Fatalf("expected INVALID_ARGUMENTS, got: %+v", resp)
 	}

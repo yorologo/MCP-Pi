@@ -55,12 +55,6 @@ type validationFixture struct {
 		Max    int                   `json:"max"`
 		Result validationExpectation `json:"result"`
 	} `json:"write_sizes"`
-	Tasks []struct {
-		Name    string                `json:"name"`
-		Project map[string]any        `json:"project"`
-		Task    string                `json:"task"`
-		Result  validationExpectation `json:"result"`
-	} `json:"tasks"`
 }
 
 func loadValidationFixture(t *testing.T) validationFixture {
@@ -199,17 +193,6 @@ func TestContentAndSizeValidationMatchesPython(t *testing.T) {
 		}
 		err = ValidateWriteSize(data, tc.Max)
 		checkValidationResult(t, nil, err, tc.Result)
-	}
-}
-
-func TestTaskValidationMatchesPython(t *testing.T) {
-	fixture := loadValidationFixture(t)
-	for _, tc := range fixture.Tasks {
-		tc := tc
-		t.Run(tc.Name, func(t *testing.T) {
-			value, err := ValidateTask(tc.Project, tc.Task)
-			checkValidationResult(t, value, err, tc.Result)
-		})
 	}
 }
 

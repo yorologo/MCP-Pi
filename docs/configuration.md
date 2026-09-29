@@ -23,12 +23,14 @@ Fresh Registry defaults are:
 ## Admin Console
 
 Common local environment values:
-- `MCP_ADMIN_HOST` — default `127.0.0.1`;
-- `MCP_ADMIN_PORT` — service port;
-- `MCP_ADMIN_ALLOWED_HOSTS` — explicit Host allowlist;
+- `MCP_ADMIN_HOST` — optional bind override; Go defaults to `127.0.0.1`;
+- `MCP_ADMIN_PORT` — optional port override; Go defaults to `80`;
+- `MCP_ADMIN_ALLOWED_HOSTS` — explicit Host allowlist override;
 - `MCP_ADMIN_SECRET_FILE` — secure-cookie signing secret file.
 
-The signing secret is private mutable state. Regenerating it invalidates existing Admin sessions.
+The packaged unit defines only the appliance Host allowlist; bind/port defaults stay in Go so there is one default source. The signing secret is private mutable state. Regenerating it invalidates existing Admin sessions.
+
+On a fresh non-interactive installation, the installer may create `admin-bootstrap.token` in the same private config directory. It is mode `0600`, accepted only while no enabled Admin exists, expires after 15 minutes, and is deleted after successful `/setup`. CLI `mcp-gateway setup` remains the recovery path.
 
 `admin_timezone` is stored in Registry settings and defaults to `UTC`. It accepts an IANA identifier such as `America/Mexico_City`. It affects presentation/date filters only; audit timestamps remain stored in UTC.
 
@@ -36,7 +38,7 @@ The signing secret is private mutable state. Regenerating it invalidates existin
 
 Target identity is the configured Target plus its pinned SSH host key. Host/IP/port are endpoint data.
 
-Projects define authorized roots and read/write enablement. Unix-like Targets use native POSIX capabilities; Windows Targets use PowerShell.
+Projects define authorized roots, read/write enablement and optional allowlisted Tasks. `run_command` always requires an explicit Project ID; MCP-Pi never guesses an authorization scope. Unix-like Targets use native POSIX capabilities; Windows Targets use PowerShell.
 
 ## Privilege policy
 
@@ -48,4 +50,4 @@ Private bearer/token material remains under the service config directory and out
 
 The primary ChatGPT ingress uses `tunnel-mcp.token` on `127.0.0.1:8090`. An optional Gemini ingress uses a distinct `gemini-mcp.token` on port `8092` and a distinct Registry identity, `gemini-main`. The packaged unit listens on `0.0.0.0:8092` so a private Cloudflare Tunnel hostname route can reach it through the appliance LAN address; it remains installed disabled by default, requires the dedicated Bearer token, and allows only the explicit `gemini-mcp.internal` Host in addition to loopback defaults. The installer never invents or copies the token into release artifacts.
 
-External ingress remains replaceable infrastructure. The OpenAI secure tunnel is optional and base installation does not enable it automatically. A Cloudflare Tunnel or another provider-specific edge may forward to the optional Gemini ingress, but provider credentials and tunnel configuration remain private mutable state outside MCP-Pi Core/Registry policy. When the packaged Cloudflare connector is explicitly enabled, Doctor exposes non-secret provenance for the local cloudflared dependency and validates that its token is a non-empty regular file owned by the gateway user with no group/other permissions.
+External ingress remains replaceable infrastructure. The OpenAI secure tunnel is optional and base installation does not enable it automatically. A Cloudflare Tunnel or another provider-specific edge may forward to the optional Gemini ingress, but provider credentials and tunnel configuration remain private mutable state outside MCP-Pi Core/Registry policy. When the packaged Cloudflare connector is explicitly enabled, Doctor exposes a non-secret SHA-256 fingerprint for the local cloudflared binary and validates that its token is a non-empty regular file owned by the gateway user with no group/other permissions.

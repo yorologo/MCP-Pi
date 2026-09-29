@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file defines how automated contributors must work on MCP-Pi. The current stable source release is 1.6.4 and the product runtime is Go-only.
+This file defines how automated contributors must work on MCP-Pi. The product runtime is Go-only; release/promotion status comes from immutable tags/releases and live deployment evidence, not mutable labels in source prose.
 
 ## Non-negotiable principles
 
@@ -74,7 +74,7 @@ Keep NoNewPrivileges. Appliance reboot is delegated through systemd-logind and t
 
 ## Documentation contract
 
-CURRENT docs describe the current candidate architecture. Release notes and archive material may describe older implementations, but must not be presented as current guidance.
+CURRENT docs describe the current source architecture. Release notes and archive material may describe older implementations, but must not be presented as current guidance.
 
 The executable contract is checked by Go tests plus scripts/verify-go-only.sh.
 

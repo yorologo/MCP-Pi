@@ -55,11 +55,17 @@ already_deployed() {
 set -euo pipefail
 current="$1"
 expected="$2"
+deployment="$current/.deployment.json"
+expected_adapter="$(sed -n 's/^[[:space:]]*"adapter_sha256":[[:space:]]*"\([^"]*\)".*/\1/p' "$deployment")"
 test "$(cat "$current/.deployed-git-sha" 2>/dev/null || true)" = "$expected"
-grep -Fq "\"commit\": \"$expected\"" "$current/.deployment.json"
-grep -Fq '"verified": true' "$current/.deployment.json"
+test -n "$expected_adapter"
+test "$(sha256sum "$current/bin/mcp-gateway-adapter" | awk '{print $1}')" = "$expected_adapter"
+grep -Fq "\"commit\": \"$expected\"" "$deployment"
+grep -Fq '"runtime": "go-only"' "$deployment"
+grep -Fq '"verified": true' "$deployment"
 systemctl is-active --quiet mcp-gateway-admin
 systemctl is-active --quiet mcp-gateway-mcp
+systemctl is-active --quiet mcp-gateway-postboot
 curl -fsS http://127.0.0.1/login >/dev/null
 curl -fsS http://127.0.0.1:8090/ready >/dev/null
 if systemctl is-enabled --quiet mcp-gateway-tunnel 2>/dev/null; then

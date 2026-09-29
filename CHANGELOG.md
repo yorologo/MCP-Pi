@@ -2,15 +2,42 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
-## 1.6.5 — candidate
+## 1.6.6 — candidate
+
+### Security / authorization
+- `run_command` now requires an explicit Project ID in the MCP contract and runtime; authorization scope is never guessed.
+- Standard shell execution no longer depends on or probes an optional privilege backend such as Shizuku. Explicit `required` elevation and already-elevated transports remain guarded by `target_admin` and the Target privilege policy.
+- Go systemd services now reuse the stricter appliance sandbox baseline (`ProtectSystem=strict`, `ProtectHome=read-only`, bounded writable paths and socket families) while Admin retains only the capability required to bind its privileged port.
+
+### Reliability / evidence
+- Deployment provenance is now live evidence: the recorded commit, Go-only runtime and adapter SHA-256 must match the installed runtime before `verified=true` is reported.
+- The deployment fast path now verifies the live adapter hash, runtime marker, positive postboot state, Admin `/login` and MCP `/ready` before reporting an already-deployed success.
+- Doctor now gives required failures precedence over warning severity, positively checks Admin readiness and postboot state, and keeps storage/memory thresholds advisory on constrained appliances.
+- Cloudflare diagnostics now describe the locally computed SHA-256 as a fingerprint rather than claiming cryptographic provenance without a trusted external hash.
+
+### Admin / operations
+- Projects can manage typed allowlisted Tasks directly in the existing Admin Project screen with audited add/update/delete operations.
+- Fresh non-interactive installs can complete first Admin setup through a bounded one-time `/setup` flow backed by a private 0600 token that expires after 15 minutes and is deleted after success; local CLI setup remains the recovery path.
+- Dashboard gateway state now uses the same required fail-closed setting read as runtime policy.
+- Admin bind/port defaults have one source in Go; systemd and installer retain only explicit appliance overrides.
+- Active source documentation no longer embeds mutable stable/candidate status; immutable Git tags/Releases and live deployment evidence are authoritative for publication/runtime state.
+
+### Compatibility
+- Tool catalog version is **5** because the `run_command` input contract now requires `project`.
+- Registry schema remains **6**, Core API remains **1**, Bridge API remains **1**, and the MCP protocol remains **2026-07-28**.
+
+### Validation
+- Candidate validation requires the complete Go test/vet/tidy gate, JavaScript/Tailwind checks, Go-only invariant, shell syntax, vulnerability scans, native build, ARMv6 cross-build, exact-SHA CI, canonical deployment and live appliance acceptance before promotion.
+
+## 1.6.5 — stable
 
 ### Fixed
 - Post-boot Doctor now observes optional ingress services after their startup order instead of racing them: the installer starts the optional OpenAI tunnel before postboot verification, and the postboot unit orders itself after Gemini, Cloudflare and the tunnel without making any of them hard dependencies.
 - This removes the transient `Optional Tunnel: enabled but not active` warning seen during successful deployments while preserving optional-service semantics and fail-closed readiness for required MCP services.
 
 ### Validation
-- 1.6.4 is the currently accepted production release. Its exact-SHA deployment, Registry schema 6, postboot readiness gate, Cloudflare provenance checks and live Shizuku behavior were verified on the ARMv6 appliance.
-- 1.6.5 must repeat exact-SHA CI, reproducible ARMv6 bundle validation, canonical deployment and live postboot acceptance before replacing 1.6.4.
+- `v1.6.5` was published at commit `878701e23a6626f3a3e40c223e7adf1bd502e902`; `main` and `develop` converged on that exact SHA.
+- The ARMv6 appliance was subsequently observed running Gateway 1.6.5 with its Registry/services/endpoints available; 1.6.6 supersedes it only after repeating exact-SHA CI, canonical deployment and live acceptance.
 
 ## 1.6.4 — stable
 

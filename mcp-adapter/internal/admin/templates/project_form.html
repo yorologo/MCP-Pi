@@ -67,5 +67,66 @@
       </button>
     </div>
   </form>
+
+  {% if is_edit %}
+  <div class="card space-y-5 p-4 sm:p-6">
+    <div>
+      <h2 class="text-sm font-semibold text-slate-100">Allowlisted Tasks</h2>
+      <p class="field-help">Tasks are executed by run_task from this Project root. Arguments are stored as an explicit JSON string array; no shell parsing is performed here.</p>
+    </div>
+
+    {% for task in task_rows %}
+    <div class="rounded-lg border border-slate-800 p-4 space-y-3">
+      <form method="POST" action="/projects/{{ project.target_id }}/{{ project.id }}/task-update" class="space-y-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="task_name" value="{{ task.name }}">
+        <div class="font-mono text-xs text-slate-200">{{ task.name }}</div>
+        <div>
+          <label class="field-label">Arguments (JSON array)</label>
+          <input type="text" name="argv_json" value="{{ task.argv_json }}" required class="field font-mono">
+        </div>
+        <div>
+          <label class="field-label">Timeout (seconds)</label>
+          <input type="number" name="timeout" min="1" max="3600" value="{{ task.timeout }}" required class="field font-mono">
+        </div>
+        <label class="flex items-center gap-2 text-xs text-slate-300">
+          <input type="checkbox" name="task_enabled" {% if task.enabled %}checked{% endif %} class="rounded bg-slate-900 border-slate-800 text-indigo-600 focus:ring-indigo-500">
+          Enabled
+        </label>
+        <button type="submit" class="btn-secondary">Update Task</button>
+      </form>
+      <form method="POST" action="/projects/{{ project.target_id }}/{{ project.id }}/task-delete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="task_name" value="{{ task.name }}">
+        <button type="submit" class="text-xs text-rose-300 hover:text-rose-200">Delete Task</button>
+      </form>
+    </div>
+    {% empty %}
+    <p class="text-xs text-slate-500">No tasks configured for this Project.</p>
+    {% endfor %}
+
+    <form method="POST" action="/projects/{{ project.target_id }}/{{ project.id }}/task-add" class="space-y-3 border-t border-slate-800 pt-5">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-400">Add Task</h3>
+      <div>
+        <label class="field-label">Task name</label>
+        <input type="text" name="task_name" required class="field font-mono" placeholder="test">
+      </div>
+      <div>
+        <label class="field-label">Arguments (JSON array)</label>
+        <input type="text" name="argv_json" required class="field font-mono" placeholder='["go","test","./..."]'>
+      </div>
+      <div>
+        <label class="field-label">Timeout (seconds)</label>
+        <input type="number" name="timeout" min="1" max="3600" value="30" required class="field font-mono">
+      </div>
+      <label class="flex items-center gap-2 text-xs text-slate-300">
+        <input type="checkbox" name="task_enabled" checked class="rounded bg-slate-900 border-slate-800 text-indigo-600 focus:ring-indigo-500">
+        Enabled
+      </label>
+      <button type="submit" class="btn-primary">Add Task</button>
+    </form>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}
