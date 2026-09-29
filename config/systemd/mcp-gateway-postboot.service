@@ -19,7 +19,7 @@ RestrictSUIDSGID=yes
 WorkingDirectory=/home/mcp-gateway/mcp-gateway
 Environment=MCP_GATEWAY_REGISTRY=sqlite
 Environment=MCP_GATEWAY_DB=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db
-ExecStartPre=/bin/sleep 5
+ExecStartPre=/usr/bin/curl --fail --silent --show-error --retry 60 --retry-delay 1 --retry-max-time 90 --retry-connrefused --max-time 2 http://127.0.0.1:8090/ready
 ExecStart=/home/mcp-gateway/mcp-gateway/bin/mcp-gateway doctor
 RemainAfterExit=yes
 

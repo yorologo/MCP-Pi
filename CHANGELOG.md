@@ -2,7 +2,17 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
-## 1.6.3 — candidate
+## 1.6.4 — candidate
+
+### Fixed
+- Post-boot verification now gates on the real MCP `/ready` endpoint using bounded native `curl` retries instead of a fixed five-second delay. This removes the ARMv6 startup race where the service process was active but not yet responsive enough for Doctor.
+- The readiness gate is bounded per attempt and overall, retries connection refusal/timeouts, and still lets Doctor perform the final fail-closed health decision.
+
+### Validation
+- `v1.6.3` remains immutable. Its production deployment failed at post-boot readiness and was automatically rolled back to the accepted 1.6.2 runtime.
+- 1.6.4 must repeat exact-SHA CI, reproducible ARMv6 bundle validation, canonical deployment and live post-boot acceptance before it can replace 1.6.2 in production.
+
+## 1.6.3 — tagged; production acceptance failed
 
 ### Fixed
 - Termux/Shizuku privilege discovery no longer lets a slow `rish` readiness probe consume the entire Target facts timeout. Presence of `rish` still marks the shell as independently elevable and therefore still requires explicit `target_admin`; readiness/UID verification is bounded separately and fails closed for privileged execution.

@@ -180,6 +180,29 @@ func TestOperationalContractsRemainExplicit(t *testing.T) {
 	}
 }
 
+func TestPostbootWaitsForRealMCPReadiness(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "config", "systemd", "mcp-gateway-postboot.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(data)
+	for _, required := range []string{
+		"ExecStartPre=/usr/bin/curl",
+		"--retry 60",
+		"--retry-max-time 90",
+		"--retry-connrefused",
+		"--max-time 2",
+		"http://127.0.0.1:8090/ready",
+	} {
+		if !strings.Contains(unit, required) {
+			t.Errorf("postboot service missing readiness gate token %q", required)
+		}
+	}
+	if strings.Contains(unit, "ExecStartPre=/bin/sleep") {
+		t.Error("postboot readiness must not depend on a fixed sleep")
+	}
+}
+
 func TestGeminiIngressSupportsPrivateTunnelRoute(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "config", "systemd", "mcp-gateway-gemini.service"))
 	if err != nil {

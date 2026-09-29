@@ -1,6 +1,6 @@
 # Installation
 
-`install.sh` is the canonical install/reinstall/update/rollback engine. The latest stable release is 1.6.2 and the current source candidate is **1.6.3**; `scripts/deploy-pi.sh` is a maintainer promotion wrapper around the same installer, not a second activation engine.
+`install.sh` is the canonical install/reinstall/update/rollback engine. The latest stable release is 1.6.2 and the current source candidate is **1.6.4**; `scripts/deploy-pi.sh` is a maintainer promotion wrapper around the same installer, not a second activation engine.
 
 ## Supported path
 
