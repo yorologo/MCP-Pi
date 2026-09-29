@@ -1,2 +1,0 @@
-# Allow mcp-gateway to execute ONLY the controlled reboot helper without password
-mcp-gateway ALL=(root) NOPASSWD: /usr/local/bin/mcp-gateway-reboot

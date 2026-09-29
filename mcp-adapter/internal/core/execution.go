@@ -45,6 +45,7 @@ func (c *Core) authorizeExecutionPrivilege(
 	actor, targetID, projectID, privilegeRequest string,
 	target registry.Target,
 	transport remote.Transport,
+	consumeApproval bool,
 ) (executionPrivilegeState, *executionPrivilegeError) {
 	state := executionPrivilegeState{
 		PolicyName: strings.ToLower(strings.TrimSpace(target.PrivilegePolicy)),
@@ -130,7 +131,13 @@ func (c *Core) authorizeExecutionPrivilege(
 			}
 		}
 
-		approved, err := c.store.ConsumePrivilegeApproval(ctx, targetID, state.PolicyName, actor, projectID, bootID, 300)
+		var approved bool
+		var err error
+		if consumeApproval {
+			approved, err = c.store.ConsumePrivilegeApproval(ctx, targetID, state.PolicyName, actor, projectID, bootID, 300)
+		} else {
+			approved, err = c.store.CheckPrivilegeApproval(ctx, targetID, state.PolicyName, actor, projectID, bootID, 300)
+		}
 		if err != nil || !approved {
 			return state, &executionPrivilegeError{
 				Code:    "PRIVILEGE_APPROVAL_REQUIRED",
@@ -141,6 +148,97 @@ func (c *Core) authorizeExecutionPrivilege(
 
 	state.Effective = privilegeRequest == "required" || state.TransportAlreadyElevated
 	return state, nil
+}
+
+type ExecutionAccessCheck struct {
+	Allowed   bool
+	Code      string
+	Reason    string
+	Privilege map[string]any
+}
+
+func (c *Core) CheckRunCommandAccess(
+	ctx context.Context,
+	actor, targetID, projectID, privilegeRequest string,
+) (ExecutionAccessCheck, error) {
+	privilegeRequest = strings.ToLower(strings.TrimSpace(privilegeRequest))
+	if privilegeRequest == "" {
+		privilegeRequest = "standard"
+	}
+	if privilegeRequest != "standard" && privilegeRequest != "required" {
+		return ExecutionAccessCheck{
+			Code:   "INVALID_ARGUMENTS",
+			Reason: fmt.Sprintf("Invalid privilege value %q: must be standard or required", privilegeRequest),
+		}, nil
+	}
+	if strings.TrimSpace(targetID) == "" || strings.TrimSpace(projectID) == "" {
+		return ExecutionAccessCheck{
+			Code:   "CONCRETE_SCOPE_REQUIRED",
+			Reason: "run_command access requires a specific Target and Project to evaluate execution privilege safely",
+		}, nil
+	}
+
+	ordinary, err := policy.AuthorizeClient(ctx, c.store, actor, targetID, projectID, "run_command", false)
+	if err != nil {
+		return ExecutionAccessCheck{}, err
+	}
+	if !ordinary.Allowed {
+		return ExecutionAccessCheck{Code: ordinary.Code, Reason: ordinary.Reason}, nil
+	}
+
+	target, err := c.store.GetTarget(ctx, targetID, false)
+	if err != nil {
+		return ExecutionAccessCheck{}, err
+	}
+	transport, err := remote.Required(c.remote)
+	if err != nil {
+		return ExecutionAccessCheck{}, err
+	}
+
+	state, privilegeErr := c.authorizeExecutionPrivilege(
+		ctx, actor, targetID, projectID, privilegeRequest, target, transport, false,
+	)
+	privilege := map[string]any{
+		"requested":            privilegeRequest,
+		"guarded":              state.Guarded,
+		"effective":            state.Effective,
+		"policy":               state.PolicyName,
+		"current_level":        state.CurrentLevel,
+		"maximum_level":        state.MaximumLevel,
+		"backend":              state.Backend,
+		"backend_ready":        state.BackendReady,
+		"shell_can_elevate":    state.ShellCanElevate,
+		"independent_elevator": state.IndependentElevator,
+	}
+	if privilegeErr != nil {
+		return ExecutionAccessCheck{
+			Code:      privilegeErr.Code,
+			Reason:    privilegeErr.Message,
+			Privilege: privilege,
+		}, nil
+	}
+
+	if state.Effective && privilegeRequest == "required" {
+		switch {
+		case state.Backend == "privileged-ssh" && strings.TrimSpace(target.PrivilegeUser) == "":
+			return ExecutionAccessCheck{
+				Code:      "PRIVILEGE_SETUP_REQUIRED",
+				Reason:    "Privileged SSH user is not configured",
+				Privilege: privilege,
+			}, nil
+		case state.Backend != "privileged-ssh" && state.Backend != "shizuku" && !state.TransportAlreadyElevated:
+			return ExecutionAccessCheck{
+				Code:      "PRIVILEGE_SETUP_REQUIRED",
+				Reason:    fmt.Sprintf("Privilege backend %q cannot execute this request safely", state.Backend),
+				Privilege: privilege,
+			}, nil
+		}
+	}
+
+	return ExecutionAccessCheck{
+		Allowed:   true,
+		Privilege: privilege,
+	}, nil
 }
 
 func (c *Core) RunCommand(
@@ -236,7 +334,7 @@ func (c *Core) RunCommand(
 		return errorResponse("run_command", "INVALID_ARGUMENTS", fmt.Sprintf("Invalid privilege value '%s': must be standard or required", req.Privilege), requestID, targetID, projectID, started)
 	}
 
-	privilegeState, privilegeErr := c.authorizeExecutionPrivilege(ctx, actor, targetID, projectID, privReq, target, transport)
+	privilegeState, privilegeErr := c.authorizeExecutionPrivilege(ctx, actor, targetID, projectID, privReq, target, transport, true)
 	if privilegeErr != nil {
 		c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, command, privReq, privilegeErr.Code, privilegeErr.Message, started)
 		return errorResponse("run_command", privilegeErr.Code, privilegeErr.Message, requestID, targetID, projectID, started)
@@ -320,7 +418,7 @@ func (c *Core) RunCommand(
 			},
 		}
 		c.auditRunCommandResult(ctx, actor, requestID, targetID, projectID, cmdPrefix, effectiveCWD, executionCWD, privReq, privilegeGuarded, privilegeEffective, independentElevator, backend, 124, true, started)
-		return successResponse("run_command", resultData, requestID, targetID, projectID, started)
+		return errorResponseWithResult("run_command", "SSH_TIMEOUT", err.Error(), resultData, requestID, targetID, projectID, started)
 	}
 
 	if err != nil {
@@ -355,6 +453,9 @@ func (c *Core) RunCommand(
 	}
 
 	c.auditRunCommandResult(ctx, actor, requestID, targetID, projectID, cmdPrefix, effectiveCWD, executionCWD, privReq, privilegeGuarded, privilegeEffective, independentElevator, backend, res.ExitCode, false, started)
+	if res.ExitCode != 0 {
+		return errorResponseWithResult("run_command", "COMMAND_EXIT_NONZERO", fmt.Sprintf("Command exited with status %d", res.ExitCode), resultData, requestID, targetID, projectID, started)
+	}
 	return successResponse("run_command", resultData, requestID, targetID, projectID, started)
 }
 
@@ -409,7 +510,7 @@ func (c *Core) RunTask(
 	}
 	quotedCmd := strings.Join(quotedArgs, " ")
 
-	privilegeState, privilegeErr := c.authorizeExecutionPrivilege(ctx, actor, targetID, projectID, "standard", target, transport)
+	privilegeState, privilegeErr := c.authorizeExecutionPrivilege(ctx, actor, targetID, projectID, "standard", target, transport, true)
 	if privilegeErr != nil {
 		c.auditRunCommandDeny(ctx, actor, requestID, targetID, projectID, quotedCmd, "standard", privilegeErr.Code, privilegeErr.Message, started)
 		return errorResponse("run_task", privilegeErr.Code, privilegeErr.Message, requestID, targetID, projectID, started)
@@ -463,6 +564,9 @@ func (c *Core) RunTask(
 		"stdout":      res.Stdout,
 		"stderr":      res.Stderr,
 		"duration_ms": res.DurationMS,
+	}
+	if res.ExitCode != 0 {
+		return errorResponseWithResult("run_task", "TASK_EXIT_NONZERO", fmt.Sprintf("Task %q exited with status %d", taskName, res.ExitCode), result, requestID, targetID, projectID, started)
 	}
 	return successResponse("run_task", result, requestID, targetID, projectID, started)
 }

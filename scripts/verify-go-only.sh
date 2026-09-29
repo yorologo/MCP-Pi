@@ -31,7 +31,7 @@ if grep -R -I -n -E --exclude='*_test.go'   '(^|[;&|[:space:]])python(3)?([[:spa
   fail "active product/lifecycle path executes Python"
 fi
 
-legacy_refs="$(grep -R -n -E --exclude='*_test.go'   'src/mcp_gateway|mcp_gateway\.' "${PRODUCT_PATHS[@]}" || true)"
+legacy_refs="$(grep -R -I -n -E --exclude='*_test.go'   'src/mcp_gateway|mcp_gateway\.' "${PRODUCT_PATHS[@]}" || true)"
 legacy_refs="$(printf '%s\n' "$legacy_refs" |
   grep -v 'Go-only release invariant failed' |
   grep -v 'legacy Python runtime found' || true)"

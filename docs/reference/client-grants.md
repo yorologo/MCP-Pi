@@ -4,21 +4,27 @@ MCP-Pi usa un único modelo de autorización **deny-by-default**. Los grants def
 
 ## Esquema vigente
 
-La tabla persistente es:
+La tabla persistente (schema 6) mantiene un solo capability por fila y unicidad lógica por cliente/scope/capability:
 
 ```sql
 CREATE TABLE grants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     client_id TEXT NOT NULL REFERENCES ai_clients(id),
-    target_id TEXT NOT NULL REFERENCES targets(id),
+    target_id TEXT REFERENCES targets(id),
     project_id TEXT,
     capability TEXT NOT NULL DEFAULT 'read',
     enabled INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (target_id, project_id) REFERENCES projects(target_id, id),
+    CHECK(project_id IS NULL OR target_id IS NOT NULL),
+    CHECK(length(trim(capability)) > 0 AND instr(capability, ',') = 0)
 );
+
+CREATE UNIQUE INDEX idx_grants_unique_scope_capability
+ON grants(client_id, COALESCE(target_id, '*'), COALESCE(project_id, '*'), capability);
 ```
 
-Un grant nuevo usa exactamente **una capacidad explícita** (`read`, `write`, `execute`, `target_shell`, `target_admin`, `admin`) o una capacidad específica de herramienta. `*` es una elección explícita y nunca un valor por omisión. Los valores históricos separados por comas se conservan únicamente por compatibilidad de lectura/edición; Admin no crea nuevos bundles y permite sustituirlos deliberadamente por grants separados.
+Un grant usa exactamente **una capacidad explícita** (`read`, `write`, `execute`, `target_shell`, `target_admin`, `admin`) o una capacidad específica de herramienta. `*` es una elección explícita y nunca un valor por omisión. La migración 5 → 6 separa automáticamente bundles históricos por comas y consolida duplicados exactos conservando el permiso efectivo: si cualquiera de los duplicados estaba habilitado, el grant resultante queda habilitado.
 
 El scope es:
 
@@ -27,6 +33,8 @@ Client -> Target -> Project -> Capability -> Enabled
 ```
 
 `* / * / *` existe para compatibilidad y acceso global deliberado. Tanto ese wildcard global como un `target_admin` global requieren confirmación explícita al crearse desde Admin Console.
+
+El scope se aplica al alcance real de la herramienta durante la ejecución: una herramienta global del appliance requiere un grant global `* / *`, una herramienta de Target requiere Project `*`, y una herramienta de Project puede usar su scope específico. El catálogo puede anunciar una capability disponible sin ampliar su scope de ejecución. Por ejemplo, `reboot @ target/proyecto` no autoriza `gateway_reboot` global.
 
 ## Autorización ordinaria
 
@@ -39,7 +47,7 @@ El Policy Engine `authorize_client()` es la fuente común para discovery y ejecu
 5. Target y Project habilitados;
 6. gates de escritura cuando la herramienta muta filesystem.
 
-La UI **Check Effective Access** invoca este mismo motor; no existe un evaluador paralelo.
+La UI **Check Effective Access** reutiliza el mismo Policy Engine. Para `run_command`, además usa el mismo gate de privilegio efectivo que la ejecución real (incluidos `target_admin`, política, boot/approval y backend), pero en modo no consumidor: una consulta diagnóstica no gasta una aprobación `ask_always`.
 
 ## Escrituras estructuradas
 
@@ -68,13 +76,7 @@ Una ejecución con `privilege=required` —o una sesión SSH que el probe observ
 - aprobación humana acotada al mismo cliente/proyecto cuando la política sea `ask_always` o `ask_once_per_boot`;
 - backend elevado verificado.
 
-Por compatibilidad segura, `*` **no implica el nuevo privilegio administrativo del Target**. Esto evita que un grant wildcard existente adquiera elevación del SO silenciosamente tras una actualización. Si se desea shell + privilegio, puede usarse por ejemplo:
-
-```text
-target_shell,target_admin
-```
-
-La forma recomendada es usar dos grants separados con el mismo scope. Un bundle histórico `target_shell,target_admin` puede seguir interpretándose mientras exista, pero Admin no crea nuevos bundles.
+Por compatibilidad segura, `*` **no implica el privilegio administrativo del Target**. Esto evita que un grant wildcard existente adquiera elevación del SO silenciosamente tras una actualización. Si se desea shell + privilegio, se usan dos grants separados con el mismo Target/Project: uno para `target_shell` y otro para `target_admin`. Schema 6 no admite bundles separados por comas.
 
 `admin` conserva exclusivamente su significado de administración del appliance Gateway. `target_admin` es independiente y sólo habilita la segunda puerta de privilegio del Target; una no implica la otra.
 

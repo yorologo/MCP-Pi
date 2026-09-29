@@ -158,9 +158,31 @@ func TestHealthDisabledStateAndRequestID(t *testing.T) {
 	}
 }
 
-func TestCandidateVersionUsesSchemaV5(t *testing.T) {
-	if registry.SchemaVersion != 5 {
-		t.Fatalf("registry.SchemaVersion=%d want=5", registry.SchemaVersion)
+func TestHealthFailsClosedWhenGatewaySettingIsMissingOrMalformed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{name: "missing", sql: "DELETE FROM settings WHERE key='gateway_enabled'"},
+		{name: "malformed", sql: "UPDATE settings SET value='not-a-bool' WHERE key='gateway_enabled'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			core, db := seededCore(t)
+			if _, err := db.Exec(tc.sql); err != nil {
+				t.Fatal(err)
+			}
+
+			resp := core.Health(context.Background(), "req-gateway-setting")
+			if resp.OK {
+				t.Fatalf("required gateway setting must fail closed: %+v", resp)
+			}
+		})
+	}
+}
+
+func TestCandidateVersionUsesSchemaV6(t *testing.T) {
+	if registry.SchemaVersion != 6 {
+		t.Fatalf("registry.SchemaVersion=%d want=6", registry.SchemaVersion)
 	}
 	core, _ := seededCore(t)
 	got := core.Version()

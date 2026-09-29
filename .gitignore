@@ -16,7 +16,6 @@ mcp-adapter/*.armv6
 bin/*
 !bin/mcp-gateway
 !bin/mcp-gateway-client-stdio
-!bin/mcp-gateway-reboot
 *.tar.gz
 scratch/
 backups/

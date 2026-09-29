@@ -214,7 +214,7 @@ func (s *SSHTransport) buildSSHArgs(target registry.Target, timeout time.Duratio
 	if strings.TrimSpace(target.ID) != "" {
 		args = append(args, "-o", "HostKeyAlias="+target.ID)
 	}
-	args = append(args, destination)
+	args = append(args, "--", destination)
 	return args, nil
 }
 

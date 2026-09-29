@@ -496,7 +496,7 @@ func (c *Core) mutationContext(
 	writeFileMessage bool,
 	started time.Time,
 ) (registry.Target, registry.Project, remote.Transport, *Response) {
-	gatewayEnabled, err := c.boolSetting(ctx, "gateway_enabled", true)
+	gatewayEnabled, err := c.store.GetRequiredBoolSetting(ctx, "gateway_enabled")
 	if err != nil {
 		response := errorResponse(tool, "INTERNAL_ERROR", err.Error(), requestID, targetID, projectID, started)
 		return registry.Target{}, registry.Project{}, nil, &response

@@ -105,7 +105,7 @@ func TestGrantAddRequiresExplicitCapability(t *testing.T) {
 		"project_id": {"test-proj"},
 		"enabled":    {"on"},
 	}))
-	if rec.Code != http.StatusFound {
+	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid add returned %d", rec.Code)
 	}
 	after, err := store.ListGrants(ctx, "test-client")
@@ -260,7 +260,7 @@ func TestTargetEditRejectsInvalidConfigurationWithoutMutation(t *testing.T) {
 		"privilege_policy": {"nonsense"},
 		"enabled":          {"on"},
 	}), "test-target")
-	if rec.Code != http.StatusFound {
+	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid target edit returned %d", rec.Code)
 	}
 	after, err := store.GetTarget(ctx, "test-target", true)
@@ -282,7 +282,7 @@ func TestReservedInternalClientIDCannotBeRegistered(t *testing.T) {
 		"protocol":     {"mcp"},
 		"enabled":      {"on"},
 	}))
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("reserved client form returned %d", rec.Code)
 	}
 	if _, err := store.GetClient(context.Background(), "admin"); err == nil {
@@ -528,24 +528,16 @@ func TestTargetPrivilegeApproveUsesCurrentPolicyAndRejectsForgedScope(t *testing
 	}
 }
 
-func TestLegacyHighImpactGrantStillRequiresConfirmation(t *testing.T) {
+func TestCapabilityBundleIsRejectedByAdminValidation(t *testing.T) {
 	_, store := setupTestAdminServer(t)
-	existing := &registry.Grant{
-		ID:         99,
-		ClientID:   "test-client",
-		TargetID:   "*",
-		ProjectID:  "*",
-		Capability: "target_shell,target_admin",
-		Enabled:    true,
-	}
-	req := adminFormRequest(http.MethodPost, "/clients/test-client/grants/99/edit", url.Values{
-		"target_id":  {"*"},
-		"project_id": {"*"},
+	req := adminFormRequest(http.MethodPost, "/clients/test-client/grants/add", url.Values{
+		"target_id":  {"test-target"},
+		"project_id": {"test-proj"},
 		"capability": {"target_shell,target_admin"},
 		"enabled":    {"on"},
 	})
-	if _, err := validateGrantForm(context.Background(), store, req, "test-client", existing); err == nil ||
-		!strings.Contains(err.Error(), "high-impact") {
-		t.Fatalf("legacy high-impact grant was accepted without confirmation: %v", err)
+	if _, err := validateGrantForm(context.Background(), store, req, "test-client", nil); err == nil ||
+		!strings.Contains(err.Error(), "unsupported capability") {
+		t.Fatalf("capability bundle was not rejected: %v", err)
 	}
 }

@@ -28,11 +28,11 @@
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <div>
         <label for="grant-target" class="field-label">Target</label>
-        <select id="grant-target" name="target_id" class="field font-mono" required>
+        <select id="grant-target" name="target_id" class="field font-mono" required data-project-select="grant-project">
           <option value="">Select Target</option>
-          <option value="*" {% if editing_grant and editing_grant.target_id == '*' %}selected{% endif %}>* (all targets)</option>
+          <option value="*" {% if grant_form and grant_form.target_id == '*' %}selected{% endif %}>* (all targets)</option>
           {% for target in targets %}
-          <option value="{{ target.id }}" {% if editing_grant and editing_grant.target_id == target.id %}selected{% endif %}>
+          <option value="{{ target.id }}" {% if grant_form and grant_form.target_id == target.id %}selected{% endif %}>
             {% if target.display_name %}{{ target.display_name }}{% else %}{{ target.id }}{% endif %} · {{ target.id }}{% if not target.enabled %} (disabled){% endif %}
           </option>
           {% endfor %}
@@ -41,9 +41,9 @@
       <div>
         <label for="grant-project" class="field-label">Project</label>
         <select id="grant-project" name="project_id" class="field font-mono" required>
-          <option value="*" {% if not editing_grant or editing_grant.project_id == '*' %}selected{% endif %}>* (all projects in scope)</option>
+          <option value="*" {% if not grant_form or grant_form.project_id == '*' %}selected{% endif %}>* (all projects in scope)</option>
           {% for project in projects %}
-          <option value="{{ project.id }}" {% if editing_grant and editing_grant.project_id == project.id %}selected{% endif %}>
+          <option value="{{ project.id }}" data-target-id="{{ project.target_id }}" {% if grant_form and grant_form.target_id == project.target_id and grant_form.project_id == project.id %}selected{% endif %}>
             {% if project.display_name %}{{ project.display_name }}{% else %}{{ project.id }}{% endif %} · {{ project.target_id }} / {{ project.id }}{% if not project.enabled %} (disabled){% endif %}
           </option>
           {% endfor %}
@@ -53,11 +53,8 @@
         <label for="grant-capability" class="field-label">Capability</label>
         <select id="grant-capability" name="capability" class="field font-mono" required>
           {% if not editing_grant %}<option value="">Select capability</option>{% endif %}
-          {% if legacy_capability %}
-          <option value="{{ legacy_capability }}" selected>Legacy bundle: {{ legacy_capability }}</option>
-          {% endif %}
           {% for capability in grant_capabilities %}
-          <option value="{{ capability }}" {% if editing_grant and not legacy_capability and editing_grant.capability == capability %}selected{% endif %}>
+          <option value="{{ capability }}" {% if grant_form and grant_form.capability == capability %}selected{% endif %}>
             {{ capability }}{% if capability == '*' %} — all compatible ordinary capabilities{% elif capability == 'target_admin' %} — explicit OS privilege{% endif %}
           </option>
           {% endfor %}
@@ -68,7 +65,7 @@
 
     <div class="flex flex-wrap items-center gap-5">
       <label class="inline-flex items-center gap-2 text-sm text-slate-300">
-        <input type="checkbox" name="enabled" class="rounded" {% if not editing_grant or editing_grant.enabled %}checked{% endif %}> Enabled
+        <input type="checkbox" name="enabled" class="rounded" {% if not grant_form or grant_form.enabled %}checked{% endif %}> Enabled
       </label>
       <label class="inline-flex items-start gap-2 text-xs text-amber-300">
         <input type="checkbox" name="confirm_global" class="mt-0.5 rounded">
@@ -127,18 +124,20 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div>
       <h2 class="text-lg font-semibold text-white">Check Effective Access</h2>
-      <p class="text-xs text-slate-400">Checks ordinary tool access through <code>authorize_client()</code>. Execution on an already privileged Target additionally requires explicit <code>target_admin</code> plus the Target privilege policy/approval.</p>
+      <p class="text-xs text-slate-400">Checks the current Policy Engine. For <code>run_command</code>, it also evaluates the live Target privilege gate, explicit <code>target_admin</code>, backend readiness and any required human approval without consuming that approval.</p>
     </div>
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <div><label for="check-target" class="field-label">Target</label><select id="check-target" name="target_id" class="field font-mono"><option value="*">* (no Target constraint)</option>{% for target in targets %}<option value="{{ target.id }}">{% if target.display_name %}{{ target.display_name }}{% else %}{{ target.id }}{% endif %} · {{ target.id }}</option>{% endfor %}</select></div>
-      <div><label for="check-project" class="field-label">Project</label><select id="check-project" name="project_id" class="field font-mono"><option value="*">* (no Project constraint)</option>{% for project in projects %}<option value="{{ project.id }}">{% if project.display_name %}{{ project.display_name }}{% else %}{{ project.id }}{% endif %} · {{ project.target_id }} / {{ project.id }}</option>{% endfor %}</select></div>
-      <div><label for="check-tool" class="field-label">Tool</label><select id="check-tool" name="tool_name" class="field font-mono" required>{% for tool in tool_names %}<option value="{{ tool }}">{{ tool }}</option>{% endfor %}</select></div>
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
+      <div><label for="check-target" class="field-label">Target</label><select id="check-target" name="target_id" class="field font-mono" data-project-select="check-project"><option value="*" {% if not access_result or access_result.target_id == '*' %}selected{% endif %}>* (no Target constraint)</option>{% for target in targets %}<option value="{{ target.id }}" {% if access_result and access_result.target_id == target.id %}selected{% endif %}>{% if target.display_name %}{{ target.display_name }}{% else %}{{ target.id }}{% endif %} · {{ target.id }}</option>{% endfor %}</select></div>
+      <div><label for="check-project" class="field-label">Project</label><select id="check-project" name="project_id" class="field font-mono"><option value="*" {% if not access_result or access_result.project_id == '*' %}selected{% endif %}>* (no Project constraint)</option>{% for project in projects %}<option value="{{ project.id }}" data-target-id="{{ project.target_id }}" {% if access_result and access_result.target_id == project.target_id and access_result.project_id == project.id %}selected{% endif %}>{% if project.display_name %}{{ project.display_name }}{% else %}{{ project.id }}{% endif %} · {{ project.target_id }} / {{ project.id }}</option>{% endfor %}</select></div>
+      <div><label for="check-tool" class="field-label">Tool</label><select id="check-tool" name="tool_name" class="field font-mono" required>{% for tool in tool_names %}<option value="{{ tool }}" {% if access_result and access_result.tool_name == tool %}selected{% endif %}>{{ tool }}</option>{% endfor %}</select></div>
+      <div><label for="check-privilege" class="field-label">Privilege <span class="text-slate-500">(run_command)</span></label><select id="check-privilege" name="privilege" class="field font-mono"><option value="standard" {% if not access_result or access_result.privilege_request != 'required' %}selected{% endif %}>standard</option><option value="required" {% if access_result and access_result.privilege_request == 'required' %}selected{% endif %}>required</option></select></div>
     </div>
     <div class="flex justify-end"><button type="submit" class="btn-primary">Check Access</button></div>
     {% if access_result %}
     <div class="rounded border p-4 {% if access_result.allowed %}border-emerald-800 bg-emerald-950/30{% else %}border-rose-800 bg-rose-950/30{% endif %}">
       <div class="font-semibold {% if access_result.allowed %}text-emerald-300{% else %}text-rose-300{% endif %}">{% if access_result.allowed %}ALLOWED{% else %}DENIED{% endif %}</div>
-      <div class="mt-1 font-mono text-xs text-slate-300">{{ access_result.tool_name }} @ {{ access_result.target_id }} / {{ access_result.project_id }}</div>
+      <div class="mt-1 font-mono text-xs text-slate-300">{{ access_result.tool_name }} @ {{ access_result.target_id }} / {{ access_result.project_id }}{% if access_result.tool_name == 'run_command' %} · privilege={{ access_result.privilege_request }}{% endif %}</div>
+      {% if access_result.code %}<div class="mt-2 font-mono text-xs text-slate-400">{{ access_result.code }}</div>{% endif %}
       <div class="mt-2 text-sm text-slate-300">{{ access_result.message }}</div>
     </div>
     {% endif %}

@@ -3,8 +3,11 @@ package core
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -21,6 +24,48 @@ import (
 	"mcp-gateway-adapter/internal/remote"
 	"mcp-gateway-adapter/internal/sqliteutil"
 )
+
+const (
+	gatewayAdminServiceUnit       = "mcp-gateway-admin.service"
+	gatewayMCPServiceUnit         = "mcp-gateway-mcp.service"
+	gatewayGeminiServiceUnit      = "mcp-gateway-gemini.service"
+	gatewayTunnelServiceUnit      = "mcp-gateway-tunnel.service"
+	gatewayCloudflaredServiceUnit = "mcp-gateway-cloudflared.service"
+	gatewayMaintenanceServiceUnit = "mcp-gateway-maintenance.service"
+	gatewayMaintenanceTimerUnit   = "mcp-gateway-maintenance.timer"
+	gatewayPostbootServiceUnit    = "mcp-gateway-postboot.service"
+
+	cloudflaredBinaryPath = "/usr/local/bin/cloudflared"
+	cloudflaredTokenPath  = "/home/mcp-gateway/.config/mcp-gateway/cloudflared.token"
+)
+
+var applianceObservedServiceUnits = []string{
+	gatewayAdminServiceUnit,
+	gatewayMCPServiceUnit,
+	gatewayGeminiServiceUnit,
+	gatewayTunnelServiceUnit,
+	gatewayCloudflaredServiceUnit,
+	gatewayMaintenanceServiceUnit,
+	gatewayMaintenanceTimerUnit,
+	gatewayPostbootServiceUnit,
+}
+
+var registryQuiescenceServiceUnits = []string{
+	gatewayAdminServiceUnit,
+	gatewayMCPServiceUnit,
+	gatewayGeminiServiceUnit,
+	gatewayMaintenanceServiceUnit,
+	gatewayMaintenanceTimerUnit,
+	gatewayPostbootServiceUnit,
+}
+
+func ApplianceObservedServiceUnits() []string {
+	return append([]string(nil), applianceObservedServiceUnits...)
+}
+
+func RegistryQuiescenceServiceUnits() []string {
+	return append([]string(nil), registryQuiescenceServiceUnits...)
+}
 
 func (c *Core) dbPath() string {
 	if c.config.DBPath != "" {
@@ -56,7 +101,7 @@ func (c *Core) GatewayStatus(ctx context.Context, requestID string) Response {
 	storage := getDiskInfo("/")
 	tempC := getTemperature()
 	throttled := getThrottled()
-	services := getServiceStates([]string{"mcp-gateway-admin.service", "mcp-gateway-mcp.service", "mcp-gateway-tunnel.service"})
+	services := getServiceStates(ApplianceObservedServiceUnits())
 	writesEnabled, _ := c.boolSetting(ctx, "writes_enabled", false)
 	targetCount, _ := c.store.TargetCount(ctx)
 
@@ -152,6 +197,108 @@ func (c *Core) GatewayBackup(ctx context.Context, requestID, actor, destPath str
 	return successResponse("gateway_backup", res, requestID, "", "", started)
 }
 
+type ExternalDependencyEvidence struct {
+	Passed        bool   `json:"passed"`
+	BinaryPath    string `json:"binary_path"`
+	ResolvedPath  string `json:"resolved_path,omitempty"`
+	Version       string `json:"version,omitempty"`
+	SHA256        string `json:"sha256,omitempty"`
+	SizeBytes     int64  `json:"size_bytes,omitempty"`
+	TokenPath     string `json:"token_path"`
+	TokenMode     string `json:"token_mode,omitempty"`
+	TokenOwnerUID uint32 `json:"token_owner_uid,omitempty"`
+	Message       string `json:"message"`
+}
+
+func inspectCloudflaredDependency(ctx context.Context, binaryPath, tokenPath string) ExternalDependencyEvidence {
+	evidence := ExternalDependencyEvidence{
+		BinaryPath: binaryPath,
+		TokenPath:  tokenPath,
+	}
+
+	resolved, err := filepath.EvalSymlinks(binaryPath)
+	if err != nil {
+		evidence.Message = "cloudflared binary is unavailable: " + err.Error()
+		return evidence
+	}
+	evidence.ResolvedPath = resolved
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		evidence.Message = "cloudflared binary stat failed: " + err.Error()
+		return evidence
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		evidence.Message = "cloudflared binary is not a regular executable file"
+		return evidence
+	}
+	evidence.SizeBytes = info.Size()
+
+	file, err := os.Open(resolved)
+	if err != nil {
+		evidence.Message = "cloudflared binary cannot be read for provenance: " + err.Error()
+		return evidence
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		_ = file.Close()
+		evidence.Message = "cloudflared binary hash failed: " + err.Error()
+		return evidence
+	}
+	if err := file.Close(); err != nil {
+		evidence.Message = "cloudflared binary close failed: " + err.Error()
+		return evidence
+	}
+	evidence.SHA256 = hex.EncodeToString(hash.Sum(nil))
+
+	versionCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	versionOut, err := exec.CommandContext(versionCtx, resolved, "--version").CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(versionOut))
+		if msg == "" {
+			msg = err.Error()
+		}
+		evidence.Message = "cloudflared version check failed: " + msg
+		return evidence
+	}
+	evidence.Version = strings.TrimSpace(string(versionOut))
+	if evidence.Version == "" {
+		evidence.Message = "cloudflared version check returned empty output"
+		return evidence
+	}
+
+	tokenInfo, err := os.Lstat(tokenPath)
+	if err != nil {
+		evidence.Message = "Cloudflare token metadata is unavailable: " + err.Error()
+		return evidence
+	}
+	if tokenInfo.Mode()&os.ModeSymlink != 0 || !tokenInfo.Mode().IsRegular() || tokenInfo.Size() <= 0 {
+		evidence.Message = "Cloudflare token must be a non-empty regular file and not a symlink"
+		return evidence
+	}
+	evidence.TokenMode = fmt.Sprintf("%04o", tokenInfo.Mode().Perm())
+
+	stat, ok := tokenInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		evidence.Message = "Cloudflare token ownership metadata is unavailable"
+		return evidence
+	}
+	evidence.TokenOwnerUID = stat.Uid
+	if int(stat.Uid) != os.Getuid() {
+		evidence.Message = fmt.Sprintf("Cloudflare token owner uid=%d does not match gateway uid=%d", stat.Uid, os.Getuid())
+		return evidence
+	}
+	if tokenInfo.Mode().Perm()&0o077 != 0 {
+		evidence.Message = "Cloudflare token permissions are too broad; group/other access must be removed"
+		return evidence
+	}
+
+	evidence.Passed = true
+	evidence.Message = "cloudflared binary provenance and private token metadata verified"
+	return evidence
+}
+
 type DoctorOptions struct {
 	CheckTargets bool `json:"check_targets"`
 	Verbose      bool `json:"verbose"`
@@ -165,6 +312,62 @@ type DoctorCheck struct {
 	Required bool   `json:"required"`
 }
 
+func (c *Core) privilegeHygieneChecks(ctx context.Context) []DoctorCheck {
+	targets, err := c.store.ListTargets(ctx)
+	if err != nil {
+		return []DoctorCheck{{
+			Name: "Privilege Hygiene: Target Policies", Passed: false,
+			Message:  "unable to inspect Target privilege policies: " + err.Error(),
+			Severity: "warning", Required: false,
+		}}
+	}
+	var alwaysAllow []string
+	for _, target := range targets {
+		if target.Enabled && target.PrivilegePolicy == "always_allow" {
+			alwaysAllow = append(alwaysAllow, target.ID)
+		}
+	}
+	sort.Strings(alwaysAllow)
+
+	targetCheck := DoctorCheck{
+		Name: "Privilege Hygiene: Target Policies", Passed: len(alwaysAllow) == 0,
+		Message:  "no enabled Targets use always_allow",
+		Severity: "warning", Required: false,
+	}
+	if len(alwaysAllow) > 0 {
+		targetCheck.Message = "enabled Targets using persistent always_allow: " + strings.Join(alwaysAllow, ", ")
+	}
+
+	grants, err := c.store.ListGrants(ctx, "")
+	if err != nil {
+		return append([]DoctorCheck{targetCheck}, DoctorCheck{
+			Name: "Privilege Hygiene: target_admin Scope", Passed: false,
+			Message:  "unable to inspect target_admin grants: " + err.Error(),
+			Severity: "warning", Required: false,
+		})
+	}
+	var broadAdmin []string
+	for _, grant := range grants {
+		if !grant.Enabled || grant.Capability != "target_admin" {
+			continue
+		}
+		if grant.TargetID == "*" || grant.ProjectID == "*" {
+			broadAdmin = append(broadAdmin, fmt.Sprintf("%s:%s/%s", grant.ClientID, grant.TargetID, grant.ProjectID))
+		}
+	}
+	sort.Strings(broadAdmin)
+
+	grantCheck := DoctorCheck{
+		Name: "Privilege Hygiene: target_admin Scope", Passed: len(broadAdmin) == 0,
+		Message:  "no enabled target_admin grants use wildcard scope",
+		Severity: "warning", Required: false,
+	}
+	if len(broadAdmin) > 0 {
+		grantCheck.Message = "enabled target_admin grants with wildcard scope: " + strings.Join(broadAdmin, ", ")
+	}
+	return []DoctorCheck{targetCheck, grantCheck}
+}
+
 func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorOptions) Response {
 	started := time.Now()
 	checks := []DoctorCheck{{
@@ -174,6 +377,7 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		Severity: "error",
 		Required: true,
 	}}
+	checks = append(checks, c.privilegeHygieneChecks(ctx)...)
 
 	dbHealthy := c.store != nil && c.store.DB() != nil
 	checks = append(checks, DoctorCheck{
@@ -290,19 +494,24 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 	mcpAdapterMsg := "MCP readiness not evaluated"
 	tunnelStatus := "SKIP"
 	tunnelMsg := "optional tunnel not evaluated"
+	geminiStatus := "SKIP"
+	geminiMsg := "optional Gemini ingress not evaluated"
+	cloudflareStatus := "SKIP"
+	cloudflareMsg := "optional Cloudflare connector not evaluated"
+	var cloudflareDependency *ExternalDependencyEvidence
 
 	if applianceSystemdAvailable() {
-		adminActive := serviceIsActive("mcp-gateway-admin.service")
-		mcpActive := serviceIsActive("mcp-gateway-mcp.service")
+		adminActive := serviceIsActive(gatewayAdminServiceUnit)
+		mcpActive := serviceIsActive(gatewayMCPServiceUnit)
 		servicesPassed := adminActive && mcpActive
 		checks = append(checks,
 			DoctorCheck{
 				Name: "Admin Service", Passed: adminActive,
-				Message: serviceStateMessage("mcp-gateway-admin.service", adminActive), Severity: "error", Required: true,
+				Message: serviceStateMessage(gatewayAdminServiceUnit, adminActive), Severity: "error", Required: true,
 			},
 			DoctorCheck{
 				Name: "MCP Service", Passed: mcpActive,
-				Message: serviceStateMessage("mcp-gateway-mcp.service", mcpActive), Severity: "error", Required: true,
+				Message: serviceStateMessage(gatewayMCPServiceUnit, mcpActive), Severity: "error", Required: true,
 			},
 		)
 
@@ -316,16 +525,16 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 			mcpAdapterStatus, mcpAdapterMsg = "PASS", mcpReadyMsg
 		}
 
-		timerEnabled := serviceIsEnabled("mcp-gateway-maintenance.timer")
+		timerEnabled := serviceIsEnabled(gatewayMaintenanceTimerUnit)
 		checks = append(checks, DoctorCheck{
 			Name: "Maintenance Timer", Passed: timerEnabled,
-			Message: enabledStateMessage("mcp-gateway-maintenance.timer", timerEnabled), Severity: "warning", Required: true,
+			Message: enabledStateMessage(gatewayMaintenanceTimerUnit, timerEnabled), Severity: "warning", Required: true,
 		})
 
-		postbootFailed := serviceIsFailed("mcp-gateway-postboot.service")
+		postbootFailed := serviceIsFailed(gatewayPostbootServiceUnit)
 		checks = append(checks, DoctorCheck{
 			Name: "Post-Boot Verification", Passed: !postbootFailed,
-			Message: failedStateMessage("mcp-gateway-postboot.service", postbootFailed), Severity: "error", Required: true,
+			Message: failedStateMessage(gatewayPostbootServiceUnit, postbootFailed), Severity: "error", Required: true,
 		})
 
 		applianceStatus, applianceMsg = "FAIL", "required appliance service/readiness checks failed"
@@ -333,8 +542,8 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 			applianceStatus, applianceMsg = "PASS", "Admin/MCP services active and MCP readiness verified"
 		}
 
-		if serviceIsEnabled("mcp-gateway-tunnel.service") {
-			if serviceIsActive("mcp-gateway-tunnel.service") {
+		if serviceIsEnabled(gatewayTunnelServiceUnit) {
+			if serviceIsActive(gatewayTunnelServiceUnit) {
 				tunnelStatus, tunnelMsg = "PASS", "enabled and active"
 			} else {
 				tunnelStatus, tunnelMsg = "WARN", "enabled but not active"
@@ -344,6 +553,43 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 			}
 		} else {
 			tunnelStatus, tunnelMsg = "SKIP", "not enabled"
+		}
+
+		if serviceIsEnabled(gatewayGeminiServiceUnit) {
+			geminiActive := serviceIsActive(gatewayGeminiServiceUnit)
+			geminiPassed := geminiActive
+			geminiMsg = serviceStateMessage(gatewayGeminiServiceUnit, geminiActive)
+			if geminiActive {
+				geminiPassed, geminiMsg = httpEndpointReady(ctx, "http://127.0.0.1:8092/ready")
+			}
+			geminiStatus = "PASS"
+			if !geminiPassed {
+				geminiStatus = "WARN"
+			}
+			checks = append(checks, DoctorCheck{
+				Name: "Gemini MCP Ingress", Passed: geminiPassed,
+				Message: geminiMsg, Severity: "warning", Required: false,
+			})
+		} else {
+			geminiStatus, geminiMsg = "SKIP", "not enabled"
+		}
+
+		if serviceIsEnabled(gatewayCloudflaredServiceUnit) {
+			cloudflareActive := serviceIsActive(gatewayCloudflaredServiceUnit)
+			dependency := inspectCloudflaredDependency(ctx, cloudflaredBinaryPath, cloudflaredTokenPath)
+			cloudflareDependency = &dependency
+			cloudflarePassed := cloudflareActive && dependency.Passed
+			cloudflareMsg = serviceStateMessage(gatewayCloudflaredServiceUnit, cloudflareActive) + "; " + dependency.Message
+			cloudflareStatus = "PASS"
+			if !cloudflarePassed {
+				cloudflareStatus = "WARN"
+			}
+			checks = append(checks, DoctorCheck{
+				Name: "Cloudflare Connector", Passed: cloudflarePassed,
+				Message: cloudflareMsg, Severity: "warning", Required: false,
+			})
+		} else {
+			cloudflareStatus, cloudflareMsg = "SKIP", "not enabled"
 		}
 	} else {
 		checks = append(checks, DoctorCheck{
@@ -365,6 +611,8 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		"appliance":         map[string]string{"status": applianceStatus, "message": applianceMsg},
 		"client_entrypoint": map[string]string{"status": clientStatus, "message": clientMsg},
 		"tunnel":            map[string]string{"status": tunnelStatus, "message": tunnelMsg},
+		"gemini_ingress":    map[string]string{"status": geminiStatus, "message": geminiMsg},
+		"cloudflare_tunnel": map[string]string{"status": cloudflareStatus, "message": cloudflareMsg},
 		"mcp_adapter":       map[string]string{"status": mcpAdapterStatus, "message": mcpAdapterMsg},
 		"gateway_core":      map[string]string{"status": "PASS", "message": "Core initialized with current Registry schema"},
 		"targets":           map[string]string{"status": targetStatus, "message": targetMsg},
@@ -397,6 +645,11 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		"warnings":     warnCnt,
 		"checks":       checks,
 	}
+	if cloudflareDependency != nil {
+		res["external_dependencies"] = map[string]any{
+			"cloudflared": *cloudflareDependency,
+		}
+	}
 	if opts.Verbose {
 		res["database_path"] = c.dbPath()
 		res["backup_dir"] = c.backupDir()
@@ -411,6 +664,9 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		Detail:     mustJSON(map[string]any{"status": overall, "passed": passedCnt, "failed": failedCnt, "warnings": warnCnt}),
 	})
 
+	if overall == "ERROR" {
+		return errorResponseWithResult("gateway_doctor", "DOCTOR_FAILED", "Doctor detected required check failures", res, requestID, "", "", started)
+	}
 	return successResponse("gateway_doctor", res, requestID, "", "", started)
 }
 

@@ -56,6 +56,13 @@ jobs:
           sudo apt-get install -y shellcheck
           shellcheck --severity=warning install.sh scripts/*.sh
 
+      - name: Shell syntax contract
+        run: |
+          sh -n install.sh
+          bash -n scripts/build-release-package.sh
+          bash -n scripts/deploy-pi.sh
+
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

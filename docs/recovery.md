@@ -35,8 +35,12 @@ Stop all database users first:
 
     sudo systemctl stop mcp-gateway-maintenance.timer
     sudo systemctl stop mcp-gateway-maintenance.service
-    sudo systemctl stop mcp-gateway-mcp
-    sudo systemctl stop mcp-gateway-admin
+    sudo systemctl stop mcp-gateway-postboot.service
+    sudo systemctl stop mcp-gateway-gemini.service
+    sudo systemctl stop mcp-gateway-mcp.service
+    sudo systemctl stop mcp-gateway-admin.service
+
+The restore command checks the same Registry-user/scheduler inventory and refuses to continue while any of those units is active. OpenAI/Cloudflare edge tunnel processes are not Registry users and do not need to be stopped for SQLite safety.
 
 Then restore:
 

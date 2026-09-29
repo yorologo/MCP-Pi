@@ -387,7 +387,7 @@ func activeGatewayServices() []string {
 		return nil
 	}
 	var active []string
-	for _, svc := range []string{"mcp-gateway-admin.service", "mcp-gateway-mcp.service", "mcp-gateway-maintenance.service", "mcp-gateway-maintenance.timer"} {
+	for _, svc := range core.RegistryQuiescenceServiceUnits() {
 		if err := exec.Command("systemctl", "is-active", "--quiet", svc).Run(); err == nil {
 			active = append(active, svc)
 		}
@@ -419,13 +419,13 @@ func cmdRestore(args []string) int {
 		fmt.Fprintf(os.Stderr, "[ERROR] Backup integrity is not ok: %s\n", sourceInfo.Integrity)
 		return 1
 	}
-	if sourceInfo.SchemaVersion != 4 && sourceInfo.SchemaVersion != registry.SchemaVersion {
-		fmt.Fprintf(os.Stderr, "[ERROR] Unsupported backup schema %d; Go-only restore supports schema 4 or %d\n", sourceInfo.SchemaVersion, registry.SchemaVersion)
+	if sourceInfo.SchemaVersion != 4 && sourceInfo.SchemaVersion != 5 && sourceInfo.SchemaVersion != registry.SchemaVersion {
+		fmt.Fprintf(os.Stderr, "[ERROR] Unsupported backup schema %d; Go-only restore supports schemas 4, 5 or %d\n", sourceInfo.SchemaVersion, registry.SchemaVersion)
 		return 1
 	}
 	if active := activeGatewayServices(); len(active) > 0 {
 		fmt.Fprintf(os.Stderr, "[ERROR] Refusing restore while database users are active: %s\n", strings.Join(active, ", "))
-		fmt.Fprintln(os.Stderr, "Stop Admin/MCP services first, then retry restore.")
+		fmt.Fprintln(os.Stderr, "Stop the listed Registry users/schedulers first, then retry restore.")
 		return 1
 	}
 

@@ -980,7 +980,10 @@ func RunHTTP(ctx context.Context, server *mcp.Server, bindAddr string, state *Ad
 			}
 		}
 
-		// 2. If an authentication token was supplied but is invalid
+		// 2. If an authentication token was supplied but is invalid.
+		// A request with no token and no asserted Client ID is intentionally
+		// routed to the NONE principal below: it can negotiate MCP but receives
+		// an empty tool catalog and cannot invoke tools.
 		if hasToken && !isValid {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)

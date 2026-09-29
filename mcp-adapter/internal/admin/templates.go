@@ -73,6 +73,11 @@ func URLFor(endpoint string, args ...interface{}) string {
 			return fmt.Sprintf("/targets/%v/test", args[0])
 		}
 		return "/targets"
+	case "admin.target_rediscover":
+		if len(args) > 0 {
+			return fmt.Sprintf("/targets/%v/rediscover", args[0])
+		}
+		return "/targets"
 	case "admin.target_ssh_trust":
 		if len(args) > 0 {
 			return fmt.Sprintf("/targets/%v/ssh/trust", args[0])

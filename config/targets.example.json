@@ -1,18 +1,18 @@
 {
   "version": "1.0",
   "targets": {
-    "termux-main": {
+    "termux-phone": {
       "platform": "android-termux",
-      "host": "192.168.1.50",
+      "host": "192.0.2.50",
       "port": 8022,
-      "user": "u0_a435",
-      "ssh_alias": "termux-local",
+      "user": "u0_a123",
+      "ssh_alias": "termux-example",
       "privilege_user": "",
       "privilege_policy": "never",
-      "enabled": true,
+      "enabled": false,
       "projects": {
-        "MCP_Local": {
-          "root": "/data/data/com.termux/files/home/Projects/test/MCP_Local",
+        "example-project": {
+          "root": "/data/data/com.termux/files/home/projects/example",
           "read": true,
           "write": false,
           "tasks": {
@@ -27,10 +27,10 @@
     },
     "linux-workstation": {
       "platform": "linux",
-      "host": "192.168.1.100",
+      "host": "192.0.2.100",
       "port": 22,
       "user": "mcp-agent",
-      "ssh_alias": "linux-local",
+      "ssh_alias": "linux-example",
       "privilege_user": "root",
       "privilege_policy": "never",
       "enabled": false,

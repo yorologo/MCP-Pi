@@ -160,6 +160,29 @@ function setupDataTable(table) {
   apply();
 }
 
+function setupProjectScope(targetSelect) {
+  const projectSelectId = targetSelect?.dataset?.projectSelect;
+  if (!projectSelectId) return;
+  const projectSelect = document.getElementById(projectSelectId);
+  if (!projectSelect) return;
+
+  const apply = () => {
+    const targetId = targetSelect.value;
+    Array.from(projectSelect.options || []).forEach(option => {
+      const projectTargetId = option.dataset?.targetId || '';
+      const available = option.value === '*' || (targetId !== '*' && projectTargetId === targetId);
+      option.hidden = !available;
+      option.disabled = !available;
+    });
+
+    const selected = projectSelect.options?.[projectSelect.selectedIndex];
+    if (selected?.disabled) projectSelect.value = '*';
+  };
+
+  targetSelect.addEventListener('change', apply);
+  apply();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const navButton = document.querySelector('[data-nav-toggle]');
   const navigation = document.getElementById('primary-navigation');
@@ -192,5 +215,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  document.querySelectorAll('[data-project-select]').forEach(setupProjectScope);
   document.querySelectorAll('table[data-admin-table]').forEach(setupDataTable);
 });

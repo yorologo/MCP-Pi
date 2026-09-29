@@ -581,6 +581,26 @@ func (s *Store) GetSetting(ctx context.Context, key, defaultValue string) (strin
 	return value, nil
 }
 
+func (s *Store) GetRequiredBoolSetting(ctx context.Context, key string) (bool, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = ?", key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("required boolean setting %q is missing", key)
+	}
+	if err != nil {
+		return false, fmt.Errorf("get required boolean setting %q: %w", key, err)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("required boolean setting %q has invalid value %q", key, value)
+	}
+}
+
 func setSettingExec(ctx context.Context, exec sqlExecer, key, value string) error {
 	if strings.TrimSpace(key) == "" {
 		return fmt.Errorf("setting key cannot be empty")
@@ -722,6 +742,44 @@ func (s *Store) ClearPrivilegeApprovalsScoped(ctx context.Context, targetID, cli
 	return clearPrivilegeApprovalsScopedExec(ctx, s.db, targetID, clientID, projectID)
 }
 
+func privilegeApprovalMatches(
+	approval *PrivilegeApproval,
+	policy, clientID, projectID, bootID string,
+	maxAgeSeconds int,
+) bool {
+	if approval == nil {
+		return false
+	}
+	policy = strings.ToLower(strings.TrimSpace(policy))
+	clientID = strings.TrimSpace(clientID)
+	projectID = strings.TrimSpace(projectID)
+	if approval.Policy != policy || approval.ClientID != clientID || approval.ProjectID != projectID {
+		return false
+	}
+
+	switch policy {
+	case "ask_once_per_boot":
+		return strings.TrimSpace(bootID) != "" && approval.BootID == bootID
+	case "ask_always":
+		age := float64(time.Now().UnixNano())/1e9 - approval.ApprovedAt
+		return age >= 0 && age <= float64(maxAgeSeconds)
+	default:
+		return false
+	}
+}
+
+func (s *Store) CheckPrivilegeApproval(
+	ctx context.Context,
+	targetID, policy, clientID, projectID, bootID string,
+	maxAgeSeconds int,
+) (bool, error) {
+	approval, err := s.GetPrivilegeApproval(ctx, targetID)
+	if err != nil {
+		return false, err
+	}
+	return privilegeApprovalMatches(approval, policy, clientID, projectID, bootID, maxAgeSeconds), nil
+}
+
 func (s *Store) ConsumePrivilegeApproval(
 	ctx context.Context,
 	targetID, policy, clientID, projectID, bootID string,
@@ -737,13 +795,9 @@ func (s *Store) ConsumePrivilegeApproval(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var rowPolicy, rowClient, rowProject, rowBoot string
-	var approvedAt float64
-	err = tx.QueryRowContext(ctx, `
-SELECT policy, client_id, project_id, boot_id, approved_at
-FROM privilege_approvals
-WHERE target_id = ?
-`, targetID).Scan(&rowPolicy, &rowClient, &rowProject, &rowBoot, &approvedAt)
+	var approval PrivilegeApproval
+	err = tx.QueryRowContext(ctx, "SELECT policy, client_id, project_id, boot_id, approved_at FROM privilege_approvals WHERE target_id = ?", targetID).
+		Scan(&approval.Policy, &approval.ClientID, &approval.ProjectID, &approval.BootID, &approval.ApprovedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -751,12 +805,12 @@ WHERE target_id = ?
 		return false, err
 	}
 
-	if rowPolicy != policy || rowClient != clientID || rowProject != projectID {
+	if approval.Policy != policy || approval.ClientID != clientID || approval.ProjectID != projectID {
 		return false, nil
 	}
 
 	if policy == "ask_once_per_boot" {
-		if bootID != "" && rowBoot == bootID {
+		if privilegeApprovalMatches(&approval, policy, clientID, projectID, bootID, maxAgeSeconds) {
 			if err := tx.Commit(); err != nil {
 				return false, fmt.Errorf("commit privilege approval check: %w", err)
 			}
@@ -772,18 +826,14 @@ WHERE target_id = ?
 	}
 
 	if policy == "ask_always" {
-		now := float64(time.Now().UnixNano()) / 1e9
-		age := now - approvedAt
+		valid := privilegeApprovalMatches(&approval, policy, clientID, projectID, bootID, maxAgeSeconds)
 		if _, err := tx.ExecContext(ctx, "DELETE FROM privilege_approvals WHERE target_id = ?", targetID); err != nil {
 			return false, fmt.Errorf("consume privilege approval: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
 			return false, fmt.Errorf("commit privilege approval consumption: %w", err)
 		}
-		if age < 0 || age > float64(maxAgeSeconds) {
-			return false, nil
-		}
-		return true, nil
+		return valid, nil
 	}
 
 	return false, nil

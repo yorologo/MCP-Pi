@@ -2,6 +2,30 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
+## 1.6.0 — candidate
+
+### Security
+- The critical gateway_enabled kill-switch setting now fails closed when its required Registry row is missing instead of inheriting the fresh-install default at runtime.
+- Effective Access for run_command reuses the live Target privilege gate, including explicit target_admin, Target policy, approval/boot identity and backend readiness, without consuming diagnostic approvals.
+- Registry schema 6 enforces one capability per Grant and logical uniqueness; migration splits historical comma-separated bundles and safely consolidates exact duplicates.
+- Legacy sudoers reboot policy and its obsolete helper are removed from source/release paths; appliance reboot remains delegated through systemd-logind + polkit.
+
+### Fixed
+- Registry recovery/service inventory includes all Registry-using services needed to keep restore fail-closed.
+- Admin validation preserves submitted form state on recoverable errors and returns validation responses instead of redirecting away from unsaved input.
+- Client Grant Target/Project selectors are scope-aware, preserve Effective Access selections, and reject duplicate Grants before SQLite reports a constraint error.
+- Target creation now leads directly to the existing security/setup controls on Edit Target.
+- Remote file reads reject non-regular files instead of allowing FIFO/device reads to block until timeout.
+- Dashboard readiness uses in-process Core health instead of a synchronous self-HTTP probe.
+
+### Changed
+- Registry schema advances from 5 to 6. Explicit migration supports 4 -> 5 -> 6 and 5 -> 6; restore preserves supported backup schemas 4, 5 and 6 exactly.
+- CI now executes the exact shell syntax gates required by the repository contract.
+- Host-specific smoke fixtures and retired reboot artifacts are removed from the tracked product tree.
+
+### Verification
+- Promotion remains blocked until the complete local gates, ARMv6 package inspection, exact pushed-SHA CI, immutable tag creation and later production acceptance all pass.
+
 ## 1.5.0 — stable
 
 ### Security

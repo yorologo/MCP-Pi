@@ -20,13 +20,13 @@ import (
 
 // TargetConfig represents the minimal target information needed for discovery.
 type TargetConfig struct {
-	ID        string `json:"id"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	SSHAlias  string `json:"ssh_alias,omitempty"`
-	User      string `json:"user,omitempty"`
-	Platform  string `json:"platform,omitempty"`
-	Enabled   bool   `json:"enabled"`
+	ID       string `json:"id"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	SSHAlias string `json:"ssh_alias,omitempty"`
+	User     string `json:"user,omitempty"`
+	Platform string `json:"platform,omitempty"`
+	Enabled  bool   `json:"enabled"`
 }
 
 // HostKeyEntry represents a parsed line from known_hosts or ssh-keyscan output.
@@ -488,6 +488,101 @@ func (d *TargetDiscovery) RemoveTrustedKey(target TargetConfig) (*TargetIdentity
 		return nil, err
 	}
 	return d.InspectTargetIdentity(target)
+}
+
+func (d *TargetDiscovery) FindMovedTarget(target TargetConfig) (*DiscoveryResult, error) {
+	return d.findMovedTarget(target, GetKernelNeighbors(), ProbePort, d.GetRemoteHostKeys)
+}
+
+func (d *TargetDiscovery) findMovedTarget(
+	target TargetConfig,
+	candidates []string,
+	probe func(string, int, time.Duration) bool,
+	scan func(string, int, time.Duration) ([]*HostKeyEntry, error),
+) (*DiscoveryResult, error) {
+	started := time.Now()
+	targetID, err := validateKnownHostsName(target.ID)
+	if err != nil {
+		return nil, err
+	}
+	alias := strings.TrimSpace(target.SSHAlias)
+	if alias != "" {
+		if _, err := validateKnownHostsName(alias); err != nil {
+			return nil, err
+		}
+	}
+
+	trusted, err := d.GetCanonicalKeys(targetID, alias)
+	if err != nil {
+		return nil, err
+	}
+	if len(trusted) == 0 {
+		return nil, errors.New("Target has no pinned SSH identity; safe rediscovery is unavailable")
+	}
+
+	port := target.Port
+	if port <= 0 {
+		port = 22
+	}
+	if port > 65535 {
+		return nil, errors.New("target SSH port is invalid")
+	}
+
+	trustedFP := make(map[string]struct{}, len(trusted))
+	for _, key := range trusted {
+		trustedFP[key.Fingerprint] = struct{}{}
+	}
+
+	type match struct {
+		host        string
+		fingerprint string
+	}
+	var matches []match
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || candidate == strings.TrimSpace(target.Host) {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+
+		if !probe(candidate, port, 350*time.Millisecond) {
+			continue
+		}
+		keys, err := scan(candidate, port, time.Second)
+		if err != nil {
+			continue
+		}
+		for _, key := range keys {
+			if _, ok := trustedFP[key.Fingerprint]; ok {
+				matches = append(matches, match{host: candidate, fingerprint: key.Fingerprint})
+				break
+			}
+		}
+	}
+
+	result := &DiscoveryResult{
+		NewPort:    port,
+		Method:     "kernel-neighbors+ssh-host-key",
+		DurationMs: int(time.Since(started).Milliseconds()),
+	}
+	switch len(matches) {
+	case 0:
+		result.Status = "TARGET_NOT_FOUND"
+		return result, nil
+	case 1:
+		result.Status = "IDENTITY_MATCH"
+		result.NewHost = matches[0].host
+		result.Fingerprint = matches[0].fingerprint
+		return result, nil
+	default:
+		result.Status = "AMBIGUOUS_TARGET_IDENTITY"
+		result.Error = "multiple neighboring endpoints present the pinned SSH identity"
+		return result, nil
+	}
 }
 
 // ProbePort checks if an IP:port is reachable via TCP with a timeout.

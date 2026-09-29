@@ -26,6 +26,8 @@ Administrative Target privilege is a second gate. `run_command` and allowlisted 
 
 Admin may offer an approval scope only when the same Client/Target/Project passes both ordinary Target-shell authorization and the explicit `target_admin` gate. `ask_always` approvals are one-use and short-lived; `ask_once_per_boot` approvals are bound to the Target's observed boot ID and fail closed when boot identity is unavailable.
 
+For routine privileged maintenance, prefer a narrow persistent `target_admin` grant plus Target policy `ask_always`; each elevation then requires a fresh one-use approval instead of temporarily switching the Target to `always_allow`. Doctor's Privilege Hygiene checks warn about enabled `always_allow` Targets and wildcard `target_admin` grants so incomplete break-glass cleanup is visible. External host state such as a privileged account's `authorized_keys` remains outside Registry transactions and must be provisioned/revoked by the Target's native access-management process.
+
 General sudo on the gateway is not a substitute.
 
 ## Kill switches and SSH trust
@@ -35,6 +37,8 @@ Disabled gateway/write/shell states deny the operation; they never route elsewhe
 Strict host-key checking remains enabled. Endpoint rediscovery cannot replace Target identity without the pinned host key.
 
 ## Admin and MCP HTTP
+
+HTTP token authentication distinguishes absent credentials from invalid credentials. An invalid supplied token or an unauthenticated asserted Client ID returns HTTP 401. A request with no token and no asserted identity may negotiate MCP as the reserved NONE principal, but that principal has an empty tool catalog and all tool invocations fail closed; it never inherits the configured client identity.
 
 Admin binds to loopback by default and enforces signed HttpOnly/SameSite cookies, Host allowlisting and CSRF.
 

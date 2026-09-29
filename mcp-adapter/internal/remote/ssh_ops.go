@@ -205,12 +205,12 @@ func (s *SSHTransport) ReadFile(
 	var command string
 	if isWindowsTarget(target) {
 		script := "$p=" + powerShellQuote(canonicalPath) + ";$limit=" + strconv.FormatInt(maxBytes, 10) + ";" +
-			"if(-not (Test-Path -LiteralPath $p)){exit 2};$i=Get-Item -LiteralPath $p -Force;if($i.PSIsContainer){exit 3};if($i.Length -gt $limit){exit 4};" +
+			"if(-not (Test-Path -LiteralPath $p)){exit 2};$i=Get-Item -LiteralPath $p -Force;if($i.PSIsContainer -or (($i.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0)){exit 3};if($i.Length -gt $limit){exit 4};" +
 			"[Convert]::ToBase64String([IO.File]::ReadAllBytes($p))"
 		command = buildPowerShellCommand(script)
 	} else {
 		command = "p=" + shellQuote(canonicalPath) + "; limit=" + strconv.FormatInt(maxBytes, 10) + `; ` +
-			`if [ ! -e "$p" ]; then exit 2; fi; if [ -d "$p" ]; then exit 3; fi; size=$(wc -c < "$p") || exit 5; ` +
+			`if [ ! -e "$p" ]; then exit 2; fi; if [ -L "$p" ] || [ ! -f "$p" ]; then exit 3; fi; size=$(wc -c < "$p") || exit 5; ` +
 			`if [ "$size" -gt "$limit" ]; then exit 4; fi; base64 < "$p" | tr -d '\n'`
 	}
 	maxOutput := int(maxBytes + maxBytes/3 + 8192)
@@ -226,7 +226,7 @@ func (s *SSHTransport) ReadFile(
 	case 2:
 		return "", NewError("NOT_FOUND", "File not found: "+canonicalPath, result.ExitCode)
 	case 3:
-		return "", NewError("INVALID_PATH", "Target path is a directory: "+canonicalPath, result.ExitCode)
+		return "", NewError("INVALID_PATH", "Target path is not a regular file: "+canonicalPath, result.ExitCode)
 	case 4:
 		return "", NewError("FILE_TOO_LARGE", fmt.Sprintf("File size exceeds allowed limit of %d bytes", maxBytes), result.ExitCode)
 	default:

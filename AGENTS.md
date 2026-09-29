@@ -64,7 +64,7 @@ Do not deploy production merely to make it match source or documentation.
 
 ## Registry lifecycle
 
-Schema version is 5. Runtime Open is non-migrating and requires the current schema. Fresh install and coordinated updates use the explicit Go migrate command; setup requires an already-current Registry and never migrates it. Direct migration supports v4 to v5 and current v5. Restore preserves the backup schema exactly. Do not claim support for older schemas unless migrations are implemented and tested.
+Schema version is 6. Runtime Open is non-migrating and requires the current schema. Fresh install and coordinated updates use the explicit Go migrate command; setup requires an already-current Registry and never migrates it. Direct migration supports v4 -> v5 -> v6, v5 -> v6 and current v6. Restore preserves supported backup schemas 4, 5 and 6 exactly; migration remains a separate explicit action. Do not claim support for older schemas unless migrations are implemented and tested.
 
 Use the Go Online Backup/Restore implementation. Do not copy a live SQLite database as an ordinary file.
 

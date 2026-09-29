@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -45,6 +46,9 @@ func TestBuildSSHArgsUsesRegistryAuthoritativeEndpoint(t *testing.T) {
 	}
 	if got := args[len(args)-1]; got != "target-alias" {
 		t.Fatalf("destination=%q want=target-alias", got)
+	}
+	if len(args) < 2 || args[len(args)-2] != "--" {
+		t.Fatalf("ssh destination must be separated from options with --: %v", args)
 	}
 }
 
@@ -201,6 +205,21 @@ func localSSHShim(t *testing.T) *SSHTransport {
 
 func localTarget() registry.Target {
 	return registry.Target{ID: "local-test", Host: "127.0.0.1", Port: 22, User: "tester", Platform: "linux"}
+}
+
+func TestReadFileRejectsNonRegularFileBeforeReading(t *testing.T) {
+	transport := localSSHShim(t)
+	fifo := filepath.Join(t.TempDir(), "pipe")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := transport.ReadFile(ctx, localTarget(), fifo, 1024, 500*time.Millisecond)
+	if ErrorCode(err) != "INVALID_PATH" {
+		t.Fatalf("FIFO read err=%v code=%q want INVALID_PATH", err, ErrorCode(err))
+	}
 }
 
 func TestStructuredMutationHelpersFailClosedOnSymlinkEscapes(t *testing.T) {

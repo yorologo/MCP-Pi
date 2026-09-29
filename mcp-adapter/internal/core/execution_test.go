@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"mcp-gateway-adapter/internal/policy"
 	"mcp-gateway-adapter/internal/registry"
 	"mcp-gateway-adapter/internal/remote"
 )
@@ -140,6 +141,74 @@ func seededExecutionCore(t *testing.T) (*Core, *executionFakeRemote, context.Con
 	return core, fake, ctx
 }
 
+func TestCheckRunCommandAccessUsesPrivilegeGateWithoutConsumingApproval(t *testing.T) {
+	core, fake, ctx := seededExecutionCore(t)
+
+	check, err := core.CheckRunCommandAccess(ctx, "test-client", "target-elevated", "MCP_Local", "required")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if check.Allowed || check.Code != "PRIVILEGE_GRANT_REQUIRED" {
+		t.Fatalf("required privilege without target_admin = %+v", check)
+	}
+
+	if _, err := core.store.AddGrant(ctx, registry.Grant{
+		ClientID: "test-client", TargetID: "target-elevated", ProjectID: "MCP_Local",
+		Capability: policy.TargetPrivilegeCapability, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.store.SetPrivilegeApproval(ctx, "target-elevated", "ask_always", "test-client", "MCP_Local", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	check, err = core.CheckRunCommandAccess(ctx, "test-client", "target-elevated", "MCP_Local", "required")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !check.Allowed {
+		t.Fatalf("non-consuming effective access denied: %+v", check)
+	}
+	if approval, err := core.store.GetPrivilegeApproval(ctx, "target-elevated"); err != nil || approval == nil {
+		t.Fatalf("effective access consumed approval: approval=%+v err=%v", approval, err)
+	}
+
+	resp := core.RunCommand(ctx, "req-effective-access", "test-client", "target-elevated", "MCP_Local", "id", CommandRequest{Privilege: "required"})
+	if !resp.OK {
+		t.Fatalf("real execution denied after effective access check: %+v", resp)
+	}
+	if approval, err := core.store.GetPrivilegeApproval(ctx, "target-elevated"); err != nil || approval != nil {
+		t.Fatalf("ask_always approval was not consumed by real execution: approval=%+v err=%v", approval, err)
+	}
+	if fake.lastCommand == "" {
+		t.Fatal("real command was not executed")
+	}
+}
+
+func TestCheckRunCommandAccessMirrorsGuardForStandardShell(t *testing.T) {
+	core, fake, ctx := seededExecutionCore(t)
+	fake.facts = map[string]any{
+		"probe_status": "ok",
+		"boot_id":      "boot-test-1",
+		"privilege": map[string]any{
+			"current_level":        "standard",
+			"maximum_level":        "root",
+			"backend":              "shizuku",
+			"backend_ready":        true,
+			"shell_can_elevate":    true,
+			"independent_elevator": "shizuku",
+		},
+	}
+
+	check, err := core.CheckRunCommandAccess(ctx, "test-client", "target-elevated", "MCP_Local", "standard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if check.Allowed || check.Code != "PRIVILEGE_GRANT_REQUIRED" {
+		t.Fatalf("guarded standard shell should require target_admin: %+v", check)
+	}
+}
+
 func TestRunCommandBasics(t *testing.T) {
 	core, fake, ctx := seededExecutionCore(t)
 
@@ -230,13 +299,27 @@ VALUES ('test-client', 'target-elevated', 'MCP_Local', 'target_admin', 1)
 	}
 }
 
+func TestRunCommandNonZeroExitIsToolFailure(t *testing.T) {
+	core, fake, ctx := seededExecutionCore(t)
+	fake.runResult = remote.CommandResult{ExitCode: 7, Stderr: "intentional failure\n", DurationMS: 20}
+
+	resp := core.RunCommand(ctx, "req-exit-7", "test-client", "termux-main", "MCP_Local", "exit 7", CommandRequest{})
+	if resp.OK {
+		t.Fatalf("non-zero command must be a tool failure: %+v", resp)
+	}
+	resMap := resp.Result.(map[string]any)
+	if resMap["exit_code"] != 7 || resMap["stderr"] != "intentional failure\n" {
+		t.Fatalf("non-zero command diagnostics were not preserved: %+v", resMap)
+	}
+}
+
 func TestRunCommandTimeoutHandling(t *testing.T) {
 	core, fake, ctx := seededExecutionCore(t)
 	fake.runErr = remote.NewError("SSH_TIMEOUT", "SSH command timed out", -1)
 
 	resp := core.RunCommand(ctx, "req-timeout", "test-client", "termux-main", "MCP_Local", "sleep 100", CommandRequest{})
-	if !resp.OK {
-		t.Fatalf("timeout should return OK=true with timed_out=true according to Python contract, got: %+v", resp)
+	if resp.OK {
+		t.Fatalf("timeout must return a tool failure: %+v", resp)
 	}
 	resMap := resp.Result.(map[string]any)
 	if resMap["timed_out"] != true || resMap["exit_code"] != 124 {
@@ -254,6 +337,16 @@ func TestRunTask(t *testing.T) {
 	}
 	if fake.lastCommand != "'go' 'build' './...'" {
 		t.Fatalf("unexpected task command: %s", fake.lastCommand)
+	}
+
+	fake.runResult = remote.CommandResult{ExitCode: 2, Stderr: "build failed\n", DurationMS: 20}
+	resp = core.RunTask(ctx, "req-task-nonzero", "test-client", "termux-main", "MCP_Local", "build")
+	if resp.OK {
+		t.Fatalf("non-zero task must be a tool failure: %+v", resp)
+	}
+	resMap := resp.Result.(map[string]any)
+	if resMap["exit_code"] != 2 || resMap["stderr"] != "build failed\n" {
+		t.Fatalf("non-zero task diagnostics were not preserved: %+v", resMap)
 	}
 
 	// Missing task

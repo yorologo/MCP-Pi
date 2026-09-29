@@ -143,7 +143,7 @@ func AuthorizeClient(
 
 	matched := false
 	for _, grant := range grants {
-		if grantMatches(grant, targetID, projectID, allowedCaps, true) {
+		if grantCapabilityMatches(grant, allowedCaps, true) && (forCatalog || grantScopeMatches(grant, targetID, projectID)) {
 			matched = true
 			break
 		}
@@ -156,11 +156,11 @@ func AuthorizeClient(
 		return allow(), nil
 	}
 
-	gatewayEnabled, err := store.GetSetting(ctx, "gateway_enabled", "true")
+	gatewayEnabled, err := store.GetRequiredBoolSetting(ctx, "gateway_enabled")
 	if err != nil {
 		return Decision{}, err
 	}
-	if strings.ToLower(gatewayEnabled) == "false" && toolName != "health" {
+	if !gatewayEnabled && toolName != "health" {
 		return deny("GATEWAY_DISABLED", "Global kill switch is active"), nil
 	}
 
@@ -236,7 +236,7 @@ func AuthorizePrivilegeRequest(
 		grants = nil
 	}
 	for _, grant := range grants {
-		if grantMatches(grant, targetID, projectID, []string{TargetPrivilegeCapability}, false) {
+		if grantCapabilityMatches(grant, []string{TargetPrivilegeCapability}, false) && grantScopeMatches(grant, targetID, projectID) {
 			return allow(), nil
 		}
 	}
@@ -247,9 +247,8 @@ func AuthorizePrivilegeRequest(
 	), nil
 }
 
-func grantMatches(
+func grantCapabilityMatches(
 	grant registry.Grant,
-	targetID, projectID string,
 	allowedCapabilities []string,
 	allowCapabilityWildcard bool,
 ) bool {
@@ -257,43 +256,41 @@ func grantMatches(
 		return false
 	}
 
-	grantCaps := splitCapabilities(grant.Capability)
-	allowed := make(map[string]struct{}, len(allowedCapabilities))
-	for _, capability := range allowedCapabilities {
-		allowed[capability] = struct{}{}
-	}
-
-	capabilityMatched := false
-	for capability := range grantCaps {
-		if _, ok := allowed[capability]; ok {
-			capabilityMatched = true
-			break
+	capability := strings.TrimSpace(grant.Capability)
+	for _, allowed := range allowedCapabilities {
+		if capability == allowed {
+			return true
 		}
 	}
-	if !capabilityMatched {
-		if _, wildcard := grantCaps["*"]; !allowCapabilityWildcard || !wildcard {
+	return allowCapabilityWildcard && capability == "*"
+}
+
+func grantScopeMatches(grant registry.Grant, targetID, projectID string) bool {
+	targetScope := strings.TrimSpace(grant.TargetID)
+	if targetScope == "" {
+		targetScope = "*"
+	}
+	projectScope := strings.TrimSpace(grant.ProjectID)
+	if projectScope == "" {
+		projectScope = "*"
+	}
+
+	if targetID == "" {
+		if targetScope != "*" {
 			return false
 		}
-	}
-
-	if targetID != "" && grant.TargetID != "*" && grant.TargetID != targetID {
+	} else if targetScope != "*" && targetScope != targetID {
 		return false
 	}
-	if projectID != "" && grant.ProjectID != "*" && grant.ProjectID != projectID {
+
+	if projectID == "" {
+		if projectScope != "*" {
+			return false
+		}
+	} else if projectScope != "*" && projectScope != projectID {
 		return false
 	}
 	return true
-}
-
-func splitCapabilities(raw string) map[string]struct{} {
-	out := make(map[string]struct{})
-	for _, item := range strings.Split(raw, ",") {
-		item = strings.TrimSpace(item)
-		if item != "" {
-			out[item] = struct{}{}
-		}
-	}
-	return out
 }
 
 func CatalogForClient(ctx context.Context, store *registry.Store, clientID string, tools []string) ([]string, error) {

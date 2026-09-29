@@ -275,7 +275,7 @@ func (c *Core) Invoke(ctx context.Context, invocation Invocation, toolName strin
 }
 
 func (c *Core) operationalGate(ctx context.Context, tool, requestID, targetID, projectID string) map[string]any {
-	enabled, err := c.boolSetting(ctx, "gateway_enabled", true)
+	enabled, err := c.store.GetRequiredBoolSetting(ctx, "gateway_enabled")
 	if err != nil {
 		return responseMap(errorResponse(tool, "INTERNAL_ERROR", err.Error(), requestID, targetID, projectID, time.Now()))
 	}

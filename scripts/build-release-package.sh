@@ -47,6 +47,7 @@ for path in \
 done
 mkdir -p "$PKG_ROOT/config"
 git -C "$ROOT" archive "$SHA" config | tar -xf - -C "$PKG_ROOT"
+[ ! -e "$PKG_ROOT/config/sudoers" ] || fail "release package must not contain legacy sudoers policy"
 
 mkdir -p "$PKG_ROOT/docs"
 for doc in \

@@ -161,6 +161,60 @@ func TestStoreSettingsAndActivityPrimitives(t *testing.T) {
 	}
 }
 
+func TestActivityResultFiltersSeparateAttempts(t *testing.T) {
+	store, ctx := seededStore(t)
+
+	for _, entry := range []Activity{
+		{Actor: "admin", Action: "config_change_attempt", Success: true, Detail: "attempt"},
+		{Actor: "admin", Action: "config_change", Success: true, Detail: "pass"},
+		{Actor: "admin", Action: "config_denied", Success: false, Detail: "deny"},
+	} {
+		if err := store.RecordActivity(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		result string
+		want   string
+	}{
+		{result: "PASS", want: "config_change"},
+		{result: "DENY", want: "config_denied"},
+		{result: "ATTEMPT", want: "config_change_attempt"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.result, func(t *testing.T) {
+			items, err := store.ListActivity(ctx, 10, 0, ActivityFilter{Result: tc.result})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(items) != 1 || items[0].Action != tc.want {
+				t.Fatalf("result=%s items=%+v want action=%s", tc.result, items, tc.want)
+			}
+		})
+	}
+}
+
+func TestStoreRejectsUnsafeStableIdentifiers(t *testing.T) {
+	store, ctx := seededStore(t)
+
+	if err := store.AddTarget(ctx, Target{
+		ID: "bad/target", Platform: "linux", Host: "127.0.0.1", Port: 22, User: "user", Enabled: true,
+	}); err == nil {
+		t.Fatal("target ID containing slash must be rejected")
+	}
+	if err := store.AddProject(ctx, Project{
+		ID: "bad/project", TargetID: "t", Root: "/tmp/project", Read: true, Enabled: true,
+	}); err == nil {
+		t.Fatal("project ID containing slash must be rejected")
+	}
+	if err := store.AddClient(ctx, Client{
+		ID: "bad/client", DisplayName: "Bad Client", Protocol: "mcp", Enabled: true,
+	}); err == nil {
+		t.Fatal("client ID containing slash must be rejected")
+	}
+}
+
 func TestStoreDisabledAndMissingLookupCodes(t *testing.T) {
 	store, ctx := seededStore(t)
 
@@ -236,6 +290,95 @@ func TestStorePrivilegeApproval(t *testing.T) {
 	ok, err = store.ConsumePrivilegeApproval(ctx, "t", "ask_once_per_boot", "client", "p", "boot-123", 300)
 	if err != nil || !ok {
 		t.Fatalf("ConsumePrivilegeApproval should still be valid for same boot: ok=%v", ok)
+	}
+}
+
+func TestCheckPrivilegeApprovalDoesNotConsume(t *testing.T) {
+	store, ctx := seededStore(t)
+
+	if err := store.SetPrivilegeApproval(ctx, "t", "ask_always", "client", "p", ""); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		ok, err := store.CheckPrivilegeApproval(ctx, "t", "ask_always", "client", "p", "", 300)
+		if err != nil || !ok {
+			t.Fatalf("non-consuming ask_always check %d: ok=%v err=%v", i, ok, err)
+		}
+	}
+	if approval, err := store.GetPrivilegeApproval(ctx, "t"); err != nil || approval == nil {
+		t.Fatalf("non-consuming check removed approval: approval=%+v err=%v", approval, err)
+	}
+	ok, err := store.ConsumePrivilegeApproval(ctx, "t", "ask_always", "client", "p", "", 300)
+	if err != nil || !ok {
+		t.Fatalf("consume after checks: ok=%v err=%v", ok, err)
+	}
+	ok, err = store.CheckPrivilegeApproval(ctx, "t", "ask_always", "client", "p", "", 300)
+	if err != nil || ok {
+		t.Fatalf("consumed approval remained valid: ok=%v err=%v", ok, err)
+	}
+
+	if err := store.SetPrivilegeApproval(ctx, "t", "ask_once_per_boot", "client", "p", "boot-1"); err != nil {
+		t.Fatal(err)
+	}
+	ok, err = store.CheckPrivilegeApproval(ctx, "t", "ask_once_per_boot", "client", "p", "boot-wrong", 300)
+	if err != nil || ok {
+		t.Fatalf("wrong boot unexpectedly valid: ok=%v err=%v", ok, err)
+	}
+	ok, err = store.CheckPrivilegeApproval(ctx, "t", "ask_once_per_boot", "client", "p", "boot-1", 300)
+	if err != nil || !ok {
+		t.Fatalf("diagnostic wrong-boot check mutated approval: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestGrantStorageRejectsBundlesAndLogicalDuplicates(t *testing.T) {
+	store, ctx := seededStore(t)
+
+	base := Grant{
+		ClientID:   "client",
+		TargetID:   "t",
+		ProjectID:  "p",
+		Capability: "admin",
+		Enabled:    true,
+	}
+	if _, err := store.AddGrant(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddGrant(ctx, base); err == nil {
+		t.Fatal("logical duplicate grant unexpectedly accepted")
+	}
+
+	bundle := base
+	bundle.Capability = "admin,write"
+	if _, err := store.AddGrant(ctx, bundle); err == nil {
+		t.Fatal("new capability bundle unexpectedly accepted")
+	}
+}
+
+func TestValidateStableIDForNewEntities(t *testing.T) {
+	for _, good := range []string{"termux-main", "MCP_Local", "client.v2", "A1"} {
+		if got, err := ValidateStableID(good); err != nil || got != good {
+			t.Fatalf("ValidateStableID(%q) = %q, %v", good, got, err)
+		}
+	}
+	for _, bad := range []string{"", ".hidden", "-flag", "has space", "a/b", "../escape"} {
+		if _, err := ValidateStableID(bad); err == nil {
+			t.Fatalf("ValidateStableID(%q) unexpectedly succeeded", bad)
+		}
+	}
+}
+
+func TestLegacyStableIDsRemainEditable(t *testing.T) {
+	store, ctx := seededStore(t)
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO targets(id,display_name,platform,host,port,user,privilege_policy,enabled) VALUES ('legacy target','Legacy','linux','127.0.0.2',22,'user','never',1)`); err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.GetTarget(ctx, "legacy target", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.DisplayName = "Legacy Updated"
+	if err := store.UpdateTarget(ctx, target); err != nil {
+		t.Fatalf("legacy target became uneditable: %v", err)
 	}
 }
 

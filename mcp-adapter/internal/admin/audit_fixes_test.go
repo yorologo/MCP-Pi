@@ -24,6 +24,65 @@ func adminTestRequestAs(method, target, username string) *http.Request {
 	return req.WithContext(ctx)
 }
 
+func TestTargetRediscoveryWithoutPinnedIdentityDoesNotMutateTarget(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	before, err := store.GetTarget(context.Background(), "test-target", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	srv.handleTargetRediscover(rec, adminTestRequest(http.MethodPost, "/targets/test-target/rediscover"), "test-target")
+	if rec.Code != http.StatusFound {
+		t.Fatalf("rediscovery returned %d want 302: %s", rec.Code, rec.Body.String())
+	}
+
+	after, err := store.GetTarget(context.Background(), "test-target", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Host != before.Host || after.Port != before.Port {
+		t.Fatalf("failed rediscovery mutated endpoint: before=%s:%d after=%s:%d", before.Host, before.Port, after.Host, after.Port)
+	}
+}
+
+func TestGrantProjectScopeRenderingHandlesDuplicateProjectIDs(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	ctx := context.Background()
+	sqlText := "INSERT INTO targets(id, display_name, platform, host, port, user, privilege_policy, enabled) VALUES ('target-b', 'Target B', 'linux', '127.0.0.2', 22, 'user', 'never', 1);" +
+		"INSERT INTO projects(id, target_id, display_name, root, read_enabled, write_enabled, enabled) VALUES ('test-proj', 'target-b', 'Duplicate Project', '/srv/other', 1, 0, 1);"
+	if _, err := store.DB().ExecContext(ctx, sqlText); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	access := map[string]interface{}{
+		"allowed":    true,
+		"target_id":  "target-b",
+		"project_id": "test-proj",
+		"tool_name":  "read_file",
+		"message":    "Allowed by current policy.",
+	}
+	if !srv.renderClientGrants(rec, adminTestRequest(http.MethodGet, "/clients/test-client/grants"), registry.Client{ID: "test-client"}, nil, access) {
+		t.Fatal("renderClientGrants failed")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("render returned %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"data-project-select=\"grant-project\"",
+		"data-project-select=\"check-project\"",
+		"value=\"test-proj\" data-target-id=\"test-target\"",
+		"value=\"test-proj\" data-target-id=\"target-b\" selected",
+		"value=\"read_file\" selected",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("grants render missing %q", want)
+		}
+	}
+}
+
 func TestTemplateDataPreservesIntegerSemantics(t *testing.T) {
 	type sample struct {
 		Count   int   `json:"count"`

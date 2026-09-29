@@ -729,6 +729,23 @@ func TestTokenAuthenticationAndAntiSpoofing(t *testing.T) {
 	ts := httptest.NewServer(SecurityMiddleware(mux))
 	defer ts.Close()
 
+	// Missing token without an asserted identity is intentionally anonymous.
+	// The NONE server may negotiate protocol methods, but it has zero tools
+	// (covered by TestAnonymousClientGetsNoTools).
+	reqAnon, _ := http.NewRequest("GET", ts.URL+"/mcp", nil)
+	reqAnon.Host = "127.0.0.1"
+	respAnon, err := http.DefaultClient.Do(reqAnon)
+	if err != nil {
+		t.Fatalf("anonymous negotiation request failed: %v", err)
+	}
+	defer respAnon.Body.Close()
+	if respAnon.StatusCode == http.StatusUnauthorized {
+		t.Fatalf("missing-token anonymous negotiation unexpectedly returned 401")
+	}
+	if respAnon.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("anonymous GET reached unexpected MCP response %d", respAnon.StatusCode)
+	}
+
 	// 1. Negative Test: Client ID spoofing attempt without token -> MUST BE 401 CLIENT_ID_SPOOFING_DENIED
 	reqSpoof, _ := http.NewRequest("POST", ts.URL+"/mcp", bytes.NewReader([]byte("{}")))
 	reqSpoof.Host = "127.0.0.1"

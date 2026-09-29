@@ -90,7 +90,7 @@ func CatalogTools() []string {
 func (c *Core) Health(ctx context.Context, requestID string) Response {
 	started := time.Now()
 
-	gatewayEnabled, err := c.boolSetting(ctx, "gateway_enabled", true)
+	gatewayEnabled, err := c.store.GetRequiredBoolSetting(ctx, "gateway_enabled")
 	if err != nil {
 		return errorResponse("health", "INTERNAL_ERROR", err.Error(), requestID, "", "", started)
 	}
@@ -198,6 +198,10 @@ func successResponse(tool string, result any, requestID, target, project string,
 }
 
 func errorResponse(tool, code, message, requestID, target, project string, started time.Time) Response {
+	return errorResponseWithResult(tool, code, message, nil, requestID, target, project, started)
+}
+
+func errorResponseWithResult(tool, code, message string, result any, requestID, target, project string, started time.Time) Response {
 	if code == "" {
 		code = "INTERNAL_ERROR"
 	}
@@ -208,6 +212,7 @@ func errorResponse(tool, code, message, requestID, target, project string, start
 		OK:         false,
 		Tool:       tool,
 		DurationMS: durationMS(started),
+		Result:     result,
 		Error:      &ErrorBody{Code: code, Message: message},
 		RequestID:  requestID,
 		Target:     target,

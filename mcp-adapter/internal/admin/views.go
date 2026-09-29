@@ -50,40 +50,39 @@ func parseTargetForm(r *http.Request, targetID string) (registry.Target, error) 
 	if id == "" {
 		id = strings.TrimSpace(r.FormValue("id"))
 	}
-	if id == "" {
-		return registry.Target{}, fmt.Errorf("target id is required")
-	}
-	host := strings.TrimSpace(r.FormValue("host"))
-	user := strings.TrimSpace(r.FormValue("user"))
-	if host == "" || user == "" {
-		return registry.Target{}, fmt.Errorf("host and user are required")
-	}
-	platformName := strings.ToLower(strings.TrimSpace(r.FormValue("platform")))
-	switch platformName {
-	case "linux", "windows", "android-termux":
-	default:
-		return registry.Target{}, fmt.Errorf("unsupported platform %q", r.FormValue("platform"))
-	}
-	port, err := parseBoundedFormInt(r, "port", 1, 65535)
-	if err != nil {
-		return registry.Target{}, err
-	}
-	privilegePolicy, err := policy.NormalizePrivilegePolicy(r.FormValue("privilege_policy"))
-	if err != nil {
-		return registry.Target{}, err
-	}
-	return registry.Target{
+	target := registry.Target{
 		ID:              id,
 		DisplayName:     strings.TrimSpace(r.FormValue("display_name")),
-		Platform:        platformName,
-		Host:            host,
-		Port:            port,
-		User:            user,
+		Platform:        strings.ToLower(strings.TrimSpace(r.FormValue("platform"))),
+		Host:            strings.TrimSpace(r.FormValue("host")),
+		User:            strings.TrimSpace(r.FormValue("user")),
 		SSHAlias:        strings.TrimSpace(r.FormValue("ssh_alias")),
 		PrivilegeUser:   strings.TrimSpace(r.FormValue("privilege_user")),
-		PrivilegePolicy: privilegePolicy,
+		PrivilegePolicy: strings.TrimSpace(r.FormValue("privilege_policy")),
 		Enabled:         r.FormValue("enabled") == "on",
-	}, nil
+	}
+	if target.ID == "" {
+		return target, fmt.Errorf("target id is required")
+	}
+	if target.Host == "" || target.User == "" {
+		return target, fmt.Errorf("host and user are required")
+	}
+	switch target.Platform {
+	case "linux", "windows", "android-termux":
+	default:
+		return target, fmt.Errorf("unsupported platform %q", r.FormValue("platform"))
+	}
+	port, err := parseBoundedFormInt(r, "port", 1, 65535)
+	target.Port = port
+	if err != nil {
+		return target, err
+	}
+	privilegePolicy, err := policy.NormalizePrivilegePolicy(target.PrivilegePolicy)
+	if err != nil {
+		return target, err
+	}
+	target.PrivilegePolicy = privilegePolicy
+	return target, nil
 }
 
 func parseBoundedFormInt(r *http.Request, key string, minValue, maxValue int) (int, error) {
@@ -314,16 +313,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	mcpReady := false
-	readyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer cancel()
-	if req, err := http.NewRequestWithContext(readyCtx, http.MethodGet, "http://127.0.0.1:8090/ready", nil); err == nil {
-		client := &http.Client{Timeout: 500 * time.Millisecond}
-		if resp, err := client.Do(req); err == nil {
-			mcpReady = resp.StatusCode == http.StatusOK
-			_ = resp.Body.Close()
-		}
-	}
+	mcpReady := s.cfg.Core.Health(ctx, "").OK
 
 	s.render(w, r, "dashboard.html", pongo2.Context{
 		"gateway_enabled":          gwEnabledStr == "true",
@@ -396,23 +386,22 @@ func (s *Server) handleTargetAdd(w http.ResponseWriter, r *http.Request) {
 
 	target, err := parseTargetForm(r, "")
 	if err != nil {
-		sess := getSession(r)
-		sess.Flash(fmt.Sprintf("Invalid Target configuration: %v", err), "danger")
-		s.render(w, r, "target_form.html", pongo2.Context{
+		getSession(r).Flash(fmt.Sprintf("Invalid Target configuration: %v", err), "danger")
+		s.renderStatus(w, r, "target_form.html", pongo2.Context{
 			"is_edit": false,
-			"target":  nil,
+			"target":  target,
 			"section": "targets",
-		})
+		}, http.StatusUnprocessableEntity)
 		return
 	}
 	if target.PrivilegePolicy == "always_allow" {
 		sess := getSession(r)
 		sess.Flash("Create the Target with a safer privilege policy, then enable Always allow from Edit Target with the required second confirmation.", "danger")
-		s.render(w, r, "target_form.html", pongo2.Context{
+		s.renderStatus(w, r, "target_form.html", pongo2.Context{
 			"is_edit": false,
 			"target":  target,
 			"section": "targets",
-		})
+		}, http.StatusUnprocessableEntity)
 		return
 	}
 	s.RecordAudit(r, "add_target_attempt", target.ID, "", true, "", fmt.Sprintf("Add target '%s'", target.ID), true)
@@ -428,8 +417,11 @@ func (s *Server) handleTargetAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := getSession(r)
-	sess.Flash(fmt.Sprintf("Target '%s' created successfully.", target.ID), "success")
-	http.Redirect(w, r, "/targets", http.StatusFound)
+	sess.Flash(
+		fmt.Sprintf("Target '%s' created. Next: verify its pinned SSH host identity, install the gateway public key on the Target account, then Check Connection.", target.ID),
+		"success",
+	)
+	http.Redirect(w, r, fmt.Sprintf("/targets/%s/edit", target.ID), http.StatusFound)
 }
 
 func (s *Server) handleTargetSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -451,6 +443,10 @@ func (s *Server) handleTargetSubroutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "test" {
 		s.handleTargetTest(w, r, targetID)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "rediscover" {
+		s.handleTargetRediscover(w, r, targetID)
 		return
 	}
 	if len(parts) == 3 && parts[1] == "ssh" && parts[2] == "trust" {
@@ -579,6 +575,50 @@ func targetPrivilegeStatusView(target registry.Target, approval *registry.Privil
 	}
 }
 
+func (s *Server) renderTargetEdit(w http.ResponseWriter, r *http.Request, formTarget, persistedTarget registry.Target, status int) bool {
+	sshIdent, _ := s.cfg.Discovery.InspectTargetIdentity(discovery.TargetConfig{
+		ID:       persistedTarget.ID,
+		Host:     persistedTarget.Host,
+		Port:     persistedTarget.Port,
+		SSHAlias: persistedTarget.SSHAlias,
+		User:     persistedTarget.User,
+		Platform: persistedTarget.Platform,
+		Enabled:  persistedTarget.Enabled,
+	})
+	approval, err := s.cfg.Store.GetPrivilegeApproval(r.Context(), persistedTarget.ID)
+	if s.failStoreRead(w, r, "load_target_privilege_approval", err) {
+		return false
+	}
+	privScopes, err := s.targetPrivilegeScopes(r.Context(), persistedTarget.ID)
+	if s.failStoreRead(w, r, "load_target_privilege_scopes", err) {
+		return false
+	}
+	privilegeStatus := targetPrivilegeStatusView(
+		persistedTarget,
+		approval,
+		privScopes,
+		s.cfg.Core.TargetStatus(r.Context(), "", persistedTarget.ID),
+	)
+	s.renderStatus(w, r, "target_form.html", pongo2.Context{
+		"target":  formTarget,
+		"is_edit": true,
+		"ssh_identity": map[string]interface{}{
+			"ok":     sshIdent != nil,
+			"result": sshIdent,
+		},
+		"gateway_public_key": map[string]interface{}{
+			"ok": s.gatewayPubKey != "",
+			"result": map[string]string{
+				"public_key": s.gatewayPubKey,
+			},
+		},
+		"privilege_status": privilegeStatus,
+		"privilege_scopes": privScopes,
+		"section":          "targets",
+	}, status)
+	return true
+}
+
 func (s *Server) handleTargetEdit(w http.ResponseWriter, r *http.Request, targetID string) {
 	target, err := s.cfg.Store.GetTarget(r.Context(), targetID, true)
 	if err != nil {
@@ -587,46 +627,7 @@ func (s *Server) handleTargetEdit(w http.ResponseWriter, r *http.Request, target
 	}
 
 	if r.Method == http.MethodGet {
-		sshIdent, _ := s.cfg.Discovery.InspectTargetIdentity(discovery.TargetConfig{
-			ID:       target.ID,
-			Host:     target.Host,
-			Port:     target.Port,
-			SSHAlias: target.SSHAlias,
-			User:     target.User,
-			Platform: target.Platform,
-			Enabled:  target.Enabled,
-		})
-		approval, err := s.cfg.Store.GetPrivilegeApproval(r.Context(), targetID)
-		if s.failStoreRead(w, r, "load_target_privilege_approval", err) {
-			return
-		}
-		privScopes, err := s.targetPrivilegeScopes(r.Context(), targetID)
-		if s.failStoreRead(w, r, "load_target_privilege_scopes", err) {
-			return
-		}
-		privilegeStatus := targetPrivilegeStatusView(
-			target,
-			approval,
-			privScopes,
-			s.cfg.Core.TargetStatus(r.Context(), "", targetID),
-		)
-		s.render(w, r, "target_form.html", pongo2.Context{
-			"target":  target,
-			"is_edit": true,
-			"ssh_identity": map[string]interface{}{
-				"ok":     sshIdent != nil,
-				"result": sshIdent,
-			},
-			"gateway_public_key": map[string]interface{}{
-				"ok": s.gatewayPubKey != "",
-				"result": map[string]string{
-					"public_key": s.gatewayPubKey,
-				},
-			},
-			"privilege_status": privilegeStatus,
-			"privilege_scopes": privScopes,
-			"section":          "targets",
-		})
+		s.renderTargetEdit(w, r, target, target, http.StatusOK)
 		return
 	}
 
@@ -637,9 +638,8 @@ func (s *Server) handleTargetEdit(w http.ResponseWriter, r *http.Request, target
 
 	updated, err := parseTargetForm(r, targetID)
 	if err != nil {
-		sess := getSession(r)
-		sess.Flash(fmt.Sprintf("Invalid Target configuration: %v", err), "danger")
-		http.Redirect(w, r, fmt.Sprintf("/targets/%s/edit", targetID), http.StatusFound)
+		getSession(r).Flash(fmt.Sprintf("Invalid Target configuration: %v", err), "danger")
+		s.renderTargetEdit(w, r, updated, target, http.StatusUnprocessableEntity)
 		return
 	}
 	if target.PrivilegePolicy != "always_allow" && updated.PrivilegePolicy == "always_allow" {
@@ -754,6 +754,53 @@ func (s *Server) handleTargetTest(w http.ResponseWriter, r *http.Request, target
 	}
 
 	http.Redirect(w, r, dest, http.StatusFound)
+}
+
+func (s *Server) handleTargetRediscover(w http.ResponseWriter, r *http.Request, targetID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	target, err := s.cfg.Store.GetTarget(r.Context(), targetID, true)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	sess := getSession(r)
+
+	result, err := s.cfg.Discovery.FindMovedTarget(discovery.TargetConfig{
+		ID:       target.ID,
+		Host:     target.Host,
+		Port:     target.Port,
+		SSHAlias: target.SSHAlias,
+		User:     target.User,
+		Platform: target.Platform,
+		Enabled:  target.Enabled,
+	})
+	if err != nil {
+		s.RecordAudit(r, "rediscover_target", targetID, "", false, "TARGET_REDISCOVERY_FAILED", err.Error(), false)
+		sess.Flash(fmt.Sprintf("Target rediscovery failed: %v", err), "danger")
+		http.Redirect(w, r, fmt.Sprintf("/targets/%s/edit", targetID), http.StatusFound)
+		return
+	}
+
+	switch result.Status {
+	case "IDENTITY_MATCH":
+		s.RecordAudit(r, "rediscover_target", targetID, "", true, "", fmt.Sprintf("Pinned SSH identity found at %s:%d", result.NewHost, result.NewPort), false)
+		sess.Flash(
+			fmt.Sprintf("Pinned SSH identity found at %s:%d (%s). The Target was not changed. Review the endpoint, then update Host IP / FQDN and Save Target if appropriate.", result.NewHost, result.NewPort, result.Fingerprint),
+			"success",
+		)
+	case "AMBIGUOUS_TARGET_IDENTITY":
+		s.RecordAudit(r, "rediscover_target", targetID, "", false, "AMBIGUOUS_TARGET_IDENTITY", result.Error, false)
+		sess.Flash("Rediscovery found more than one endpoint presenting the pinned SSH identity. No Target change was made.", "danger")
+	default:
+		s.RecordAudit(r, "rediscover_target", targetID, "", false, "TARGET_NOT_FOUND", "Pinned SSH identity not found among current kernel neighbors", false)
+		sess.Flash("Pinned SSH identity was not found among currently known network neighbors. No Target change was made.", "warning")
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/targets/%s/edit", targetID), http.StatusFound)
 }
 
 func (s *Server) handleTargetSSHTrust(w http.ResponseWriter, r *http.Request, targetID string) {
@@ -1019,12 +1066,12 @@ func (s *Server) handleProjectAdd(w http.ResponseWriter, r *http.Request) {
 	sess := getSession(r)
 	if project.TargetID == "" || project.ID == "" || project.Root == "" {
 		sess.Flash("Target, Project ID, and Root are required.", "danger")
-		s.render(w, r, "project_form.html", pongo2.Context{
+		s.renderStatus(w, r, "project_form.html", pongo2.Context{
 			"is_edit": false,
 			"project": project,
 			"targets": targets,
 			"section": "projects",
-		})
+		}, http.StatusUnprocessableEntity)
 		return
 	}
 	s.RecordAudit(r, "add_project_attempt", project.TargetID, project.ID, true, "", fmt.Sprintf("Add project '%s'", project.ID), true)
@@ -1083,7 +1130,16 @@ func (s *Server) handleProjectSubroutes(w http.ResponseWriter, r *http.Request) 
 		project.Enabled = r.FormValue("enabled") == "on"
 		if project.Root == "" {
 			sess.Flash("Root Directory Path is required.", "danger")
-			http.Redirect(w, r, fmt.Sprintf("/projects/%s/%s/edit", targetID, projectID), http.StatusFound)
+			targets, listErr := s.cfg.Store.ListTargets(r.Context())
+			if s.failStoreRead(w, r, "list_targets_for_project_edit_validation", listErr) {
+				return
+			}
+			s.renderStatus(w, r, "project_form.html", pongo2.Context{
+				"project": project,
+				"is_edit": true,
+				"targets": targets,
+				"section": "projects",
+			}, http.StatusUnprocessableEntity)
 			return
 		}
 		s.RecordAudit(r, "update_project_attempt", targetID, projectID, true, "", fmt.Sprintf("Update project '%s'", projectID), true)
@@ -1149,17 +1205,6 @@ func (s *Server) handleProjectSubroutes(w http.ResponseWriter, r *http.Request) 
 // Clients Management
 // ---------------------------------------------------------------------------
 
-func grantCapabilitySet(raw string) map[string]bool {
-	out := make(map[string]bool)
-	for _, capability := range strings.Split(raw, ",") {
-		capability = strings.TrimSpace(capability)
-		if capability != "" {
-			out[capability] = true
-		}
-	}
-	return out
-}
-
 func (s *Server) handleClientsList(w http.ResponseWriter, r *http.Request) {
 	clients, err := s.cfg.Store.ListClients(r.Context())
 	if s.failStoreRead(w, r, "list_clients", err) {
@@ -1183,20 +1228,20 @@ func (s *Server) handleClientsList(w http.ResponseWriter, r *http.Request) {
 			if !g.Enabled {
 				continue
 			}
-			caps := grantCapabilitySet(g.Capability)
-			if caps["*"] || caps["write"] {
+			capability := strings.TrimSpace(g.Capability)
+			if capability == "*" || capability == "write" {
 				summary["structured_write"] = true
 			}
-			if caps["*"] || caps["tasks"] {
+			if capability == "*" || capability == "tasks" {
 				summary["tasks"] = true
 			}
-			if caps["*"] || caps["target_shell"] {
+			if capability == "*" || capability == "target_shell" {
 				summary["target_shell"] = true
 			}
-			if caps["target_admin"] {
+			if capability == "target_admin" {
 				summary["target_admin"] = true
 			}
-			if caps["*"] || caps["admin"] {
+			if capability == "*" || capability == "admin" {
 				summary["gateway_admin"] = true
 			}
 		}
@@ -1250,20 +1295,20 @@ func (s *Server) handleClientAdd(w http.ResponseWriter, r *http.Request) {
 	sess := getSession(r)
 	if client.ID == "" || client.DisplayName == "" {
 		sess.Flash("Client ID and Display Name are required.", "danger")
-		s.render(w, r, "client_form.html", pongo2.Context{
+		s.renderStatus(w, r, "client_form.html", pongo2.Context{
 			"is_edit": false,
 			"client":  client,
 			"section": "clients",
-		})
+		}, http.StatusUnprocessableEntity)
 		return
 	}
 	if policy.IsReservedInternalClientID(client.ID) {
 		sess.Flash("That Client ID is reserved for internal gateway principals.", "danger")
-		s.render(w, r, "client_form.html", pongo2.Context{
+		s.renderStatus(w, r, "client_form.html", pongo2.Context{
 			"is_edit": false,
 			"client":  client,
 			"section": "clients",
-		})
+		}, http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -1315,7 +1360,11 @@ func (s *Server) handleClientSubroutes(w http.ResponseWriter, r *http.Request) {
 		client.Enabled = r.FormValue("enabled") == "on"
 		if client.DisplayName == "" {
 			sess.Flash("Display Name is required.", "danger")
-			http.Redirect(w, r, fmt.Sprintf("/clients/%s/edit", clientID), http.StatusFound)
+			s.renderStatus(w, r, "client_form.html", pongo2.Context{
+				"client":  client,
+				"is_edit": true,
+				"section": "clients",
+			}, http.StatusUnprocessableEntity)
 			return
 		}
 		if client.Protocol == "" {
@@ -1356,6 +1405,18 @@ func (s *Server) handleClientSubroutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderClientGrants(w http.ResponseWriter, r *http.Request, client registry.Client, editingGrant *registry.Grant, accessResult interface{}) bool {
+	return s.renderClientGrantsStatus(w, r, client, editingGrant, editingGrant, accessResult, http.StatusOK)
+}
+
+func (s *Server) renderClientGrantsStatus(
+	w http.ResponseWriter,
+	r *http.Request,
+	client registry.Client,
+	editingGrant *registry.Grant,
+	formGrant *registry.Grant,
+	accessResult interface{},
+	status int,
+) bool {
 	grants, err := s.cfg.Store.ListGrants(r.Context(), client.ID)
 	if s.failStoreRead(w, r, "list_client_grants", err) {
 		return false
@@ -1368,22 +1429,18 @@ func (s *Server) renderClientGrants(w http.ResponseWriter, r *http.Request, clie
 	if s.failStoreRead(w, r, "list_projects_for_grants", err) {
 		return false
 	}
-	legacyCapability := ""
-	if editingGrant != nil && strings.Contains(editingGrant.Capability, ",") {
-		legacyCapability = editingGrant.Capability
-	}
-	s.render(w, r, "client_grants.html", pongo2.Context{
+	s.renderStatus(w, r, "client_grants.html", pongo2.Context{
 		"client":             client,
 		"grants":             grants,
 		"targets":            targets,
 		"projects":           projects,
 		"tool_names":         core.CatalogTools(),
 		"grant_capabilities": policy.GrantCapabilities(),
-		"legacy_capability":  legacyCapability,
 		"editing_grant":      editingGrant,
+		"grant_form":         formGrant,
 		"access_result":      accessResult,
 		"section":            "clients",
-	})
+	}, status)
 	return true
 }
 
@@ -1394,36 +1451,8 @@ func validateGrantForm(ctx context.Context, store *registry.Store, r *http.Reque
 	targetID := strings.TrimSpace(r.FormValue("target_id"))
 	projectID := strings.TrimSpace(r.FormValue("project_id"))
 	capability := strings.TrimSpace(r.FormValue("capability"))
-	if targetID == "" {
-		return registry.Grant{}, fmt.Errorf("Target is required")
-	}
 	if projectID == "" {
 		projectID = "*"
-	}
-	if capability == "" {
-		return registry.Grant{}, fmt.Errorf("Capability is required")
-	}
-	legacyPreserved := existing != nil && strings.Contains(existing.Capability, ",") && capability == existing.Capability
-	if !legacyPreserved && !policy.IsGrantCapability(capability) {
-		return registry.Grant{}, fmt.Errorf("unsupported capability %q", capability)
-	}
-	if targetID != "*" {
-		if _, err := store.GetTarget(ctx, targetID, true); err != nil {
-			return registry.Grant{}, fmt.Errorf("invalid Target scope: %w", err)
-		}
-	}
-	if projectID != "*" {
-		if targetID == "*" {
-			return registry.Grant{}, fmt.Errorf("a specific Project requires a specific Target")
-		}
-		if _, err := store.GetProject(ctx, targetID, projectID, true); err != nil {
-			return registry.Grant{}, fmt.Errorf("invalid Project scope: %w", err)
-		}
-	}
-	capabilities := grantCapabilitySet(capability)
-	highImpactCapability := capabilities["*"] || capabilities[policy.TargetPrivilegeCapability]
-	if highImpactCapability && (targetID == "*" || projectID == "*") && r.FormValue("confirm_global") != "on" {
-		return registry.Grant{}, fmt.Errorf("high-impact wildcard scope requires explicit confirmation")
 	}
 	grant := registry.Grant{
 		ClientID:   clientID,
@@ -1434,6 +1463,45 @@ func validateGrantForm(ctx context.Context, store *registry.Store, r *http.Reque
 	}
 	if existing != nil {
 		grant.ID = existing.ID
+	}
+	if targetID == "" {
+		return grant, fmt.Errorf("Target is required")
+	}
+	if capability == "" {
+		return grant, fmt.Errorf("Capability is required")
+	}
+	if !policy.IsGrantCapability(capability) {
+		return grant, fmt.Errorf("unsupported capability %q", capability)
+	}
+	if targetID != "*" {
+		if _, err := store.GetTarget(ctx, targetID, true); err != nil {
+			return grant, fmt.Errorf("invalid Target scope: %w", err)
+		}
+	}
+	if projectID != "*" {
+		if targetID == "*" {
+			return grant, fmt.Errorf("a specific Project requires a specific Target")
+		}
+		if _, err := store.GetProject(ctx, targetID, projectID, true); err != nil {
+			return grant, fmt.Errorf("invalid Project scope: %w", err)
+		}
+	}
+	highImpactCapability := capability == "*" || capability == policy.TargetPrivilegeCapability
+	if highImpactCapability && (targetID == "*" || projectID == "*") && r.FormValue("confirm_global") != "on" {
+		return grant, fmt.Errorf("high-impact wildcard scope requires explicit confirmation")
+	}
+
+	grants, err := store.ListGrants(ctx, clientID)
+	if err != nil {
+		return grant, fmt.Errorf("list existing grants: %w", err)
+	}
+	for _, candidate := range grants {
+		if existing != nil && candidate.ID == existing.ID {
+			continue
+		}
+		if candidate.TargetID == targetID && candidate.ProjectID == projectID && strings.TrimSpace(candidate.Capability) == capability {
+			return grant, fmt.Errorf("duplicate grant already exists for this client, Target, Project, and capability")
+		}
 	}
 	return grant, nil
 }
@@ -1458,7 +1526,7 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 		grant, err := validateGrantForm(r.Context(), s.cfg.Store, r, client.ID, nil)
 		if err != nil {
 			sess.Flash(fmt.Sprintf("Invalid grant: %v", err), "danger")
-			http.Redirect(w, r, fmt.Sprintf("/clients/%s/grants#grant-form", client.ID), http.StatusFound)
+			s.renderClientGrantsStatus(w, r, client, nil, &grant, nil, http.StatusUnprocessableEntity)
 			return
 		}
 		s.RecordAudit(r, "add_grant_attempt", grant.TargetID, grant.ProjectID, true, "", fmt.Sprintf("Add grant '%s' for client '%s'", grant.Capability, client.ID), true)
@@ -1483,6 +1551,10 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 		targetID := strings.TrimSpace(r.FormValue("target_id"))
 		projectID := strings.TrimSpace(r.FormValue("project_id"))
 		toolName := strings.TrimSpace(r.FormValue("tool_name"))
+		privilegeRequest := strings.ToLower(strings.TrimSpace(r.FormValue("privilege")))
+		if privilegeRequest == "" {
+			privilegeRequest = "standard"
+		}
 		evalTargetID := targetID
 		evalProjectID := projectID
 		if evalTargetID == "*" {
@@ -1491,20 +1563,45 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 		if evalProjectID == "*" {
 			evalProjectID = ""
 		}
-		res, err := policy.AuthorizeClient(r.Context(), s.cfg.Store, client.ID, evalTargetID, evalProjectID, toolName, false)
-		if s.failStoreRead(w, r, "check_effective_access", err) {
-			return
+
+		allowed := false
+		code := ""
+		message := ""
+		var privilege map[string]any
+		if toolName == "run_command" {
+			check, err := s.cfg.Core.CheckRunCommandAccess(r.Context(), client.ID, evalTargetID, evalProjectID, privilegeRequest)
+			if s.failStoreRead(w, r, "check_effective_run_command_access", err) {
+				return
+			}
+			allowed = check.Allowed
+			code = check.Code
+			message = check.Reason
+			privilege = check.Privilege
+			if allowed && message == "" {
+				message = "Allowed by current policy and Target privilege gate."
+			}
+		} else {
+			res, err := policy.AuthorizeClient(r.Context(), s.cfg.Store, client.ID, evalTargetID, evalProjectID, toolName, false)
+			if s.failStoreRead(w, r, "check_effective_access", err) {
+				return
+			}
+			allowed = res.Allowed
+			code = res.Code
+			message = res.Reason
+			if allowed && message == "" {
+				message = "Allowed by current policy."
+			}
 		}
-		message := res.Reason
-		if res.Allowed && message == "" {
-			message = "Allowed by current policy."
-		}
+
 		accessResult := map[string]interface{}{
-			"allowed":    res.Allowed,
-			"tool_name":  toolName,
-			"target_id":  targetID,
-			"project_id": projectID,
-			"message":    message,
+			"allowed":           allowed,
+			"code":              code,
+			"tool_name":         toolName,
+			"target_id":         targetID,
+			"project_id":        projectID,
+			"privilege_request": privilegeRequest,
+			"privilege":         privilege,
+			"message":           message,
 		}
 		s.renderClientGrants(w, r, client, nil, accessResult)
 		return
@@ -1535,7 +1632,7 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 			updated, err := validateGrantForm(r.Context(), s.cfg.Store, r, client.ID, &grant)
 			if err != nil {
 				sess.Flash(fmt.Sprintf("Invalid grant: %v", err), "danger")
-				http.Redirect(w, r, fmt.Sprintf("/clients/%s/grants/%d/edit#grant-form", client.ID, grantID), http.StatusFound)
+				s.renderClientGrantsStatus(w, r, client, &grant, &updated, nil, http.StatusUnprocessableEntity)
 				return
 			}
 			s.RecordAudit(r, "update_grant_attempt", updated.TargetID, updated.ProjectID, true, "", fmt.Sprintf("Update grant %d for client '%s'", grantID, client.ID), true)
@@ -1607,7 +1704,7 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	targetFilter := r.URL.Query().Get("target_id")
 	projectFilter := r.URL.Query().Get("project_id")
 	resultFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("result")))
-	if resultFilter != "" && resultFilter != "pass" && resultFilter != "deny" {
+	if resultFilter != "" && resultFilter != "pass" && resultFilter != "deny" && resultFilter != "attempt" {
 		http.Error(w, "Invalid result filter.", http.StatusBadRequest)
 		return
 	}
@@ -1723,6 +1820,88 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 // Settings & Kill Switch
 // ---------------------------------------------------------------------------
 
+func (s *Server) loadSettingsView(ctx context.Context) (map[string]interface{}, error) {
+	gatewayEnabled, err := s.cfg.Store.GetRequiredBoolSetting(ctx, "gateway_enabled")
+	if err != nil {
+		return nil, err
+	}
+	writesEnabled, err := s.cfg.Store.GetSetting(ctx, "writes_enabled", "false")
+	if err != nil {
+		return nil, err
+	}
+	shellEnabled, err := s.cfg.Store.GetSetting(ctx, "shell_enabled", "false")
+	if err != nil {
+		return nil, err
+	}
+	defaultTimeout, err := getIntSetting(ctx, s.cfg.Store, "default_timeout", 30)
+	if err != nil {
+		return nil, err
+	}
+	maxOutput, err := getIntSetting(ctx, s.cfg.Store, "max_output_bytes", 262144)
+	if err != nil {
+		return nil, err
+	}
+	maxRead, err := getIntSetting(ctx, s.cfg.Store, "max_file_read_bytes", 1048576)
+	if err != nil {
+		return nil, err
+	}
+	maxWrite, err := getIntSetting(ctx, s.cfg.Store, "max_write_bytes", 262144)
+	if err != nil {
+		return nil, err
+	}
+	retention, err := getIntSetting(ctx, s.cfg.Store, "activity_retention", 5000)
+	if err != nil {
+		return nil, err
+	}
+	_, adminTimezone, err := loadAdminLocation(ctx, s.cfg.Store)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"gateway_enabled":     gatewayEnabled,
+		"writes_enabled":      writesEnabled == "true",
+		"shell_enabled":       shellEnabled == "true",
+		"default_timeout":     defaultTimeout,
+		"max_output_bytes":    maxOutput,
+		"max_file_read_bytes": maxRead,
+		"max_write_bytes":     maxWrite,
+		"activity_retention":  retention,
+		"admin_timezone":      adminTimezone,
+	}, nil
+}
+
+func submittedSettingsView(r *http.Request, persisted map[string]interface{}) map[string]interface{} {
+	settings := make(map[string]interface{}, len(persisted))
+	for key, value := range persisted {
+		settings[key] = value
+	}
+	for _, key := range []string{
+		"default_timeout",
+		"max_output_bytes",
+		"max_file_read_bytes",
+		"max_write_bytes",
+		"activity_retention",
+		"admin_timezone",
+	} {
+		settings[key] = strings.TrimSpace(r.FormValue(key))
+	}
+	return settings
+}
+
+func (s *Server) renderSettingsValidationError(w http.ResponseWriter, r *http.Request, message string) {
+	settings, err := s.loadSettingsView(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
+		return
+	}
+	getSession(r).Flash(message, "danger")
+	s.renderStatus(w, r, "settings.html", pongo2.Context{
+		"settings": submittedSettingsView(r, settings),
+		"section":  "settings",
+	}, http.StatusUnprocessableEntity)
+}
+
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if r.Method == http.MethodPost {
@@ -1732,38 +1911,32 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		timeout, err := parseBoundedFormInt(r, "default_timeout", 5, 300)
 		if err != nil {
-			getSession(r).Flash(err.Error(), "danger")
-			http.Redirect(w, r, "/settings", http.StatusFound)
+			s.renderSettingsValidationError(w, r, err.Error())
 			return
 		}
 		maxOutput, err := parseBoundedFormInt(r, "max_output_bytes", 1024, 10485760)
 		if err != nil {
-			getSession(r).Flash(err.Error(), "danger")
-			http.Redirect(w, r, "/settings", http.StatusFound)
+			s.renderSettingsValidationError(w, r, err.Error())
 			return
 		}
 		maxRead, err := parseBoundedFormInt(r, "max_file_read_bytes", 1024, 10485760)
 		if err != nil {
-			getSession(r).Flash(err.Error(), "danger")
-			http.Redirect(w, r, "/settings", http.StatusFound)
+			s.renderSettingsValidationError(w, r, err.Error())
 			return
 		}
 		maxWrite, err := parseBoundedFormInt(r, "max_write_bytes", 1024, 10485760)
 		if err != nil {
-			getSession(r).Flash(err.Error(), "danger")
-			http.Redirect(w, r, "/settings", http.StatusFound)
+			s.renderSettingsValidationError(w, r, err.Error())
 			return
 		}
 		retention, err := parseBoundedFormInt(r, "activity_retention", 100, 50000)
 		if err != nil {
-			getSession(r).Flash(err.Error(), "danger")
-			http.Redirect(w, r, "/settings", http.StatusFound)
+			s.renderSettingsValidationError(w, r, err.Error())
 			return
 		}
 		adminTimezone, err := validateAdminTimezone(r.FormValue("admin_timezone"))
 		if err != nil {
-			getSession(r).Flash(err.Error(), "danger")
-			http.Redirect(w, r, "/settings", http.StatusFound)
+			s.renderSettingsValidationError(w, r, err.Error())
 			return
 		}
 
@@ -1785,64 +1958,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gwEnabled, err := s.cfg.Store.GetSetting(ctx, "gateway_enabled", "true")
+	settings, err := s.loadSettingsView(ctx)
 	if err != nil {
 		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
 		return
 	}
-	writesEnabled, err := s.cfg.Store.GetSetting(ctx, "writes_enabled", "false")
-	if err != nil {
-		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
-		return
-	}
-	shellEnabled, err := s.cfg.Store.GetSetting(ctx, "shell_enabled", "false")
-	if err != nil {
-		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
-		return
-	}
-	defaultTimeout, err := getIntSetting(ctx, s.cfg.Store, "default_timeout", 30)
-	if err != nil {
-		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
-		return
-	}
-	maxOutput, err := getIntSetting(ctx, s.cfg.Store, "max_output_bytes", 262144)
-	if err != nil {
-		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
-		return
-	}
-	maxRead, err := getIntSetting(ctx, s.cfg.Store, "max_file_read_bytes", 1048576)
-	if err != nil {
-		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
-		return
-	}
-	maxWrite, err := getIntSetting(ctx, s.cfg.Store, "max_write_bytes", 262144)
-	if err != nil {
-		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
-		return
-	}
-	retention, err := getIntSetting(ctx, s.cfg.Store, "activity_retention", 5000)
-	if err != nil {
-		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
-		return
-	}
-	_, adminTimezone, err := loadAdminLocation(ctx, s.cfg.Store)
-	if err != nil {
-		http.Error(w, "Failed to load settings.", http.StatusInternalServerError)
-		return
-	}
-
-	settings := map[string]interface{}{
-		"gateway_enabled":     gwEnabled == "true",
-		"writes_enabled":      writesEnabled == "true",
-		"shell_enabled":       shellEnabled == "true",
-		"default_timeout":     defaultTimeout,
-		"max_output_bytes":    maxOutput,
-		"max_file_read_bytes": maxRead,
-		"max_write_bytes":     maxWrite,
-		"activity_retention":  retention,
-		"admin_timezone":      adminTimezone,
-	}
-
 	s.render(w, r, "settings.html", pongo2.Context{
 		"settings": settings,
 		"section":  "settings",
@@ -1854,15 +1974,12 @@ func (s *Server) handleSettingsKillSwitch(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	currStr, err := s.cfg.Store.GetSetting(r.Context(), "gateway_enabled", "true")
+	current, err := s.cfg.Store.GetRequiredBoolSetting(r.Context(), "gateway_enabled")
 	if err != nil {
 		http.Error(w, "Failed to load gateway state.", http.StatusInternalServerError)
 		return
 	}
-	newVal := "true"
-	if currStr == "true" {
-		newVal = "false"
-	}
+	newVal := strconv.FormatBool(!current)
 	s.RecordAudit(r, "kill_switch_toggle_attempt", "", "", true, "", fmt.Sprintf("gateway_enabled -> %s", newVal), true)
 	activity := s.auditEntry(r, "kill_switch_toggle", "", "", true, "", fmt.Sprintf("gateway_enabled set to %s", newVal))
 	if s.failStoreMutation(w, r, "kill_switch_toggle", "", "", s.cfg.Store.SetSettingAudited(r.Context(), "gateway_enabled", newVal, activity)) {

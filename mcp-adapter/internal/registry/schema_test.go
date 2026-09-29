@@ -135,7 +135,7 @@ func rawV4(t *testing.T, invalidProjectScope bool) string {
 	return path
 }
 
-func TestMigratePathCreatesSchemaV5WithConservativeSettings(t *testing.T) {
+func TestMigratePathCreatesSchemaV6WithConservativeSettings(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "new.db")
 	if err := MigratePath(ctx, path); err != nil {
@@ -183,7 +183,7 @@ func TestMigratePathCreatesSchemaV5WithConservativeSettings(t *testing.T) {
 	}
 }
 
-func TestMigrateV4ToV5PreservesRowsAndConvertsWildcardScopes(t *testing.T) {
+func TestMigrateV4ToCurrentPreservesRowsAndConvertsWildcardScopes(t *testing.T) {
 	ctx := context.Background()
 	path := rawV4(t, false)
 	if err := MigratePath(ctx, path); err != nil {
@@ -200,8 +200,8 @@ func TestMigrateV4ToV5PreservesRowsAndConvertsWildcardScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 5 {
-		t.Fatalf("version=%d want=5", version)
+	if version != SchemaVersion {
+		t.Fatalf("version=%d want=%d", version, SchemaVersion)
 	}
 
 	type grant struct {
@@ -266,7 +266,7 @@ func TestMigrateV4ToV5PreservesRowsAndConvertsWildcardScopes(t *testing.T) {
 		t.Fatalf("foreign_key_check violations=%d want=0", violations)
 	}
 
-	res, err := db.Exec(`INSERT INTO grants(client_id,target_id,project_id,capability) VALUES ('client-a',NULL,NULL,'read')`)
+	res, err := db.Exec(`INSERT INTO grants(client_id,target_id,project_id,capability) VALUES ('client-a',NULL,NULL,'admin')`)
 	if err != nil {
 		t.Fatalf("insert global v5 grant: %v", err)
 	}
@@ -280,6 +280,141 @@ func TestMigrateV4ToV5PreservesRowsAndConvertsWildcardScopes(t *testing.T) {
 
 	if _, err := db.Exec(`INSERT INTO grants(client_id,target_id,project_id,capability) VALUES ('client-a','termux-main','missing','read')`); err == nil {
 		t.Fatal("missing project scope unexpectedly accepted")
+	}
+}
+
+func TestMigrateV5ToV6NormalizesBundlesAndDuplicates(t *testing.T) {
+	ctx := context.Background()
+	path := rawV4(t, false)
+
+	raw, err := openSQLite(ctx, path, "rw", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := raw.Conn(ctx)
+	if err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	if err := migrateV4ToV5(ctx, conn); err != nil {
+		conn.Close()
+		raw.Close()
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+
+	if _, err := raw.ExecContext(ctx,
+		"INSERT INTO grants(client_id,target_id,project_id,capability,enabled) VALUES ('client-a','termux-main','MCP_Local','target_shell,target_admin',1)"); err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx,
+		"INSERT INTO grants(client_id,target_id,project_id,capability,enabled) VALUES ('client-a','termux-main','MCP_Local','write',1)"); err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigratePath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 6 {
+		t.Fatalf("schema version=%d want=6", version)
+	}
+
+	rows, err := db.Query(
+		"SELECT capability,enabled FROM grants WHERE client_id='client-a' AND target_id='termux-main' AND project_id='MCP_Local' ORDER BY capability")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	got := map[string]int{}
+	for rows.Next() {
+		var capability string
+		var enabled int
+		if err := rows.Scan(&capability, &enabled); err != nil {
+			t.Fatal(err)
+		}
+		got[capability] = enabled
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got["target_shell"] != 1 || got["target_admin"] != 1 || got["write"] != 1 {
+		t.Fatalf("normalized grants=%v; expected split bundle and enabled duplicate merge", got)
+	}
+	if len(got) != 3 {
+		t.Fatalf("normalized scoped grant count=%d want=3: %v", len(got), got)
+	}
+
+	if _, err := db.Exec(
+		"INSERT INTO grants(client_id,target_id,project_id,capability,enabled) VALUES ('client-a','termux-main','MCP_Local','write',0)"); err == nil {
+		t.Fatal("logical duplicate grant unexpectedly accepted by V6")
+	}
+	if _, err := db.Exec(
+		"INSERT INTO grants(client_id,target_id,project_id,capability,enabled) VALUES ('client-a','termux-main','MCP_Local','read,write',1)"); err == nil {
+		t.Fatal("capability bundle unexpectedly accepted by V6")
+	}
+}
+
+func TestMigrateV4ToV6RollsBackEntireChainWhenV6NormalizationFails(t *testing.T) {
+	ctx := context.Background()
+	path := rawV4(t, false)
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(
+		"INSERT INTO grants(client_id,target_id,project_id,capability,enabled) VALUES ('client-a','termux-main','MCP_Local',',,',1)"); err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigratePath(ctx, path); err == nil {
+		t.Fatal("migration unexpectedly accepted an empty normalized capability bundle")
+	}
+
+	raw, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var version int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 4 {
+		t.Fatalf("failed 4 -> 6 migration left schema=%d want=4", version)
+	}
+	var grantsV4, grantsV5 int
+	if err := raw.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='grants_v4'").Scan(&grantsV4); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='grants_v5'").Scan(&grantsV5); err != nil {
+		t.Fatal(err)
+	}
+	if grantsV4 != 0 || grantsV5 != 0 {
+		t.Fatalf("failed migration leaked intermediate tables: grants_v4=%d grants_v5=%d", grantsV4, grantsV5)
 	}
 }
 

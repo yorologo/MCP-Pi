@@ -236,6 +236,64 @@ func TestCatalogFilteringUsesGrantSemanticsOnly(t *testing.T) {
 	}
 }
 
+func TestAuthorizationEnforcesExecutionScope(t *testing.T) {
+	tests := []struct {
+		name         string
+		capability   string
+		grantTarget  string
+		grantProject string
+		targetID     string
+		projectID    string
+		tool         string
+		allowed      bool
+	}{
+		{name: "global tool rejects project-scoped capability", capability: "reboot", grantTarget: "t", grantProject: "p", tool: "gateway_reboot"},
+		{name: "global tool rejects project-scoped admin", capability: "admin", grantTarget: "t", grantProject: "p", tool: "gateway_reboot"},
+		{name: "global tool rejects project-scoped wildcard", capability: "*", grantTarget: "t", grantProject: "p", tool: "gateway_reboot"},
+		{name: "global read rejects project-scoped read", capability: "read", grantTarget: "t", grantProject: "p", tool: "list_targets"},
+		{name: "target tool rejects project-scoped read", capability: "read", grantTarget: "t", grantProject: "p", targetID: "t", tool: "target_status"},
+		{name: "target tool accepts target-scoped read", capability: "read", grantTarget: "t", grantProject: "*", targetID: "t", tool: "target_status", allowed: true},
+		{name: "project tool accepts project-scoped read", capability: "read", grantTarget: "t", grantProject: "p", targetID: "t", projectID: "p", tool: "read_file", allowed: true},
+		{name: "global tool accepts global capability", capability: "reboot", grantTarget: "*", grantProject: "*", tool: "gateway_reboot", allowed: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, db := policyStore(t)
+			addGrant(t, db, tc.capability, tc.grantTarget, tc.grantProject)
+
+			decision, err := AuthorizeClient(
+				context.Background(),
+				store,
+				"client",
+				tc.targetID,
+				tc.projectID,
+				tc.tool,
+				false,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision.Allowed != tc.allowed {
+				t.Fatalf("allowed=%v want=%v decision=%+v", decision.Allowed, tc.allowed, decision)
+			}
+		})
+	}
+}
+
+func TestAuthorizationMissingGatewaySettingFailsClosed(t *testing.T) {
+	store, db := policyStore(t)
+	addGrant(t, db, "read", "*", "*")
+	if _, err := db.Exec("DELETE FROM settings WHERE key='gateway_enabled'"); err != nil {
+		t.Fatal(err)
+	}
+
+	decision, err := AuthorizeClient(context.Background(), store, "client", "", "", "list_targets", false)
+	if err == nil {
+		t.Fatalf("missing gateway_enabled must fail closed, got decision=%+v", decision)
+	}
+}
+
 func TestLocalTrustedCallerPreservesBypass(t *testing.T) {
 	store, _ := policyStore(t)
 	decision, err := AuthorizeClient(context.Background(), store, "local", "", "", "not_a_tool", false)

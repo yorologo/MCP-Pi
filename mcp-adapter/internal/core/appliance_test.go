@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,36 @@ func seededApplianceCore(t *testing.T) (*Core, context.Context, string, string) 
 
 	t.Cleanup(func() { _ = db.Close() })
 	return core, ctx, dbPath, backupDir
+}
+
+func TestServiceRoleInventoryIncludesOptionalIngressAndRestoreQuiescence(t *testing.T) {
+	contains := func(items []string, want string) bool {
+		for _, item := range items {
+			if item == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	observed := ApplianceObservedServiceUnits()
+	for _, unit := range []string{gatewayGeminiServiceUnit, gatewayCloudflaredServiceUnit, gatewayTunnelServiceUnit} {
+		if !contains(observed, unit) {
+			t.Fatalf("observed service inventory missing %s: %v", unit, observed)
+		}
+	}
+
+	quiescence := RegistryQuiescenceServiceUnits()
+	for _, unit := range []string{gatewayAdminServiceUnit, gatewayMCPServiceUnit, gatewayGeminiServiceUnit, gatewayMaintenanceServiceUnit, gatewayMaintenanceTimerUnit, gatewayPostbootServiceUnit} {
+		if !contains(quiescence, unit) {
+			t.Fatalf("restore quiescence inventory missing %s: %v", unit, quiescence)
+		}
+	}
+	for _, edgeOnly := range []string{gatewayTunnelServiceUnit, gatewayCloudflaredServiceUnit} {
+		if contains(quiescence, edgeOnly) {
+			t.Fatalf("edge-only service %s must not be classified as a Registry user", edgeOnly)
+		}
+	}
 }
 
 func TestGatewayStatus(t *testing.T) {
@@ -112,6 +143,86 @@ func TestGatewayBackup(t *testing.T) {
 	}
 }
 
+func TestInspectCloudflaredDependencyReportsSafeProvenance(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "cloudflared")
+	token := filepath.Join(dir, "cloudflared.token")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'cloudflared version test-1'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(token, []byte("secret-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := inspectCloudflaredDependency(context.Background(), binary, token)
+	if !got.Passed {
+		t.Fatalf("dependency evidence failed: %+v", got)
+	}
+	if got.Version != "cloudflared version test-1" || len(got.SHA256) != 64 || got.TokenMode != "0600" {
+		t.Fatalf("unexpected dependency evidence: %+v", got)
+	}
+	if strings.Contains(got.Message, "secret-token") || strings.Contains(got.Version, "secret-token") {
+		t.Fatal("dependency evidence leaked token content")
+	}
+}
+
+func TestInspectCloudflaredDependencyRejectsBroadTokenPermissions(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "cloudflared")
+	token := filepath.Join(dir, "cloudflared.token")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'cloudflared version test-1'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(token, []byte("secret-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(token, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := inspectCloudflaredDependency(context.Background(), binary, token)
+	if got.Passed || !strings.Contains(got.Message, "permissions are too broad") {
+		t.Fatalf("broad token permissions were not rejected: %+v", got)
+	}
+}
+
+func TestPrivilegeHygieneFlagsPersistentHighImpactState(t *testing.T) {
+	core, ctx, _, _ := seededApplianceCore(t)
+	if _, err := core.store.DB().ExecContext(ctx,
+		"INSERT INTO targets(id,display_name,platform,host,port,user,privilege_policy,enabled) VALUES ('breakglass','Break Glass','linux','127.0.0.1',22,'root','always_allow',1)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.store.DB().ExecContext(ctx,
+		"INSERT INTO ai_clients(id,display_name,provider,protocol,enabled) VALUES ('ops-client','Ops Client','test','mcp',1)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.store.AddGrant(ctx, registry.Grant{
+		ClientID: "ops-client", TargetID: "*", ProjectID: "*",
+		Capability: "target_admin", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	checks := core.privilegeHygieneChecks(ctx)
+	if len(checks) != 2 {
+		t.Fatalf("hygiene checks=%d want=2: %+v", len(checks), checks)
+	}
+	if checks[0].Passed || !strings.Contains(checks[0].Message, "breakglass") {
+		t.Fatalf("always_allow Target was not flagged: %+v", checks[0])
+	}
+	if checks[1].Passed || !strings.Contains(checks[1].Message, "ops-client:*/*") {
+		t.Fatalf("wildcard target_admin grant was not flagged: %+v", checks[1])
+	}
+}
+
+func TestPrivilegeHygienePassesOnConservativeDefaults(t *testing.T) {
+	core, ctx, _, _ := seededApplianceCore(t)
+	checks := core.privilegeHygieneChecks(ctx)
+	if len(checks) != 2 || !checks[0].Passed || !checks[1].Passed {
+		t.Fatalf("conservative defaults failed privilege hygiene: %+v", checks)
+	}
+}
+
 func TestGatewayDoctor(t *testing.T) {
 	core, ctx, _, _ := seededApplianceCore(t)
 
@@ -131,6 +242,25 @@ func TestGatewayDoctor(t *testing.T) {
 	controlPath, ok := resMap["control_path"].(map[string]any)
 	if !ok || controlPath["gateway_core"] == nil {
 		t.Fatalf("expected control_path with gateway_core, got %+v", controlPath)
+	}
+}
+
+func TestGatewayDoctorRequiredFailureIsToolErrorWithDiagnostics(t *testing.T) {
+	core, ctx, _, _ := seededApplianceCore(t)
+	if _, err := core.store.DB().ExecContext(ctx, `
+INSERT INTO targets(id, display_name, platform, host, port, user, privilege_policy, enabled)
+VALUES ('offline', 'Offline', 'linux', '127.0.0.1', 22, 'user', 'never', 1)
+`); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := core.GatewayDoctor(ctx, "req-doc-error", DoctorOptions{CheckTargets: true})
+	if resp.OK {
+		t.Fatalf("required Doctor failure must be a tool error: %+v", resp)
+	}
+	resMap := resp.Result.(map[string]any)
+	if resMap["status"] != "ERROR" {
+		t.Fatalf("Doctor diagnostics not preserved: %+v", resMap)
 	}
 }
 

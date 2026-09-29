@@ -262,11 +262,20 @@
       {% endif %}
     </div>
 
-    <form method="POST" action="{{ url_for('admin.target_test', target.id) }}" class="border-t border-slate-800 pt-5">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" name="return_to" value="edit">
-      <button type="submit" class="btn-secondary">Check Connection</button>
-    </form>
+    <div class="border-t border-slate-800 pt-5 space-y-3">
+      <div class="flex flex-wrap gap-3">
+        <form method="POST" action="{{ url_for('admin.target_test', target.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="return_to" value="edit">
+          <button type="submit" class="btn-secondary">Check Connection</button>
+        </form>
+        <form method="POST" action="{{ url_for('admin.target_rediscover', target.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn-secondary">Find moved Target</button>
+        </form>
+      </div>
+      <p class="field-help">Rediscovery checks only network neighbors already known by the appliance on this SSH port and requires an exact match with the pinned host fingerprint. It never changes the saved Host automatically.</p>
+    </div>
   </section>
   {% endif %}
 </div>

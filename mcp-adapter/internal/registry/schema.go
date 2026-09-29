@@ -12,9 +12,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
-const schemaV5 = `
+const schemaV6 = `
 CREATE TABLE targets (
     id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
@@ -74,11 +74,14 @@ CREATE TABLE grants (
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (target_id, project_id) REFERENCES projects(target_id, id),
-    CHECK(project_id IS NULL OR target_id IS NOT NULL)
+    CHECK(project_id IS NULL OR target_id IS NOT NULL),
+    CHECK(length(trim(capability)) > 0 AND instr(capability, ',') = 0)
 );
 
 CREATE INDEX idx_grants_client_id ON grants(client_id);
 CREATE INDEX idx_grants_target_project ON grants(target_id, project_id);
+CREATE UNIQUE INDEX idx_grants_unique_scope_capability
+ON grants(client_id, COALESCE(target_id, '*'), COALESCE(project_id, '*'), capability);
 
 CREATE TABLE privilege_approvals (
     target_id TEXT PRIMARY KEY REFERENCES targets(id),
@@ -117,7 +120,7 @@ CREATE TABLE admin_users (
     last_login TEXT
 );
 
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 `
 
 const createGrantsV5 = `
@@ -134,6 +137,25 @@ CREATE TABLE grants (
 );
 CREATE INDEX idx_grants_client_id ON grants(client_id);
 CREATE INDEX idx_grants_target_project ON grants(target_id, project_id);
+`
+
+const createGrantsV6 = `
+CREATE TABLE grants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id TEXT NOT NULL REFERENCES ai_clients(id),
+    target_id TEXT REFERENCES targets(id),
+    project_id TEXT,
+    capability TEXT NOT NULL DEFAULT 'read',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (target_id, project_id) REFERENCES projects(target_id, id),
+    CHECK(project_id IS NULL OR target_id IS NOT NULL),
+    CHECK(length(trim(capability)) > 0 AND instr(capability, ',') = 0)
+);
+CREATE INDEX idx_grants_client_id ON grants(client_id);
+CREATE INDEX idx_grants_target_project ON grants(target_id, project_id);
+CREATE UNIQUE INDEX idx_grants_unique_scope_capability
+ON grants(client_id, COALESCE(target_id, '*'), COALESCE(project_id, '*'), capability);
 `
 
 var defaultSettings = [][2]string{
@@ -252,11 +274,11 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	case 0:
 		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
-			return fmt.Errorf("begin schema v5 creation: %w", err)
+			return fmt.Errorf("begin schema v6 creation: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, schemaV5); err != nil {
+		if _, err := tx.ExecContext(ctx, schemaV6); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("create schema v5: %w", err)
+			return fmt.Errorf("create schema v6: %w", err)
 		}
 		if err := ensureDefaults(ctx, tx); err != nil {
 			tx.Rollback()
@@ -267,11 +289,16 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit schema v5 creation: %w", err)
+			return fmt.Errorf("commit schema v6 creation: %w", err)
 		}
 
 	case 4:
-		if err := migrateV4ToV5(ctx, conn); err != nil {
+		if err := migrateV4ToV6(ctx, conn); err != nil {
+			return err
+		}
+
+	case 5:
+		if err := migrateV5ToV6(ctx, conn); err != nil {
 			return err
 		}
 
@@ -291,21 +318,48 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func migrateV4ToV5(ctx context.Context, conn *sql.Conn) error {
+func runMigrationTx(
+	ctx context.Context,
+	conn *sql.Conn,
+	label string,
+	steps func(*sql.Tx) error,
+) error {
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin v4 to v5 migration: %w", err)
+		return fmt.Errorf("begin %s migration: %w", label, err)
 	}
-	rollback := func(cause error) error {
-		_ = tx.Rollback()
-		return cause
-	}
+	defer func() { _ = tx.Rollback() }()
 
+	if err := steps(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit %s migration: %w", label, err)
+	}
+	return nil
+}
+
+func migrateV4ToV5(ctx context.Context, conn *sql.Conn) error {
+	return runMigrationTx(ctx, conn, "v4 to v5", func(tx *sql.Tx) error {
+		return migrateV4ToV5Tx(ctx, tx)
+	})
+}
+
+func migrateV4ToV6(ctx context.Context, conn *sql.Conn) error {
+	return runMigrationTx(ctx, conn, "v4 to v6", func(tx *sql.Tx) error {
+		if err := migrateV4ToV5Tx(ctx, tx); err != nil {
+			return err
+		}
+		return migrateV5ToV6Tx(ctx, tx)
+	})
+}
+
+func migrateV4ToV5Tx(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, "ALTER TABLE grants RENAME TO grants_v4"); err != nil {
-		return rollback(fmt.Errorf("rename v4 grants: %w", err))
+		return fmt.Errorf("rename v4 grants: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, createGrantsV5); err != nil {
-		return rollback(fmt.Errorf("create v5 grants: %w", err))
+		return fmt.Errorf("create v5 grants: %w", err)
 	}
 
 	const copySQL = `
@@ -322,24 +376,185 @@ FROM grants_v4
 ORDER BY id
 `
 	if _, err := tx.ExecContext(ctx, copySQL); err != nil {
-		return rollback(fmt.Errorf("copy v4 grants into v5: %w", err))
+		return fmt.Errorf("copy v4 grants into v5: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, "DROP TABLE grants_v4"); err != nil {
-		return rollback(fmt.Errorf("drop v4 grants: %w", err))
+		return fmt.Errorf("drop v4 grants: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 5"); err != nil {
-		return rollback(fmt.Errorf("set schema version 5: %w", err))
+		return fmt.Errorf("set schema version 5: %w", err)
 	}
 	if err := ensureDefaults(ctx, tx); err != nil {
-		return rollback(err)
+		return err
 	}
 	if err := checkForeignKeys(ctx, tx); err != nil {
-		return rollback(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit v4 to v5 migration: %w", err)
+		return err
 	}
 	return nil
+}
+
+type grantV6MigrationKey struct {
+	ClientID     string
+	TargetValid  bool
+	TargetID     string
+	ProjectValid bool
+	ProjectID    string
+	Capability   string
+}
+
+type grantV6MigrationRow struct {
+	ID         int64
+	ClientID   string
+	TargetID   sql.NullString
+	ProjectID  sql.NullString
+	Capability string
+	Enabled    bool
+	CreatedAt  string
+}
+
+func migrateV5ToV6(ctx context.Context, conn *sql.Conn) error {
+	return runMigrationTx(ctx, conn, "v5 to v6", func(tx *sql.Tx) error {
+		return migrateV5ToV6Tx(ctx, tx)
+	})
+}
+
+func migrateV5ToV6Tx(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE grants RENAME TO grants_v5"); err != nil {
+		return fmt.Errorf("rename v5 grants: %w", err)
+	}
+	for _, indexName := range []string{"idx_grants_client_id", "idx_grants_target_project"} {
+		if _, err := tx.ExecContext(ctx, "DROP INDEX IF EXISTS "+indexName); err != nil {
+			return fmt.Errorf("drop v5 grant index %s: %w", indexName, err)
+		}
+	}
+
+	rows, err := tx.QueryContext(ctx, "SELECT id, client_id, target_id, project_id, capability, enabled, created_at FROM grants_v5 ORDER BY id")
+	if err != nil {
+		return fmt.Errorf("read v5 grants: %w", err)
+	}
+
+	byKey := make(map[grantV6MigrationKey]*grantV6MigrationRow)
+	var normalized []*grantV6MigrationRow
+	for rows.Next() {
+		var (
+			id         int64
+			clientID   string
+			targetID   sql.NullString
+			projectID  sql.NullString
+			capability string
+			enabled    int
+			createdAt  string
+		)
+		if err := rows.Scan(&id, &clientID, &targetID, &projectID, &capability, &enabled, &createdAt); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan v5 grant: %w", err)
+		}
+
+		parts := strings.Split(capability, ",")
+		added := 0
+		for _, part := range parts {
+			capabilityPart := strings.TrimSpace(part)
+			if capabilityPart == "" {
+				continue
+			}
+			key := grantV6MigrationKey{
+				ClientID:     clientID,
+				TargetValid:  targetID.Valid,
+				TargetID:     targetID.String,
+				ProjectValid: projectID.Valid,
+				ProjectID:    projectID.String,
+				Capability:   capabilityPart,
+			}
+			if existing := byKey[key]; existing != nil {
+				existing.Enabled = existing.Enabled || enabled != 0
+				if createdAt < existing.CreatedAt {
+					existing.CreatedAt = createdAt
+				}
+				added++
+				continue
+			}
+
+			migratedID := int64(0)
+			if added == 0 {
+				migratedID = id
+			}
+			row := &grantV6MigrationRow{
+				ID:         migratedID,
+				ClientID:   clientID,
+				TargetID:   targetID,
+				ProjectID:  projectID,
+				Capability: capabilityPart,
+				Enabled:    enabled != 0,
+				CreatedAt:  createdAt,
+			}
+			byKey[key] = row
+			normalized = append(normalized, row)
+			added++
+		}
+		if added == 0 {
+			_ = rows.Close()
+			return fmt.Errorf("grant %d has no usable capability after normalization", id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate v5 grants: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close v5 grant rows: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, createGrantsV6); err != nil {
+		return fmt.Errorf("create v6 grants: %w", err)
+	}
+
+	for _, row := range normalized {
+		if row.ID == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO grants(id,client_id,target_id,project_id,capability,enabled,created_at) VALUES(?,?,?,?,?,?,?)",
+			row.ID, row.ClientID, nullableStringValue(row.TargetID), nullableStringValue(row.ProjectID),
+			row.Capability, boolInt(row.Enabled), row.CreatedAt,
+		); err != nil {
+			return fmt.Errorf("insert normalized v6 grant %d: %w", row.ID, err)
+		}
+	}
+	for _, row := range normalized {
+		if row.ID != 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO grants(client_id,target_id,project_id,capability,enabled,created_at) VALUES(?,?,?,?,?,?)",
+			row.ClientID, nullableStringValue(row.TargetID), nullableStringValue(row.ProjectID),
+			row.Capability, boolInt(row.Enabled), row.CreatedAt,
+		); err != nil {
+			return fmt.Errorf("insert split v6 grant: %w", err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, "DROP TABLE grants_v5"); err != nil {
+		return fmt.Errorf("drop v5 grants: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 6"); err != nil {
+		return fmt.Errorf("set schema version 6: %w", err)
+	}
+	if err := ensureDefaults(ctx, tx); err != nil {
+		return err
+	}
+	if err := checkForeignKeys(ctx, tx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func nullableStringValue(value sql.NullString) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.String
 }
 
 type sqlExecutor interface {

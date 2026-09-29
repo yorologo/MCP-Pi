@@ -40,6 +40,7 @@
         <option value="">Any result</option>
         <option value="pass" {% if filters.result == 'pass' %}selected{% endif %}>PASS</option>
         <option value="deny" {% if filters.result == 'deny' %}selected{% endif %}>DENY</option>
+        <option value="attempt" {% if filters.result == 'attempt' %}selected{% endif %}>ATTEMPT</option>
       </select>
     </div>
     <div>
@@ -100,7 +101,9 @@
           </td>
           <td class="py-3 px-4 text-slate-400">{% if a.target_id %}{{ a.target_id }}{% if a.project_id %} / {{ a.project_id }}{% endif %}{% else %}—{% endif %}</td>
           <td class="py-3 px-4">
-            {% if a.success %}
+            {% if a.result == 'ATTEMPT' %}
+              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-900 text-slate-300 border border-slate-700">ATTEMPT</span>
+            {% elif a.success %}
               {% if 'write' in a.action or 'create' in a.action %}
                 <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-950 text-amber-300 border border-amber-800">WRITE</span>
               {% elif 'patch' in a.action %}

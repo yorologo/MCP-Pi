@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -143,30 +144,37 @@ func TestCLIStatusDoesNotMigrateOutdatedRegistry(t *testing.T) {
 	}
 }
 
-func TestCLIRestorePreservesSourceSchema(t *testing.T) {
+func TestCLIRestorePreservesSupportedLegacySourceSchema(t *testing.T) {
 	ctx := context.Background()
-	source := filepath.Join(t.TempDir(), "backup-v4.db")
-	db, err := sqliteutil.OpenRaw(ctx, source, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 4; CREATE TABLE marker(v TEXT); INSERT INTO marker(v) VALUES ('preserve');"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	for _, version := range []int{4, 5} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), fmt.Sprintf("backup-v%d.db", version))
+			db, err := sqliteutil.OpenRaw(ctx, source, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, fmt.Sprintf(
+				"PRAGMA user_version = %d; CREATE TABLE marker(v TEXT); INSERT INTO marker(v) VALUES ('preserve');",
+				version,
+			)); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
 
-	target := filepath.Join(t.TempDir(), "restored.db")
-	if rc := cmdRestore([]string{"-db", target, source}); rc != 0 {
-		t.Fatalf("restore returned %d want 0", rc)
-	}
-	info, err := sqliteutil.Inspect(ctx, target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.SchemaVersion != 4 {
-		t.Fatalf("restore migrated schema to %d want 4", info.SchemaVersion)
+			target := filepath.Join(t.TempDir(), "restored.db")
+			if rc := cmdRestore([]string{"-db", target, source}); rc != 0 {
+				t.Fatalf("restore returned %d want 0", rc)
+			}
+			info, err := sqliteutil.Inspect(ctx, target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.SchemaVersion != version {
+				t.Fatalf("restore migrated schema to %d want %d", info.SchemaVersion, version)
+			}
+		})
 	}
 }
 

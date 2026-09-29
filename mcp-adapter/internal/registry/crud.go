@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+func ValidateStableID(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
+		return "", fmt.Errorf("stable identifier must be between 1 and 128 characters")
+	}
+	if value[0] == '.' || value[0] == '-' {
+		return "", fmt.Errorf("stable identifier cannot start with %q", value[0])
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' {
+			continue
+		}
+		return "", fmt.Errorf("stable identifier contains unsupported character %q", c)
+	}
+	return value, nil
+}
+
 type AdminUser struct {
 	Username     string
 	PasswordHash string
@@ -18,15 +36,15 @@ type AdminUser struct {
 }
 
 func addTargetExec(ctx context.Context, exec sqlExecer, target Target) error {
-	id := strings.TrimSpace(target.ID)
-	if id == "" {
-		return fmt.Errorf("target id cannot be empty")
+	id, err := ValidateStableID(target.ID)
+	if err != nil {
+		return fmt.Errorf("invalid target id: %w", err)
 	}
 	policy := strings.ToLower(strings.TrimSpace(target.PrivilegePolicy))
 	if policy == "" {
 		policy = "never"
 	}
-	_, err := exec.ExecContext(ctx, `
+	_, err = exec.ExecContext(ctx, `
 INSERT INTO targets (id, display_name, platform, host, port, user, ssh_alias, privilege_user, privilege_policy, enabled)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `,
@@ -123,12 +141,15 @@ func (s *Store) DeleteTarget(ctx context.Context, id string) error {
 }
 
 func addProjectExec(ctx context.Context, exec sqlExecer, project Project) error {
-	id := strings.TrimSpace(project.ID)
-	targetID := strings.TrimSpace(project.TargetID)
-	if id == "" || targetID == "" {
-		return fmt.Errorf("project id and target id cannot be empty")
+	id, err := ValidateStableID(project.ID)
+	if err != nil {
+		return fmt.Errorf("invalid project id: %w", err)
 	}
-	_, err := exec.ExecContext(ctx, `
+	targetID, err := ValidateStableID(project.TargetID)
+	if err != nil {
+		return fmt.Errorf("invalid target id: %w", err)
+	}
+	_, err = exec.ExecContext(ctx, `
 INSERT INTO projects (id, target_id, display_name, root, read_enabled, write_enabled, enabled)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 `,
@@ -217,12 +238,12 @@ func (s *Store) DeleteProject(ctx context.Context, targetID, projectID string) e
 }
 
 func addClientExec(ctx context.Context, exec sqlExecer, client Client) error {
-	id := strings.TrimSpace(client.ID)
-	if id == "" {
-		return fmt.Errorf("client id cannot be empty")
+	id, err := ValidateStableID(client.ID)
+	if err != nil {
+		return fmt.Errorf("invalid client id: %w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := exec.ExecContext(ctx, `
+	_, err = exec.ExecContext(ctx, `
 INSERT INTO ai_clients (id, display_name, provider, protocol, enabled, notes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `,
@@ -372,11 +393,25 @@ WHERE id = ? AND client_id = ?
 	return g, nil
 }
 
+func normalizeGrantCapability(raw string) (string, error) {
+	capability := strings.TrimSpace(raw)
+	if capability == "" {
+		return "", fmt.Errorf("grant capability cannot be empty")
+	}
+	if strings.Contains(capability, ",") {
+		return "", fmt.Errorf("grant capability bundles are not supported; use one capability per grant")
+	}
+	return capability, nil
+}
+
 func addGrantExec(ctx context.Context, exec sqlExecer, grant Grant) (int64, error) {
 	clientID := strings.TrimSpace(grant.ClientID)
-	capability := strings.TrimSpace(grant.Capability)
-	if clientID == "" || capability == "" {
-		return 0, fmt.Errorf("client id and capability cannot be empty")
+	if clientID == "" {
+		return 0, fmt.Errorf("client id cannot be empty")
+	}
+	capability, err := normalizeGrantCapability(grant.Capability)
+	if err != nil {
+		return 0, err
 	}
 
 	var targetVal any
@@ -408,6 +443,10 @@ func (s *Store) AddGrant(ctx context.Context, grant Grant) (int64, error) {
 }
 
 func updateGrantExec(ctx context.Context, exec sqlExecer, clientID string, grant Grant) error {
+	capability, err := normalizeGrantCapability(grant.Capability)
+	if err != nil {
+		return err
+	}
 	var targetVal any
 	if grant.TargetID != "" && grant.TargetID != "*" {
 		targetVal = grant.TargetID
@@ -421,7 +460,7 @@ func updateGrantExec(ctx context.Context, exec sqlExecer, clientID string, grant
 UPDATE grants
 SET target_id = ?, project_id = ?, capability = ?, enabled = ?
 WHERE id = ?`
-	args := []any{targetVal, projectVal, strings.TrimSpace(grant.Capability), boolInt(grant.Enabled), grant.ID}
+	args := []any{targetVal, projectVal, capability, boolInt(grant.Enabled), grant.ID}
 	if strings.TrimSpace(clientID) != "" {
 		query += " AND client_id = ?"
 		args = append(args, strings.TrimSpace(clientID))
@@ -585,9 +624,20 @@ type ActivityEvent struct {
 	ProjectID        string `json:"project_id"`
 	DurationMS       int64  `json:"duration_ms"`
 	Success          bool   `json:"success"`
+	Result           string `json:"result"`
 	ErrorCode        string `json:"error_code"`
 	BytesTransferred int64  `json:"bytes_transferred"`
 	Detail           string `json:"detail"`
+}
+
+func activityResult(action string, success bool) string {
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(action)), "_attempt") {
+		return "ATTEMPT"
+	}
+	if success {
+		return "PASS"
+	}
+	return "DENY"
 }
 
 type ActivityFilter struct {
@@ -619,10 +669,13 @@ func buildActivityWhere(filter ActivityFilter) (string, []interface{}) {
 		conds = append(conds, "project_id = ?")
 		args = append(args, filter.ProjectID)
 	}
-	if filter.Result == "PASS" {
-		conds = append(conds, "success = 1")
-	} else if filter.Result == "DENY" {
-		conds = append(conds, "success = 0")
+	switch filter.Result {
+	case "PASS":
+		conds = append(conds, "success = 1 AND lower(action) NOT LIKE '%\\_attempt' ESCAPE '\\'")
+	case "DENY":
+		conds = append(conds, "success = 0 AND lower(action) NOT LIKE '%\\_attempt' ESCAPE '\\'")
+	case "ATTEMPT":
+		conds = append(conds, "lower(action) LIKE '%\\_attempt' ESCAPE '\\'")
 	}
 	if filter.From != "" {
 		conds = append(conds, "timestamp >= ?")
@@ -656,6 +709,7 @@ func (s *Store) ListActivity(ctx context.Context, limit, offset int, filter Acti
 			return nil, fmt.Errorf("scan activity: %w", err)
 		}
 		e.Success = succ != 0
+		e.Result = activityResult(e.Action, e.Success)
 		events = append(events, e)
 	}
 	return events, rows.Err()

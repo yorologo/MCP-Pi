@@ -1,6 +1,6 @@
 # Installation
 
-`install.sh` is the canonical install/reinstall/update/rollback engine for the 1.5.0 Go-only stable release. `scripts/deploy-pi.sh` is a maintainer promotion wrapper around the same installer, not a second activation engine.
+`install.sh` is the canonical install/reinstall/update/rollback engine. The latest stable release is 1.5.0 and the current source candidate is **1.6.0**; `scripts/deploy-pi.sh` is a maintainer promotion wrapper around the same installer, not a second activation engine.
 
 ## Supported path
 
@@ -63,7 +63,7 @@ Persistent state remains outside the runtime tree:
 
 ## Registry compatibility
 
-Fresh install explicitly creates schema 5. Direct explicit migration supports schema 4 -> 5 and already-current schema 5.
+Fresh install explicitly creates schema 6. Direct explicit migration supports schema 4 -> 5 -> 6, schema 5 -> 6, and already-current schema 6.
 
 Normal runtime open, `status`, Doctor and Restore never silently migrate. Older schemas must first be upgraded by a release that explicitly supports them.
 

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func generateTestHostKey(t *testing.T) (string, []byte, string) {
@@ -108,6 +109,56 @@ func TestKnownHostsRewriteAndCanonical(t *testing.T) {
 	k2Untouched, _ := disc.GetCanonicalKeys("target2", "")
 	if len(k2Untouched) != 1 || k2Untouched[0].Fingerprint != fp2 {
 		t.Errorf("target2 was affected by target1 deletion")
+	}
+}
+
+func TestFindMovedTargetUsesPinnedIdentityAndFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	disc := NewTargetDiscovery(filepath.Join(tmpDir, "known_hosts"))
+	keyB64, _, fingerprint := generateTestHostKey(t)
+	if err := disc.RewriteKnownHosts("phone", "", "phone ssh-ed25519 "+keyB64); err != nil {
+		t.Fatal(err)
+	}
+
+	target := TargetConfig{ID: "phone", Host: "192.168.1.10", Port: 8022}
+	probe := func(string, int, time.Duration) bool { return true }
+	scan := func(host string, port int, timeout time.Duration) ([]*HostKeyEntry, error) {
+		if host != "192.168.1.69" {
+			return nil, nil
+		}
+		return []*HostKeyEntry{ParseKnownHostsLine("192.168.1.69 ssh-ed25519 " + keyB64)}, nil
+	}
+
+	got, err := disc.findMovedTarget(target, []string{"192.168.1.10", "192.168.1.50", "192.168.1.69"}, probe, scan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "IDENTITY_MATCH" || got.NewHost != "192.168.1.69" || got.NewPort != 8022 || got.Fingerprint != fingerprint {
+		t.Fatalf("unexpected rediscovery result: %+v", got)
+	}
+
+	ambiguousScan := func(host string, port int, timeout time.Duration) ([]*HostKeyEntry, error) {
+		return []*HostKeyEntry{ParseKnownHostsLine(host + " ssh-ed25519 " + keyB64)}, nil
+	}
+	got, err = disc.findMovedTarget(target, []string{"192.168.1.68", "192.168.1.69"}, probe, ambiguousScan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "AMBIGUOUS_TARGET_IDENTITY" || got.NewHost != "" {
+		t.Fatalf("ambiguous identity must not choose a host: %+v", got)
+	}
+}
+
+func TestFindMovedTargetRequiresPinnedIdentity(t *testing.T) {
+	disc := NewTargetDiscovery(filepath.Join(t.TempDir(), "known_hosts"))
+	_, err := disc.findMovedTarget(
+		TargetConfig{ID: "phone", Host: "192.168.1.10", Port: 8022},
+		[]string{"192.168.1.69"},
+		func(string, int, time.Duration) bool { return true },
+		func(string, int, time.Duration) ([]*HostKeyEntry, error) { return nil, nil },
+	)
+	if err == nil {
+		t.Fatal("rediscovery without a pinned SSH identity must fail closed")
 	}
 }
 

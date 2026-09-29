@@ -344,6 +344,10 @@ func normalizeTemplateNumbers(v any) any {
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, templateName string, ctx pongo2.Context) {
+	s.renderStatus(w, r, templateName, ctx, http.StatusOK)
+}
+
+func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, templateName string, ctx pongo2.Context, status int) {
 	sess := getSession(r)
 
 	if ctx == nil {
@@ -395,6 +399,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, templateName str
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	_, _ = w.Write([]byte(out))
 }
 
