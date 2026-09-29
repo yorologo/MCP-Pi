@@ -4,7 +4,7 @@ MCP-Pi runs on a constrained ARMv6 reference appliance. Performance claims follo
 
 ## Current boundary
 
-The 1.6.0 request path is in-process Go for MCP transport, Core, policy and Registry access. Remote Target work remains SSH-bound.
+The 1.6.2 request path is in-process Go for MCP transport, Core, policy and Registry access. Remote Target work remains SSH-bound.
 
 ## Canonical benchmark
 

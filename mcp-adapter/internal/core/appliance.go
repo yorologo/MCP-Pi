@@ -251,23 +251,6 @@ func inspectCloudflaredDependency(ctx context.Context, binaryPath, tokenPath str
 	}
 	evidence.SHA256 = hex.EncodeToString(hash.Sum(nil))
 
-	versionCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	versionOut, err := exec.CommandContext(versionCtx, resolved, "--version").CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(versionOut))
-		if msg == "" {
-			msg = err.Error()
-		}
-		evidence.Message = "cloudflared version check failed: " + msg
-		return evidence
-	}
-	evidence.Version = strings.TrimSpace(string(versionOut))
-	if evidence.Version == "" {
-		evidence.Message = "cloudflared version check returned empty output"
-		return evidence
-	}
-
 	tokenInfo, err := os.Lstat(tokenPath)
 	if err != nil {
 		evidence.Message = "Cloudflare token metadata is unavailable: " + err.Error()
@@ -295,7 +278,7 @@ func inspectCloudflaredDependency(ctx context.Context, binaryPath, tokenPath str
 	}
 
 	evidence.Passed = true
-	evidence.Message = "cloudflared binary provenance and private token metadata verified"
+	evidence.Message = "cloudflared binary SHA-256 provenance and private token metadata verified"
 	return evidence
 }
 

@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	GatewayVersion     = "1.6.2"
+	GatewayVersion     = "1.6.3"
 	CoreAPIVersion     = 1
 	BridgeAPIVersion   = 1
 	ToolCatalogVersion = 4

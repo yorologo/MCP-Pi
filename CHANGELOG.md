@@ -2,7 +2,17 @@
 
 All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
 
-## 1.6.2 — candidate
+## 1.6.3 — candidate
+
+### Fixed
+- Termux/Shizuku privilege discovery no longer lets a slow `rish` readiness probe consume the entire Target facts timeout. Presence of `rish` still marks the shell as independently elevable and therefore still requires explicit `target_admin`; readiness/UID verification is bounded separately and fails closed for privileged execution.
+- Cloudflare dependency provenance no longer executes the large external `cloudflared` binary merely to collect a version string. Doctor now relies on the stronger SHA-256/file/token evidence already present, while service/tunnel health remains validated by their existing runtime checks.
+
+### Validation
+- 1.6.2 remains immutable and is the currently deployed stable release.
+- 1.6.3 must repeat exact-SHA CI, ARMv6 bundle validation, canonical deployment and live acceptance before promotion.
+
+## 1.6.2 — stable
 
 ### Fixed
 - Carries forward the 1.6.1 authorization-scope correction for safe observability and Target-only status checks.

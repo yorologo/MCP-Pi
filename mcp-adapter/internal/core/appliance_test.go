@@ -158,11 +158,36 @@ func TestInspectCloudflaredDependencyReportsSafeProvenance(t *testing.T) {
 	if !got.Passed {
 		t.Fatalf("dependency evidence failed: %+v", got)
 	}
-	if got.Version != "cloudflared version test-1" || len(got.SHA256) != 64 || got.TokenMode != "0600" {
+	if got.Version != "" || len(got.SHA256) != 64 || got.TokenMode != "0600" {
 		t.Fatalf("unexpected dependency evidence: %+v", got)
 	}
 	if strings.Contains(got.Message, "secret-token") || strings.Contains(got.Version, "secret-token") {
 		t.Fatal("dependency evidence leaked token content")
+	}
+}
+
+func TestInspectCloudflaredDependencyDoesNotExecuteBinaryForProvenance(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "cloudflared")
+	token := filepath.Join(dir, "cloudflared.token")
+	marker := filepath.Join(dir, "executed")
+	script := "#!/bin/sh\nprintf executed > " + marker + "\n"
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(token, []byte("secret-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := inspectCloudflaredDependency(context.Background(), binary, token)
+	if !got.Passed {
+		t.Fatalf("dependency evidence failed: %+v", got)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("cloudflared binary was executed during provenance inspection: %v", err)
+	}
+	if !strings.Contains(got.Message, "SHA-256 provenance") {
+		t.Fatalf("dependency evidence did not explain provenance basis: %+v", got)
 	}
 }
 

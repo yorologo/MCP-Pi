@@ -2,7 +2,7 @@
 
 This file records source/integration state, not live production.
 
-The latest stable release is **1.6.0** and `develop` currently carries the **1.6.2 candidate**. `develop` and `main` converge on the exact validated release SHA only after promotion.
+The latest stable release is **1.6.2** and `develop` currently carries the **1.6.3 candidate**. `develop` and `main` converge on the exact validated release SHA only after promotion.
 
 Numeric build/API/catalog/schema/protocol values are not duplicated here; use `manifest.json`, `compatibility.json` and `mcp-gateway version --json`.
 

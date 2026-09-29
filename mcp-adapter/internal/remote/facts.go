@@ -79,6 +79,40 @@ func (s *SSHTransport) probePrivilegedSSH(
 	return expectedLevel, true, ""
 }
 
+func (s *SSHTransport) probeShizukuUID(
+	ctx context.Context,
+	target registry.Target,
+	timeout time.Duration,
+) (string, bool, string) {
+	probeTimeout := 4 * time.Second
+	if timeout > 0 && timeout < probeTimeout {
+		probeTimeout = timeout
+	}
+	result, err := s.RunCommand(
+		ctx,
+		target,
+		"{ if command -v timeout >/dev/null 2>&1; then timeout -k 1s 2s rish -c 'id -u' 2>/dev/null; fi; } | tr -cd '0-9\\n' | tail -n 1",
+		CommandOptions{Timeout: probeTimeout},
+	)
+	if err != nil || !result.OK() {
+		return "", false, "Shizuku readiness probe did not complete"
+	}
+	uid := strings.TrimSpace(result.Stdout)
+	switch uid {
+	case "0":
+		return "root", true, ""
+	case "2000":
+		return "android_shell", true, ""
+	default:
+		if uid != "" {
+			if _, err := strconv.Atoi(uid); err == nil {
+				return "elevated", true, ""
+			}
+		}
+		return "", false, "Shizuku returned no usable UID"
+	}
+}
+
 func (s *SSHTransport) ProbeFacts(
 	ctx context.Context,
 	target registry.Target,
@@ -121,8 +155,7 @@ func (s *SSHTransport) ProbeFacts(
 			`current=standard; maximum=standard; backend=''; ready=0; reason=''; shell_elevate=0; independent=''; ` +
 			`has_sudo=0; command -v sudo >/dev/null 2>&1 && has_sudo=1; has_rish=0; command -v rish >/dev/null 2>&1 && has_rish=1; ` +
 			`if [ "$euid" = "0" ]; then current=root; maximum=root; backend=direct; ready=1; ` +
-			`elif [ "$termux" -eq 1 ] && [ "$has_rish" -eq 1 ]; then backend=shizuku; ruid=$(rish -c 'id -u' 2>/dev/null | tr -cd '0-9\n' | tail -n 1); ` +
-			`if [ -n "$ruid" ]; then case "$ruid" in 0) maximum=root;; 2000) maximum=android_shell;; *) maximum=elevated;; esac; ready=1; shell_elevate=1; independent=shizuku; else reason='Shizuku returned no usable UID'; fi; ` +
+			`elif [ "$termux" -eq 1 ] && [ "$has_rish" -eq 1 ]; then backend=shizuku; maximum=elevated; shell_elevate=1; independent=shizuku; reason='Shizuku readiness not verified'; ` +
 			`elif [ "$has_sudo" -eq 1 ]; then maximum=root; backend=sudo; reason='sudo is installed, but arbitrary sudo shell execution is intentionally not accepted as a safe MCP-Pi backend'; ` +
 			`if sudo -n true >/dev/null 2>&1; then shell_elevate=1; independent=sudo-noninteractive; fi; fi; ` +
 			`service=''; command -v systemctl >/dev/null 2>&1 && service=systemd; [ -n "$service" ] || { command -v rc-service >/dev/null 2>&1 && service=openrc; }; [ -n "$service" ] || { command -v launchctl >/dev/null 2>&1 && service=launchd; }; ` +
@@ -219,6 +252,25 @@ func (s *SSHTransport) ProbeFacts(
 		facts["os_release"] = map[string]any{
 			"id":         nullableFact(osID),
 			"version_id": nullableFact(osVersion),
+		}
+	}
+
+	if strings.TrimSpace(target.PrivilegeUser) == "" {
+		features := facts["features"].(map[string]any)
+		privilege := facts["privilege"].(map[string]any)
+		if features["termux"] == true && features["shizuku"] == true && privilege["current_level"] != "root" {
+			level, ready, reason := s.probeShizukuUID(ctx, target, timeout)
+			privilege["backend"] = "shizuku"
+			privilege["shell_can_elevate"] = true
+			privilege["independent_elevator"] = "shizuku"
+			if ready {
+				privilege["maximum_level"] = level
+				privilege["backend_ready"] = true
+				privilege["backend_reason"] = nil
+			} else {
+				privilege["backend_ready"] = false
+				privilege["backend_reason"] = reason
+			}
 		}
 	}
 

@@ -173,6 +173,71 @@ func TestProbeFactsFailsClosedWhenConfiguredPrivilegedSSHUserCannotAuthenticate(
 	}
 }
 
+func TestProbeFactsBoundsSlowShizukuReadinessWithoutDroppingGuard(t *testing.T) {
+	dir := t.TempDir()
+	rish := filepath.Join(dir, "rish")
+	if err := os.WriteFile(rish, []byte("#!/bin/sh\nsleep 10\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TERMUX_VERSION", "test")
+
+	transport := localSSHShim(t)
+	start := time.Now()
+	facts, err := transport.ProbeFacts(context.Background(), localTarget(), false, 8*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed >= 5*time.Second {
+		t.Fatalf("slow Shizuku readiness blocked facts probe for %s", elapsed)
+	}
+	privilege, ok := facts["privilege"].(map[string]any)
+	if !ok {
+		t.Fatalf("privilege facts missing: %#v", facts)
+	}
+	if got := privilege["backend"]; got != "shizuku" {
+		t.Fatalf("backend=%v want=shizuku", got)
+	}
+	if got := privilege["backend_ready"]; got != false {
+		t.Fatalf("backend_ready=%v want=false", got)
+	}
+	if got := privilege["shell_can_elevate"]; got != true {
+		t.Fatalf("shell_can_elevate=%v want=true", got)
+	}
+	if got := privilege["independent_elevator"]; got != "shizuku" {
+		t.Fatalf("independent_elevator=%v want=shizuku", got)
+	}
+}
+
+func TestProbeFactsVerifiesResponsiveShizukuUID(t *testing.T) {
+	dir := t.TempDir()
+	rish := filepath.Join(dir, "rish")
+	if err := os.WriteFile(rish, []byte("#!/bin/sh\nprintf '2000\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TERMUX_VERSION", "test")
+
+	transport := localSSHShim(t)
+	facts, err := transport.ProbeFacts(context.Background(), localTarget(), false, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privilege, ok := facts["privilege"].(map[string]any)
+	if !ok {
+		t.Fatalf("privilege facts missing: %#v", facts)
+	}
+	if got := privilege["backend"]; got != "shizuku" {
+		t.Fatalf("backend=%v want=shizuku", got)
+	}
+	if got := privilege["backend_ready"]; got != true {
+		t.Fatalf("backend_ready=%v want=true", got)
+	}
+	if got := privilege["maximum_level"]; got != "android_shell" {
+		t.Fatalf("maximum_level=%v want=android_shell", got)
+	}
+}
+
 func TestLimitedBufferTruncatesWithoutShortWrite(t *testing.T) {
 	var buffer limitedBuffer
 	buffer.max = 4

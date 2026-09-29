@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file defines how automated contributors must work on MCP-Pi. The current stable source release is 1.6.0 and the product runtime is Go-only.
+This file defines how automated contributors must work on MCP-Pi. The current stable source release is 1.6.2 and the product runtime is Go-only.
 
 ## Non-negotiable principles
 
