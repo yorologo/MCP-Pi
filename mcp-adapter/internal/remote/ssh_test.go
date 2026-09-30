@@ -238,6 +238,49 @@ func TestProbeFactsVerifiesResponsiveShizukuUID(t *testing.T) {
 	}
 }
 
+func TestProbeFactsRetriesTransientEmptyShizukuUID(t *testing.T) {
+	dir := t.TempDir()
+	rish := filepath.Join(dir, "rish")
+	counter := filepath.Join(dir, "rish-count")
+	script := fmt.Sprintf(
+		"#!/bin/sh\n"+
+			"n=0\n"+
+			"[ ! -f %q ] || n=$(cat %q)\n"+
+			"n=$((n+1))\n"+
+			"printf '%%s\\n' \"$n\" > %q\n"+
+			"if [ \"$n\" -ge 2 ]; then printf '2000\\n'; fi\n",
+		counter, counter, counter,
+	)
+	if err := os.WriteFile(rish, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TERMUX_VERSION", "test")
+
+	transport := localSSHShim(t)
+	facts, err := transport.ProbeFacts(context.Background(), localTarget(), false, true, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privilege, ok := facts["privilege"].(map[string]any)
+	if !ok {
+		t.Fatalf("privilege facts missing: %#v", facts)
+	}
+	if got := privilege["backend_ready"]; got != true {
+		t.Fatalf("backend_ready=%v want=true", got)
+	}
+	if got := privilege["maximum_level"]; got != "android_shell" {
+		t.Fatalf("maximum_level=%v want=android_shell", got)
+	}
+	data, err := os.ReadFile(counter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "2" {
+		t.Fatalf("rish attempts=%q want=2", got)
+	}
+}
+
 func TestLimitedBufferTruncatesWithoutShortWrite(t *testing.T) {
 	var buffer limitedBuffer
 	buffer.max = 4

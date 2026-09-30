@@ -91,7 +91,7 @@ func (s *SSHTransport) probeShizukuUID(
 	result, err := s.RunCommand(
 		ctx,
 		target,
-		"{ if command -v timeout >/dev/null 2>&1; then timeout -k 1s 2s rish -c 'id -u' 2>/dev/null; fi; } | tr -cd '0-9\\n' | tail -n 1",
+		`i=0; while [ "$i" -lt 3 ]; do i=$((i+1)); uid=$({ if command -v timeout >/dev/null 2>&1; then timeout -k 1s 1s rish -c 'id -u' 2>/dev/null; fi; } | tr -cd '0-9\n' | tail -n 1); if [ -n "$uid" ]; then printf '%s\n' "$uid"; break; fi; done`,
 		CommandOptions{Timeout: probeTimeout},
 	)
 	if err != nil || !result.OK() {
