@@ -55,7 +55,7 @@ func TestServiceRoleInventoryIncludesOptionalIngressAndRestoreQuiescence(t *test
 	}
 
 	observed := ApplianceObservedServiceUnits()
-	for _, unit := range []string{gatewayGeminiServiceUnit, gatewayCloudflaredServiceUnit, gatewayTunnelServiceUnit} {
+	for _, unit := range []string{gatewayGeminiServiceUnit, gatewayCloudflaredServiceUnit, gatewayTunnelServiceUnit, gatewayNetworkRecoveryServiceUnit, gatewayNetworkRecoveryTimerUnit} {
 		if !contains(observed, unit) {
 			t.Fatalf("observed service inventory missing %s: %v", unit, observed)
 		}
@@ -67,7 +67,7 @@ func TestServiceRoleInventoryIncludesOptionalIngressAndRestoreQuiescence(t *test
 			t.Fatalf("restore quiescence inventory missing %s: %v", unit, quiescence)
 		}
 	}
-	for _, edgeOnly := range []string{gatewayTunnelServiceUnit, gatewayCloudflaredServiceUnit} {
+	for _, edgeOnly := range []string{gatewayTunnelServiceUnit, gatewayCloudflaredServiceUnit, gatewayNetworkRecoveryServiceUnit, gatewayNetworkRecoveryTimerUnit} {
 		if contains(quiescence, edgeOnly) {
 			t.Fatalf("edge-only service %s must not be classified as a Registry user", edgeOnly)
 		}

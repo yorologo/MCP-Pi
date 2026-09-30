@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic MCP-Pi Network Recovery Probe
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+Persistent=false
+Unit=mcp-gateway-network-recovery.service
+
+[Install]
+WantedBy=timers.target

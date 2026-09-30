@@ -47,12 +47,12 @@ BOOTSTRAP_TOKEN=${CONFIG_DIR}/admin-bootstrap.token
 TUNNEL_CHECK=${BIN_DIR}/mcp-gateway-tunnel-check
 CLI_LINK=${BIN_DIR}/mcp-gateway
 DB_PATH=${DATA_DIR}/gateway.db
-RUNTIME_UNITS="mcp-gateway.target mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service"
+RUNTIME_UNITS="mcp-gateway.target mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-network-recovery.service mcp-gateway-network-recovery.timer mcp-gateway-postboot.service"
 OPTIONAL_UNITS="mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service"
 BASE_ENABLED_UNITS="mcp-gateway.target"
 
 required_source() {
-    for path in         bin/mcp-gateway         bin/mcp-gateway-client-stdio         config/systemd/mcp-gateway.target         config/systemd/mcp-gateway-admin.service         config/systemd/mcp-gateway-mcp.service         config/systemd/mcp-gateway-gemini.service         config/systemd/mcp-gateway-cloudflared.service         config/systemd/mcp-gateway-tunnel.service         config/systemd/mcp-gateway-maintenance.service         config/systemd/mcp-gateway-maintenance.timer         config/systemd/mcp-gateway-postboot.service         config/systemd/mcp-gateway-tunnel-check         config/polkit/49-mcp-gateway-reboot.rules         compatibility.json manifest.json; do
+    for path in         bin/mcp-gateway         bin/mcp-gateway-client-stdio         config/systemd/mcp-gateway.target         config/systemd/mcp-gateway-admin.service         config/systemd/mcp-gateway-mcp.service         config/systemd/mcp-gateway-gemini.service         config/systemd/mcp-gateway-cloudflared.service         config/systemd/mcp-gateway-tunnel.service         config/systemd/mcp-gateway-maintenance.service         config/systemd/mcp-gateway-maintenance.timer         config/systemd/mcp-gateway-network-recovery.service         config/systemd/mcp-gateway-network-recovery.timer         config/systemd/mcp-gateway-network-recovery         config/systemd/mcp-gateway-postboot.service         config/systemd/mcp-gateway-tunnel-check         config/polkit/49-mcp-gateway-reboot.rules         compatibility.json manifest.json; do
         [ -e "${SOURCE_DIR}/${path}" ] || fail "release source is missing: ${path}"
     done
 }
@@ -329,7 +329,7 @@ promote_rollback_set() {
     fail "could not promote prepared rollback set"
 }
 detach_component_boot_links() {
-    for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service $OPTIONAL_UNITS; do
+    for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-maintenance.timer mcp-gateway-network-recovery.timer mcp-gateway-postboot.service $OPTIONAL_UNITS; do
         systemctl disable "$unit" >/dev/null 2>&1 || true
     done
 }
@@ -337,14 +337,14 @@ detach_component_boot_links() {
 stop_runtime() {
     if systemctl cat mcp-gateway.target >/dev/null 2>&1; then
         systemctl stop mcp-gateway.target 2>/dev/null || true
-        systemctl stop mcp-gateway-maintenance.service 2>/dev/null || true
+        systemctl stop mcp-gateway-maintenance.service mcp-gateway-network-recovery.timer mcp-gateway-network-recovery.service 2>/dev/null || true
     else
-        systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-cloudflared mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
+        systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-network-recovery.timer mcp-gateway-network-recovery.service mcp-gateway-tunnel mcp-gateway-cloudflared mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
     fi
 }
 
 restart_runtime() {
-    systemctl reset-failed mcp-gateway-admin mcp-gateway-mcp mcp-gateway-gemini mcp-gateway-cloudflared mcp-gateway-tunnel mcp-gateway-postboot 2>/dev/null || true
+    systemctl reset-failed mcp-gateway-admin mcp-gateway-mcp mcp-gateway-gemini mcp-gateway-cloudflared mcp-gateway-tunnel mcp-gateway-network-recovery mcp-gateway-postboot 2>/dev/null || true
     if systemctl cat mcp-gateway.target >/dev/null 2>&1; then
         systemctl restart mcp-gateway.target
     else
@@ -365,6 +365,9 @@ restart_runtime() {
         systemctl restart mcp-gateway-postboot.service
         systemctl start mcp-gateway-maintenance.timer
     fi
+    if systemctl is-enabled --quiet mcp-gateway-network-recovery.timer 2>/dev/null; then
+        systemctl start mcp-gateway-network-recovery.timer
+    fi
     wait_url http://127.0.0.1/login 45 || fail "mcp-gateway-admin did not become ready"
     wait_url http://127.0.0.1:8090/ready 60 || fail "mcp-gateway-mcp did not become ready"
     if systemctl is-enabled --quiet mcp-gateway-gemini 2>/dev/null; then
@@ -380,6 +383,9 @@ restart_runtime() {
         systemctl is-active --quiet mcp-gateway-tunnel || fail "mcp-gateway-tunnel is enabled but not active"
     fi
     systemctl is-active --quiet mcp-gateway-maintenance.timer || fail "maintenance timer is not active"
+    if systemctl is-enabled --quiet mcp-gateway-network-recovery.timer 2>/dev/null; then
+        systemctl is-active --quiet mcp-gateway-network-recovery.timer || fail "network recovery timer is enabled but not active"
+    fi
     systemctl is-active --quiet mcp-gateway-postboot.service || fail "postboot verification is not active"
 }
 
@@ -437,9 +443,11 @@ verify_source_integrity
 GEMINI_ENABLED=0
 CLOUDFLARED_ENABLED=0
 TUNNEL_ENABLED=0
+NETWORK_RECOVERY_ENABLED=0
 systemctl is-enabled --quiet mcp-gateway-gemini.service 2>/dev/null && GEMINI_ENABLED=1 || true
 systemctl is-enabled --quiet mcp-gateway-cloudflared.service 2>/dev/null && CLOUDFLARED_ENABLED=1 || true
 systemctl is-enabled --quiet mcp-gateway-tunnel.service 2>/dev/null && TUNNEL_ENABLED=1 || true
+systemctl is-enabled --quiet mcp-gateway-network-recovery.timer 2>/dev/null && NETWORK_RECOVERY_ENABLED=1 || true
 arch=$(uname -m)
 case "$arch" in armv6*|armv7*|aarch64|arm64|x86_64|amd64) ;; *) warn "architecture $arch is not in the verified compatibility set" ;; esac
 
@@ -585,6 +593,7 @@ systemctl enable $BASE_ENABLED_UNITS >/dev/null
 [ "$GEMINI_ENABLED" -eq 0 ] || systemctl enable mcp-gateway-gemini.service >/dev/null
 [ "$CLOUDFLARED_ENABLED" -eq 0 ] || systemctl enable mcp-gateway-cloudflared.service >/dev/null
 [ "$TUNNEL_ENABLED" -eq 0 ] || systemctl enable mcp-gateway-tunnel.service >/dev/null
+[ "$NETWORK_RECOVERY_ENABLED" -eq 0 ] || systemctl enable mcp-gateway-network-recovery.timer >/dev/null
 
 echo "[7/9] Starting and verifying Go services..."
 restart_runtime

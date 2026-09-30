@@ -75,6 +75,31 @@ journald is the runtime log authority:
 
 Use the corresponding Gemini/Cloudflare/tunnel unit journal when an optional ingress is enabled.
 
+## Network recovery
+
+MCP-Pi can optionally monitor the appliance LAN path with the packaged `mcp-gateway-network-recovery.timer`. It is deliberately **disabled by default**: first prove that the current default-route interface is USB-backed, managed by NetworkManager and that its local gateway responds to the bounded probe:
+
+    sudo /bin/sh /home/mcp-gateway/mcp-gateway/config/systemd/mcp-gateway-network-recovery --check
+
+Only after `NETWORK_RECOVERY_CHECK=PASS` should an operator enable it:
+
+    sudo systemctl enable --now mcp-gateway-network-recovery.timer
+
+The timer runs once per minute. A healthy observation only refreshes a volatile baseline under `/run`. Recovery requires three consecutive LAN failures. It first asks NetworkManager to reconnect the known interface; only if that fails, a previously verified USB interface may be unbound/rebound from its recorded driver. USB rebinds are rate-limited to once per 15 minutes. Unknown interfaces, non-USB drivers, missing baseline state or unavailable bind/unbind controls fail closed without mutation.
+
+The probe targets the current local default gateway, not DNS, Internet or the OpenAI tunnel. The recovery worker does not restart MCP services and never reboots the appliance.
+
+Operational evidence is in journald:
+
+    journalctl -u mcp-gateway-network-recovery.service
+    journalctl -u mcp-gateway-network-recovery.timer
+    journalctl -k
+    journalctl -u NetworkManager.service -u wpa_supplicant.service
+
+Disable the optional timer without changing normal MCP-Pi lifecycle:
+
+    sudo systemctl disable --now mcp-gateway-network-recovery.timer
+
 ## Performance
 
 Measure before optimizing:

@@ -1,0 +1,27 @@
+[Unit]
+Description=MCP-Pi Network Recovery
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ReadWritePaths=/run/mcp-gateway-network-recovery /sys/bus/usb/drivers
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+RuntimeDirectory=mcp-gateway-network-recovery
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+ExecStart=/bin/sh /home/mcp-gateway/mcp-gateway/config/systemd/mcp-gateway-network-recovery

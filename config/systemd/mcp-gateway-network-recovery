@@ -1,0 +1,222 @@
+#!/bin/sh
+set -eu
+
+STATE_DIR="${MCP_NETWORK_RECOVERY_STATE_DIR:-/run/mcp-gateway-network-recovery}"
+FAILURES_FILE="$STATE_DIR/failures"
+INTERFACE_FILE="$STATE_DIR/interface"
+DEVICE_FILE="$STATE_DIR/device"
+DRIVER_FILE="$STATE_DIR/driver"
+LAST_REBIND_FILE="$STATE_DIR/last-rebind"
+FAILURE_THRESHOLD="${MCP_NETWORK_RECOVERY_FAILURE_THRESHOLD:-3}"
+REBIND_COOLDOWN="${MCP_NETWORK_RECOVERY_REBIND_COOLDOWN:-900}"
+
+log() {
+    logger -t mcp-gateway-network-recovery -- "$*"
+    printf '%s\n' "$*"
+}
+
+fail_closed() {
+    log "NETWORK_RECOVERY_SKIP reason=$1"
+    exit 0
+}
+
+require_commands() {
+    for cmd in awk basename cat chmod date head ip logger mkdir nmcli ping readlink sleep; do
+        command -v "$cmd" >/dev/null 2>&1 || {
+            log "NETWORK_RECOVERY_ERROR missing_command=$cmd"
+            exit 1
+        }
+    done
+}
+
+valid_uint() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+valid_iface() {
+    case "$1" in
+        ''|*[!A-Za-z0-9_.:-]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+default_interface() {
+    ip -4 route show default 2>/dev/null | awk '$1 == "default" {print $5; exit}'
+}
+
+default_gateway() {
+    ip -4 route show default dev "$1" 2>/dev/null | awk '$1 == "default" {print $3; exit}'
+}
+
+network_healthy() {
+    iface="$1"
+    [ -d "/sys/class/net/$iface" ] || return 1
+    state="$(nmcli -t -g GENERAL.STATE device show "$iface" 2>/dev/null | head -n1 || true)"
+    case "$state" in
+        100*) ;;
+        *) return 1 ;;
+    esac
+    gateway="$(default_gateway "$iface")"
+    [ -n "$gateway" ] || return 1
+    ping -n -I "$iface" -c 1 -W 2 "$gateway" >/dev/null 2>&1
+}
+
+record_baseline() {
+    iface="$1"
+    device_path="$(readlink -f "/sys/class/net/$iface/device" 2>/dev/null || true)"
+    driver_path="$(readlink -f "/sys/class/net/$iface/device/driver" 2>/dev/null || true)"
+    [ -n "$device_path" ] || fail_closed "device_path_unavailable"
+    [ -n "$driver_path" ] || fail_closed "driver_path_unavailable"
+    case "$driver_path" in
+        /sys/bus/usb/drivers/*) ;;
+        *) fail_closed "non_usb_driver" ;;
+    esac
+    device_id="$(basename "$device_path")"
+    valid_iface "$device_id" || fail_closed "unsafe_usb_device_id"
+    printf '%s\n' "$iface" > "$INTERFACE_FILE"
+    printf '%s\n' "$device_id" > "$DEVICE_FILE"
+    printf '%s\n' "$driver_path" > "$DRIVER_FILE"
+    printf '0\n' > "$FAILURES_FILE"
+}
+
+read_failures() {
+    failures=0
+    if [ -r "$FAILURES_FILE" ]; then
+        failures="$(cat "$FAILURES_FILE" 2>/dev/null || printf '0')"
+    fi
+    valid_uint "$failures" || failures=0
+    printf '%s\n' "$failures"
+}
+
+check_current() {
+    iface="$(default_interface)"
+    valid_iface "$iface" || {
+        printf 'NETWORK_RECOVERY_CHECK=FAIL reason=no_default_interface\n'
+        return 1
+    }
+    network_healthy "$iface" || {
+        printf 'NETWORK_RECOVERY_CHECK=FAIL reason=lan_probe interface=%s\n' "$iface"
+        return 1
+    }
+    device_path="$(readlink -f "/sys/class/net/$iface/device" 2>/dev/null || true)"
+    driver_path="$(readlink -f "/sys/class/net/$iface/device/driver" 2>/dev/null || true)"
+    case "$driver_path" in
+        /sys/bus/usb/drivers/*) ;;
+        *)
+            printf 'NETWORK_RECOVERY_CHECK=FAIL reason=non_usb_driver interface=%s\n' "$iface"
+            return 1
+            ;;
+    esac
+    device_id="$(basename "$device_path")"
+    [ -w "$driver_path/unbind" ] && [ -w "$driver_path/bind" ] || {
+        printf 'NETWORK_RECOVERY_CHECK=FAIL reason=driver_rebind_unavailable interface=%s driver=%s\n' "$iface" "$driver_path"
+        return 1
+    }
+    printf 'NETWORK_RECOVERY_CHECK=PASS interface=%s device=%s driver=%s\n' "$iface" "$device_id" "$(basename "$driver_path")"
+}
+
+recover() {
+    mkdir -p "$STATE_DIR"
+    chmod 0700 "$STATE_DIR" 2>/dev/null || true
+
+    iface=""
+    if [ -r "$INTERFACE_FILE" ]; then
+        iface="$(cat "$INTERFACE_FILE" 2>/dev/null || true)"
+    fi
+    if ! valid_iface "$iface"; then
+        iface="$(default_interface)"
+    fi
+    valid_iface "$iface" || fail_closed "no_known_interface"
+
+    if network_healthy "$iface"; then
+        record_baseline "$iface"
+        log "NETWORK_RECOVERY_HEALTHY interface=$iface"
+        exit 0
+    fi
+
+    [ -r "$INTERFACE_FILE" ] && [ -r "$DEVICE_FILE" ] && [ -r "$DRIVER_FILE" ] ||
+        fail_closed "no_healthy_usb_baseline"
+
+    failures="$(read_failures)"
+    failures=$((failures + 1))
+    printf '%s\n' "$failures" > "$FAILURES_FILE"
+    log "NETWORK_RECOVERY_FAILURE interface=$iface consecutive=$failures threshold=$FAILURE_THRESHOLD"
+
+    valid_uint "$FAILURE_THRESHOLD" || {
+        log "NETWORK_RECOVERY_ERROR invalid_failure_threshold"
+        exit 1
+    }
+    [ "$FAILURE_THRESHOLD" -ge 1 ] || {
+        log "NETWORK_RECOVERY_ERROR invalid_failure_threshold"
+        exit 1
+    }
+    [ "$failures" -ge "$FAILURE_THRESHOLD" ] || exit 0
+
+    log "NETWORK_RECOVERY_ACTION action=networkmanager_reconnect interface=$iface"
+    nmcli device disconnect "$iface" >/dev/null 2>&1 || true
+    sleep 2
+    nmcli device connect "$iface" >/dev/null 2>&1 || true
+    sleep 8
+    if network_healthy "$iface"; then
+        record_baseline "$iface"
+        log "NETWORK_RECOVERY_RECOVERED action=networkmanager_reconnect interface=$iface"
+        exit 0
+    fi
+
+    valid_uint "$REBIND_COOLDOWN" || {
+        log "NETWORK_RECOVERY_ERROR invalid_rebind_cooldown"
+        exit 1
+    }
+    device_id="$(cat "$DEVICE_FILE" 2>/dev/null || true)"
+    driver_path="$(cat "$DRIVER_FILE" 2>/dev/null || true)"
+    valid_iface "$device_id" || fail_closed "unsafe_saved_usb_device_id"
+    case "$driver_path" in
+        /sys/bus/usb/drivers/*) ;;
+        *) fail_closed "unsafe_saved_usb_driver" ;;
+    esac
+    [ -w "$driver_path/unbind" ] && [ -w "$driver_path/bind" ] ||
+        fail_closed "driver_rebind_unavailable"
+
+    now="$(date +%s)"
+    last=0
+    if [ -r "$LAST_REBIND_FILE" ]; then
+        last="$(cat "$LAST_REBIND_FILE" 2>/dev/null || printf '0')"
+    fi
+    valid_uint "$last" || last=0
+    if [ "$last" -gt 0 ] && [ $((now - last)) -lt "$REBIND_COOLDOWN" ]; then
+        fail_closed "rebind_cooldown"
+    fi
+
+    printf '%s\n' "$now" > "$LAST_REBIND_FILE"
+    log "NETWORK_RECOVERY_ACTION action=usb_driver_rebind interface=$iface device=$device_id driver=$(basename "$driver_path")"
+    printf '%s\n' "$device_id" > "$driver_path/unbind"
+    sleep 2
+    printf '%s\n' "$device_id" > "$driver_path/bind"
+    sleep 10
+
+    if network_healthy "$iface"; then
+        record_baseline "$iface"
+        log "NETWORK_RECOVERY_RECOVERED action=usb_driver_rebind interface=$iface"
+        exit 0
+    fi
+
+    log "NETWORK_RECOVERY_FAILED interface=$iface"
+    exit 1
+}
+
+require_commands
+case "${1:-}" in
+    --check)
+        check_current
+        ;;
+    '')
+        recover
+        ;;
+    *)
+        printf 'usage: %s [--check]\n' "$0" >&2
+        exit 2
+        ;;
+esac

@@ -61,6 +61,28 @@ Core/Registry initialization failure intentionally keeps readiness unavailable.
 
 Check endpoint, SSH credentials, Target enablement and the pinned host key. A changed host key must be investigated; it is never auto-trusted.
 
+For Android/Termux Targets, `Bad packet length` / `Connection corrupted` can also indicate bytes were injected into the SSH transport by the Android process environment rather than a host-key or cipher problem. One observed case was Bionic systrace output (`B|...|...E|`) caused by enabled Bionic tracing. Inspect the Target locally and start `sshd` from a clean loader environment before changing SSH cryptography or trust. Android's Bionic tracing implementation is documented upstream at <https://android.googlesource.com/platform/bionic/+/refs/heads/main/libc/bionic/bionic_systrace.cpp>.
+
+If a diagnostic trace ever captures private-key contents, treat that client key as compromised and rotate it through the normal SSH identity workflow. Deleting the local trace does not remove copies already exposed elsewhere.
+
+### Appliance disappears from the LAN
+
+If both the OpenAI tunnel and direct SSH to the appliance disappear together, diagnose the network/USB layer before restarting `mcp-gateway-tunnel.service`.
+
+After connectivity returns, preserve evidence first:
+
+    journalctl -k --since '<start>' --until '<end>'
+    journalctl -u NetworkManager.service -u wpa_supplicant.service --since '<start>' --until '<end>'
+    journalctl -u mcp-gateway-network-recovery.service --since '<start>' --until '<end>'
+
+If the optional network recovery timer is enabled, verify it is active and run its non-mutating precondition check:
+
+    systemctl is-enabled mcp-gateway-network-recovery.timer
+    systemctl is-active mcp-gateway-network-recovery.timer
+    sudo /bin/sh /home/mcp-gateway/mcp-gateway/config/systemd/mcp-gateway-network-recovery --check
+
+Do not add global USB autosuspend overrides, replace the in-kernel Wi-Fi driver, reboot the appliance or create a second watchdog merely because the tunnel was stale. Escalate only from evidence showing the failing layer.
+
 ### TOOL_NOT_ALLOWED
 
 Check client enablement, scoped Grants and **Check Effective Access**. `tools/list` is policy-filtered and can expose fewer tools than the Core catalog.

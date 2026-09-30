@@ -55,11 +55,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck --severity=warning install.sh scripts/*.sh
+          shellcheck --severity=warning install.sh scripts/*.sh config/systemd/mcp-gateway-network-recovery
 
       - name: Shell syntax contract
         run: |
           sh -n install.sh
+          sh -n config/systemd/mcp-gateway-network-recovery
           bash -n scripts/build-release-package.sh
           bash -n scripts/deploy-pi.sh
           bash -n scripts/run-resumable.sh

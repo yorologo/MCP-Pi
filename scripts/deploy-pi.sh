@@ -81,6 +81,9 @@ fi
 if systemctl is-enabled --quiet mcp-gateway-cloudflared 2>/dev/null; then
     systemctl is-active --quiet mcp-gateway-cloudflared
 fi
+if systemctl is-enabled --quiet mcp-gateway-network-recovery.timer 2>/dev/null; then
+    systemctl is-active --quiet mcp-gateway-network-recovery.timer
+fi
 REMOTE
 }
 
@@ -106,6 +109,7 @@ OLD_DEPLOY_SHA=""
 TUNNEL_WAS_ENABLED=0
 GEMINI_WAS_ENABLED=0
 CLOUDFLARED_WAS_ENABLED=0
+NETWORK_RECOVERY_WAS_ENABLED=0
 ACTIVATED=0
 
 cleanup_local(){ rm -rf "$STAGE_DIR"; }
@@ -173,6 +177,9 @@ fi
 if ssh_pi "systemctl is-enabled --quiet mcp-gateway-cloudflared" >/dev/null 2>&1; then
     CLOUDFLARED_WAS_ENABLED=1
 fi
+if ssh_pi "systemctl is-enabled --quiet mcp-gateway-network-recovery.timer" >/dev/null 2>&1; then
+    NETWORK_RECOVERY_WAS_ENABLED=1
+fi
 
 echo "[3/8] Transferring immutable bundle..."
 ssh_pi "mkdir -p '$REMOTE_UPLOAD_DIR' && chmod 700 '$REMOTE_UPLOAD_DIR'"
@@ -195,7 +202,7 @@ printf '%s\n' "$candidate_check" | grep -Fq 'CANDIDATE_CHECK=PASS'
 if sudo find "$candidate" -type f \( -name '*.py' -o -name requirements.txt \) -print -quit | grep -q .; then
     exit 45
 fi
-for unit in mcp-gateway.target mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service; do
+for unit in mcp-gateway.target mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-network-recovery.service mcp-gateway-network-recovery.timer mcp-gateway-postboot.service; do
     sudo systemd-analyze verify "$candidate/config/systemd/$unit"
 done
 REMOTE
@@ -218,9 +225,9 @@ if [ "${MCP_DEPLOY_INJECT_FAILURE:-}" = after-activation ]; then
 fi
 
 echo "[6/8] Running production acceptance..."
-ssh_pi bash -s -- "$REMOTE_TARGET_DIR" "$LOCAL_ADAPTER_SHA" "$TUNNEL_WAS_ENABLED" "$GEMINI_WAS_ENABLED" "$CLOUDFLARED_WAS_ENABLED" <<'REMOTE'
+ssh_pi bash -s -- "$REMOTE_TARGET_DIR" "$LOCAL_ADAPTER_SHA" "$TUNNEL_WAS_ENABLED" "$GEMINI_WAS_ENABLED" "$CLOUDFLARED_WAS_ENABLED" "$NETWORK_RECOVERY_WAS_ENABLED" <<'REMOTE'
 set -euo pipefail
-current="$1"; expected_sha="$2"; tunnel_enabled="$3"; gemini_enabled="$4"; cloudflared_enabled="$5"
+current="$1"; expected_sha="$2"; tunnel_enabled="$3"; gemini_enabled="$4"; cloudflared_enabled="$5"; network_recovery_enabled="$6"
 db=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db
 systemctl is-enabled --quiet mcp-gateway.target
 systemctl is-active --quiet mcp-gateway.target
@@ -246,6 +253,10 @@ fi
 if [ "$cloudflared_enabled" = 1 ]; then
     systemctl is-enabled --quiet mcp-gateway-cloudflared
     systemctl is-active --quiet mcp-gateway-cloudflared
+fi
+if [ "$network_recovery_enabled" = 1 ]; then
+    systemctl is-enabled --quiet mcp-gateway-network-recovery.timer
+    systemctl is-active --quiet mcp-gateway-network-recovery.timer
 fi
 REMOTE
 

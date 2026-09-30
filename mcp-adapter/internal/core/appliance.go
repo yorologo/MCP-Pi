@@ -26,14 +26,16 @@ import (
 )
 
 const (
-	gatewayAdminServiceUnit       = "mcp-gateway-admin.service"
-	gatewayMCPServiceUnit         = "mcp-gateway-mcp.service"
-	gatewayGeminiServiceUnit      = "mcp-gateway-gemini.service"
-	gatewayTunnelServiceUnit      = "mcp-gateway-tunnel.service"
-	gatewayCloudflaredServiceUnit = "mcp-gateway-cloudflared.service"
-	gatewayMaintenanceServiceUnit = "mcp-gateway-maintenance.service"
-	gatewayMaintenanceTimerUnit   = "mcp-gateway-maintenance.timer"
-	gatewayPostbootServiceUnit    = "mcp-gateway-postboot.service"
+	gatewayAdminServiceUnit           = "mcp-gateway-admin.service"
+	gatewayMCPServiceUnit             = "mcp-gateway-mcp.service"
+	gatewayGeminiServiceUnit          = "mcp-gateway-gemini.service"
+	gatewayTunnelServiceUnit          = "mcp-gateway-tunnel.service"
+	gatewayCloudflaredServiceUnit     = "mcp-gateway-cloudflared.service"
+	gatewayMaintenanceServiceUnit     = "mcp-gateway-maintenance.service"
+	gatewayMaintenanceTimerUnit       = "mcp-gateway-maintenance.timer"
+	gatewayNetworkRecoveryServiceUnit = "mcp-gateway-network-recovery.service"
+	gatewayNetworkRecoveryTimerUnit   = "mcp-gateway-network-recovery.timer"
+	gatewayPostbootServiceUnit        = "mcp-gateway-postboot.service"
 
 	cloudflaredBinaryPath = "/usr/local/bin/cloudflared"
 	cloudflaredTokenPath  = "/home/mcp-gateway/.config/mcp-gateway/cloudflared.token"
@@ -47,6 +49,8 @@ var applianceObservedServiceUnits = []string{
 	gatewayCloudflaredServiceUnit,
 	gatewayMaintenanceServiceUnit,
 	gatewayMaintenanceTimerUnit,
+	gatewayNetworkRecoveryServiceUnit,
+	gatewayNetworkRecoveryTimerUnit,
 	gatewayPostbootServiceUnit,
 }
 
@@ -518,6 +522,20 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 			Name: "Maintenance Timer", Passed: timerActive,
 			Message: serviceStateMessage(gatewayMaintenanceTimerUnit, timerActive), Severity: "warning", Required: true,
 		})
+
+		if serviceIsEnabled(gatewayNetworkRecoveryTimerUnit) {
+			recoveryTimerActive := serviceIsActive(gatewayNetworkRecoveryTimerUnit)
+			recoveryServiceFailed := serviceIsFailed(gatewayNetworkRecoveryServiceUnit)
+			recoveryPassed := recoveryTimerActive && !recoveryServiceFailed
+			recoveryMessage := serviceStateMessage(gatewayNetworkRecoveryTimerUnit, recoveryTimerActive)
+			if recoveryServiceFailed {
+				recoveryMessage += "; " + gatewayNetworkRecoveryServiceUnit + " is failed"
+			}
+			checks = append(checks, DoctorCheck{
+				Name: "Network Recovery", Passed: recoveryPassed,
+				Message: recoveryMessage, Severity: "warning", Required: false,
+			})
+		}
 
 		postbootPassed := true
 		if os.Getenv("MCP_GATEWAY_POSTBOOT") != "1" {

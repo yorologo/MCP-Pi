@@ -10,6 +10,12 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 - `*` and `target_admin` now require explicit high-impact confirmation regardless of Target/Project wildcard scope; `*` still never implies `target_admin`, and `target_admin` still never implies trusted shell.
 - Grant selection remains usable without JavaScript; progressive enhancement adds preset expansion, compact selection summaries and accessible hover/focus/touch descriptions.
 
+### Reliability / network recovery
+- Adds an opt-in systemd network-recovery timer for USB Wi-Fi appliances. It establishes a healthy USB baseline, waits for consecutive local-gateway failures, reuses NetworkManager first, and only then permits a rate-limited bind/unbind of that exact USB interface.
+- Network recovery is disabled by default, fails closed when interface/driver/bind evidence is incomplete, never restarts MCP ingress or reboots the host, and reports its state through existing systemd/journald plus Doctor/status inventory.
+- Installer rollback and exact-SHA deployment now preserve and verify the optional timer when it was already enabled.
+- Recovery documentation distinguishes appliance Wi-Fi loss from tunnel failure and records the Android/Termux Bionic tracing failure mode that can corrupt SSH transport bytes.
+
 ### Fixed
 - Doctor now validates the maintenance timer by active lifecycle state under `mcp-gateway.target` instead of requiring a redundant independent enablement symlink.
 - Local HTTP readiness probes remain bounded but allow five seconds, preventing false postboot failure on the constrained ARMv6 appliance under startup load.
