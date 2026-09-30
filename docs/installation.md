@@ -1,106 +1,107 @@
 # Installation
 
-`install.sh` is the canonical install/reinstall/update/rollback engine. `scripts/deploy-pi.sh` is a maintainer promotion wrapper around the same installer, not a second activation engine. Publication status belongs to immutable Git tags/GitHub Releases rather than mutable source text.
+`install.sh` is the single install/reinstall/update/rollback engine. Maintainer deployment delegates lifecycle mutation to the same installer rather than implementing a second path.
 
-## Supported path
+## Requirements
 
-Recommended appliance path:
+Use an official GitHub Release bundle on the reference ARMv6 appliance whenever possible; it contains the prebuilt gateway and does not require Go.
 
-    release bundle
-      -> ./install.sh --check
-      -> sudo ./install.sh
-      -> initial Admin setup (/setup one-time token or local CLI)
-      -> Admin Console
-      -> status / doctor
+A source checkout can use the same installer only when a compatible prebuilt gateway is present or Go is already installed. The installer never installs a compiler.
 
-## Release bundle versus source checkout
+The real install requires root, a usable systemd host and the native commands it uses. Missing preconditions fail before activation.
 
-An official release bundle contains:
-- prebuilt Linux ARMv6 Go gateway binary;
-- thin CLI wrappers;
-- systemd units and narrow reboot polkit rule;
-- manifest/compatibility metadata;
-- `install.sh`;
-- current operational documentation;
-- `SHA256SUMS`.
+## Obtain the source or release
 
-It does not contain a compiler or second runtime implementation.
+Development/source path:
 
-A source checkout may build only when Go is already installed; the installer never installs a compiler.
+    git clone https://github.com/yorologo/MCP-Pi.git
+    cd MCP-Pi
 
-## Preflight
+For an appliance, download and extract the desired immutable GitHub Release bundle, then run the same installer from the extracted directory.
+
+A release bundle contains the gateway binary, thin wrappers, systemd/polkit assets, metadata, current operator docs, installer and checksums. It contains no development runtime.
+
+## Optional candidate check
 
     ./install.sh --check
 
-Preflight is non-mutating. For a release bundle it verifies `SHA256SUMS` before executing the candidate, then checks that the binary version/API/catalog/schema/protocol contract matches release metadata.
+This is non-mutating. It validates source/release integrity plus the binary/API/catalog/schema/protocol contract and emits `CANDIDATE_CHECK=PASS` on success. It intentionally does not claim that the current machine is an installable appliance.
 
 ## Install or reinstall
 
     sudo ./install.sh
 
-The installer:
-1. validates required tools and release integrity;
-2. creates/reuses the `mcp-gateway` service account;
-3. stages the Go runtime/configuration;
-4. generates missing local secrets from `/dev/urandom`;
-5. defaults Admin to `127.0.0.1`;
-6. creates a verified online SQLite backup before schema-changing work;
-7. saves the previous runtime and system assets;
-8. stops Admin/MCP and maintenance database users;
-9. activates the root-owned candidate;
-10. explicitly creates/migrates the Registry with `mcp-gateway migrate`;
-11. verifies Registry/runtime compatibility with non-mutating `status`;
-12. installs systemd/polkit assets;
-13. starts Admin/MCP, maintenance timer and postboot verification;
-14. runs Doctor;
-15. offers one-time Web bootstrap on a fresh non-interactive install, or optionally runs interactive CLI Admin setup.
+The installer, at a high level:
 
-Persistent state remains outside the runtime tree:
+1. validates host/source/release preconditions;
+2. creates or reuses the service account and private persistent directories;
+3. stages the candidate runtime without replacing the accepted runtime;
+4. prepares a verified SQLite backup plus matching system assets as one rollback set;
+5. keeps the previously accepted rollback set intact until the activation boundary;
+6. quiesces the appliance;
+7. promotes the rollback evidence and activates the candidate;
+8. explicitly creates/migrates the Registry;
+9. verifies Registry/runtime compatibility;
+10. installs systemd/polkit assets while preserving explicitly enabled optional ingress;
+11. starts `mcp-gateway.target`;
+12. verifies readiness and Doctor before reporting `INSTALL_VERIFIED`.
 
-    /home/mcp-gateway/mcp-gateway/               root-owned application
+Persistent state is outside the runtime tree:
+
+    /home/mcp-gateway/mcp-gateway/               root-owned runtime
     /home/mcp-gateway/.local/share/mcp-gateway/ Registry and backups
-    /home/mcp-gateway/.config/mcp-gateway/       private local config/secrets
+    /home/mcp-gateway/.config/mcp-gateway/       private config/secrets
 
-## Registry compatibility
+## Bootstrap
 
-Fresh install explicitly creates schema 6. Direct explicit migration supports schema 4 -> 5 -> 6, schema 5 -> 6, and already-current schema 6.
-
-Normal runtime open, `status`, Doctor and Restore never silently migrate. Older schemas must first be upgraded by a release that explicitly supports them.
-
-## Security defaults
-
-    gateway_enabled = true
-    writes_enabled  = false
-    shell_enabled   = false
-
-Existing settings are preserved through normal update.
-
-## Setup
-
-Interactive/local recovery path:
+Interactive/local path:
 
     sudo -u mcp-gateway mcp-gateway setup
 
-For non-interactive automation:
+Automation can pass the password through stdin; see:
 
-    printf '%s\n' "$PASSWORD" | sudo -u mcp-gateway mcp-gateway setup --password-stdin
+    mcp-gateway setup --help
 
-Setup requires the Registry to already be current; it never creates or migrates schema.
-
-On a **fresh non-interactive** installation, the installer creates a private one-time token at:
+A fresh non-interactive install creates:
 
     /home/mcp-gateway/.config/mcp-gateway/admin-bootstrap.token
 
-The installer prints only the local command needed to read it. Visit `/setup`, supply that token and choose the Admin password. The token is mode `0600`, expires after 15 minutes, is accepted only while no enabled Admin exists, and is deleted after successful setup. If it expires, use the local CLI setup command.
+The token is private, one-time and short-lived. It is accepted only while no enabled Admin exists and is removed after successful Web or CLI setup.
 
-Do not place passwords or bootstrap tokens in command arguments, Git, logs or release artifacts. `sudo ./install.sh --no-setup` skips interactive CLI bootstrap; on a fresh Registry it still enables the bounded one-time Web setup flow.
+`INSTALL_VERIFIED` proves the runtime installation. The following `bootstrap=complete|required` marker reports Admin-bootstrap state separately.
 
-## Rollback
+Do not place passwords or bootstrap tokens in command arguments, Git, logs or release artifacts.
+
+## First configuration
+
+After bootstrap, use Admin Console to create:
+
+1. Target;
+2. Project;
+3. AI/MCP Client;
+4. minimal Grants.
+
+Verify Target identity and **Check Effective Access** before broadening writes, shell or privilege. The detailed UI/configuration contract is in [configuration.md](configuration.md).
+
+## Updates
+
+Use the new release/source candidate and run the same installer:
+
+    ./install.sh --check     # optional candidate-only check
+    sudo ./install.sh
+
+Existing Registry/settings and private configuration are preserved. Schema changes happen only through the explicit migration phase inside the coordinated installer lifecycle; ordinary runtime open, `status`, Doctor and restore do not silently migrate.
+
+Exact supported schema/API/catalog/protocol values belong to `compatibility.json`, `manifest.json`, migrations/tests and `mcp-gateway version --json`.
+
+## Installer rollback
 
     sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
 
-Rollback restores the pre-install Registry **without migration**, restores previous runtime/system assets, restarts services and requires Doctor before reporting `ROLLBACK_VERIFIED`.
+Rollback restores the matching pre-install Registry snapshot, previous runtime/system assets and prior service enablement without migrating the restored Registry. It restarts and verifies the appliance before emitting `ROLLBACK_VERIFIED`.
 
-## Tunnel
+If an update is interrupted while rollback metadata is being promoted, the installer recovers the last complete rollback set on the next invocation.
 
-The base gateway works without a cloud tunnel. Existing private tunnel credentials are preserved; the installer does not invent or enable a new external path automatically. Tunnel startup waits for MCP `/ready`, not merely `/live`.
+## Optional ingress
+
+Base installation does not require or automatically enable cloud ingress. Existing private credentials are preserved. Enable optional ingress only after its client identity, token/configuration and grants are ready.

@@ -84,27 +84,17 @@ func TestFreshRegistrySafeDefaults(t *testing.T) {
 	}
 }
 
-func TestCurrentDocumentationDescribesGoOnlyRuntimeWithoutMutableReleaseLabels(t *testing.T) {
+func TestCurrentDocumentationIsConsolidatedAndGoOnly(t *testing.T) {
 	current := []string{
 		"README.md",
 		"AGENTS.md",
 		"CONTRIBUTING.md",
-		"docs/README.md",
 		"docs/installation.md",
 		"docs/configuration.md",
 		"docs/operations.md",
 		"docs/recovery.md",
-		"docs/troubleshooting.md",
 		"docs/architecture.md",
 		"docs/security.md",
-		"docs/admin-console.md",
-		"docs/project-state.md",
-		"docs/reference/compatibility.md",
-		"docs/reference/deployment.md",
-		"docs/reference/client-grants.md",
-		"docs/reference/controlled-write.md",
-		"docs/reference/performance.md",
-		"docs/reference/chatgpt-gate.md",
 	}
 	forbidden := []string{
 		"Python 3.11+",
@@ -133,17 +123,70 @@ func TestCurrentDocumentationDescribesGoOnlyRuntimeWithoutMutableReleaseLabels(t
 			}
 		}
 	}
-	for _, rel := range []string{"README.md", "docs/installation.md", "docs/project-state.md"} {
-		data, _ := os.ReadFile(filepath.Join("..", filepath.FromSlash(rel)))
-		text := string(data)
+
+	for _, rel := range []string{"README.md", "docs/installation.md"} {
+		data, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := strings.ToLower(string(data))
 		for _, stale := range []string{"latest stable release", "current source candidate"} {
-			if strings.Contains(strings.ToLower(text), stale) {
+			if strings.Contains(text, stale) {
 				t.Errorf("%s embeds mutable publication label %q", rel, stale)
 			}
 		}
-		if !strings.Contains(text, "Git") || !strings.Contains(text, "Release") {
-			t.Errorf("%s does not direct publication status to Git tags/releases", rel)
+		if !strings.Contains(text, "git") || !strings.Contains(text, "release") {
+			t.Errorf("%s does not direct publication identity to Git/Release artifacts", rel)
 		}
+	}
+
+	docEntries, err := os.ReadDir(filepath.Join("..", "docs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRootDocs := map[string]bool{
+		"installation.md":  true,
+		"configuration.md": true,
+		"operations.md":    true,
+		"recovery.md":      true,
+		"architecture.md":  true,
+		"security.md":      true,
+	}
+	for _, entry := range docEntries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		if !wantRootDocs[entry.Name()] {
+			t.Errorf("unexpected root CURRENT doc: docs/%s", entry.Name())
+		}
+		delete(wantRootDocs, entry.Name())
+	}
+	for missing := range wantRootDocs {
+		t.Errorf("missing root CURRENT doc: docs/%s", missing)
+	}
+
+	obsolete := []string{
+		"docs/README.md",
+		"docs/admin-console.md",
+		"docs/troubleshooting.md",
+		"docs/project-state.md",
+		"docs/reference",
+		"docs/releases",
+		"docs/archive/runbooks",
+		"docs/archive/superpowers",
+	}
+	for _, rel := range obsolete {
+		if _, err := os.Stat(filepath.Join("..", filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Errorf("redundant documentation path must be absent: %s", rel)
+		}
+	}
+
+	changelog, err := os.ReadFile(filepath.Join("..", "CHANGELOG.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(changelog), "## Unreleased") {
+		t.Fatal("CHANGELOG must use an Unreleased section instead of a mutable candidate/stable label")
 	}
 }
 
@@ -183,6 +226,90 @@ func TestOperationalContractsRemainExplicit(t *testing.T) {
 			if !strings.Contains(text, token) {
 				t.Errorf("%s missing contract token %q", rel, token)
 			}
+		}
+	}
+}
+
+func TestReleasePackageUsesConsolidatedOperatorDocs(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "scripts", "build-release-package.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := string(data)
+	for _, doc := range []string{"installation.md", "configuration.md", "operations.md", "recovery.md", "architecture.md", "security.md"} {
+		if !strings.Contains(builder, doc) {
+			t.Errorf("release package builder missing CURRENT operator doc %s", doc)
+		}
+	}
+	for _, obsolete := range []string{"admin-console.md", "troubleshooting.md", "project-state.md"} {
+		if strings.Contains(builder, obsolete) {
+			t.Errorf("release package builder still includes redundant doc %s", obsolete)
+		}
+	}
+}
+
+func TestTaggedReleaseWaitsForValidationAndReusesCanonicalBundle(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+	for _, required := range []string{
+		"tags: ['v*']",
+		"release:",
+		"needs: validate",
+		"contents: write",
+		"scripts/build-release-package.sh",
+		"git cat-file -t",
+		"--verify-tag",
+		"gh release create",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("tag release workflow missing %q", required)
+		}
+	}
+}
+
+func TestApplianceTargetIsCanonicalLifecycleUnit(t *testing.T) {
+	root := filepath.Join("..", "config", "systemd")
+	data, err := os.ReadFile(filepath.Join(root, "mcp-gateway.target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := string(data)
+	for _, required := range []string{
+		"Requires=mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-postboot.service",
+		"Wants=mcp-gateway-maintenance.timer",
+		"WantedBy=multi-user.target",
+	} {
+		if !strings.Contains(target, required) {
+			t.Errorf("appliance target missing %q", required)
+		}
+	}
+
+	maintenanceData, err := os.ReadFile(filepath.Join(root, "mcp-gateway-maintenance.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(maintenanceData), "PartOf=mcp-gateway.target") {
+		t.Fatal("maintenance oneshot must not be restart-coupled to the appliance target")
+	}
+
+	for _, unit := range []string{
+		"mcp-gateway-admin.service",
+		"mcp-gateway-mcp.service",
+		"mcp-gateway-gemini.service",
+		"mcp-gateway-cloudflared.service",
+		"mcp-gateway-tunnel.service",
+		"mcp-gateway-maintenance.timer",
+		"mcp-gateway-postboot.service",
+	} {
+		data, err := os.ReadFile(filepath.Join(root, unit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "PartOf=mcp-gateway.target") {
+			t.Errorf("%s is not tied to appliance lifecycle", unit)
 		}
 	}
 }
@@ -229,19 +356,11 @@ func TestPostbootRunsAfterOptionalIngressStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	installer := string(installData)
-	start := strings.Index(installer, "restart_runtime() {")
-	end := strings.Index(installer, "restore_registry_for_rollback() {")
-	if start < 0 || end <= start {
-		t.Fatalf("installer restart_runtime bounds missing: start=%d end=%d", start, end)
+	if !strings.Contains(installer, "systemctl restart mcp-gateway.target") {
+		t.Fatal("installer lifecycle must restart the canonical appliance target")
 	}
-	restartRuntime := installer[start:end]
-	tunnel := strings.Index(restartRuntime, "systemctl restart mcp-gateway-tunnel")
-	postboot := strings.Index(restartRuntime, "systemctl restart mcp-gateway-postboot.service")
-	if tunnel < 0 || postboot < 0 {
-		t.Fatalf("restart_runtime missing tunnel/postboot restart commands: tunnel=%d postboot=%d", tunnel, postboot)
-	}
-	if tunnel > postboot {
-		t.Fatal("restart_runtime must start the optional tunnel before postboot Doctor")
+	if !strings.Contains(installer, "Compatibility for rollback to the immediately previous release") {
+		t.Fatal("installer must retain the bounded one-release fallback needed to roll back from the first target-based release")
 	}
 }
 
@@ -316,13 +435,33 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	if activation < 0 {
 		t.Fatal("installer activation/migration boundary is missing")
 	}
-	stopRel := strings.Index(installer[activation:], "systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-cloudflared mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin")
+	stopRel := strings.Index(installer[activation:], "stop_runtime")
+	promoteRel := strings.Index(installer[activation:], "promote_rollback_set \"$ROLLBACK_STAGE\"")
+	detachRel := strings.Index(installer[activation:], "detach_component_boot_links")
 	migrateRel := strings.Index(installer[activation:], "migrate -db \"$DB_PATH\"")
-	if stopRel < 0 || migrateRel < 0 || stopRel >= migrateRel {
-		t.Fatal("installer must stop database users before explicit Registry migration")
+	if stopRel < 0 || promoteRel < 0 || detachRel < 0 || migrateRel < 0 ||
+		stopRel >= promoteRel || promoteRel >= detachRel || detachRel >= migrateRel {
+		t.Fatal("installer must quiesce, preserve rollback evidence and detach legacy boot links before explicit Registry migration")
 	}
 	if strings.Contains(installer[:activation], "migrate -db \"$DB_PATH\"") {
 		t.Fatal("installer must not migrate the live Registry before the activation stop boundary")
+	}
+	if !strings.Contains(installer[:activation], `save_system_files "$ROLLBACK_STAGE"`) ||
+		!strings.Contains(installer[:activation], `"$ROLLBACK_STAGE/registry-backup.path"`) {
+		t.Fatal("installer must prepare runtime/system and Registry rollback evidence before the activation boundary")
+	}
+	if strings.Contains(installer[:activation], `rm -rf "$UNIT_BACKUP"`) {
+		t.Fatal("installer must not destroy the previously accepted rollback set before activation")
+	}
+	if !strings.Contains(installer, `BASE_ENABLED_UNITS="mcp-gateway.target"`) {
+		t.Fatal("installer must enable the appliance target as the single base boot entrypoint")
+	}
+	if !strings.Contains(installer, "recover_interrupted_rollback_set") ||
+		!strings.Contains(installer, `[ ! -d "$UNIT_BACKUP" ] && [ -d "$UNIT_BACKUP_OLD" ]`) {
+		t.Fatal("installer must recover rollback metadata left by an interrupted promotion")
+	}
+	if !strings.Contains(installer, `if [ -d "$UNIT_BACKUP" ]; then`) {
+		t.Fatal("installer must not discard the previous rollback set while canonical rollback metadata is missing")
 	}
 	if !strings.Contains(installer, "verify_source_integrity") || !strings.Contains(installer, "sha256sum -c SHA256SUMS") {
 		t.Fatal("installer must verify release-bundle checksums before mutation")

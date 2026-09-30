@@ -1,79 +1,145 @@
-# Recovery
+# Recovery and troubleshooting
 
-Recovery for the Go-only runtime deliberately uses the same lifecycle primitives as normal operation. Use immutable Git tags/GitHub Releases to identify a published version and live deployment evidence to identify what the appliance is actually running.
+Use the same lifecycle primitives as normal operation. Do not invent a second recovery path because a component is unhealthy.
 
-## 1. Diagnose before mutating
+## Diagnose before mutating
 
-Inspect:
+Start with:
 
-    systemctl status mcp-gateway-admin mcp-gateway-mcp
-    journalctl -u mcp-gateway-admin -u mcp-gateway-mcp
+    systemctl status mcp-gateway.target
     sudo -u mcp-gateway mcp-gateway status
     sudo -u mcp-gateway mcp-gateway doctor
 
-A live process does not imply readiness. Doctor and `/ready` are the canonical appliance evidence.
+Then inspect the relevant unit journal; the canonical logging commands are listed in [operations.md](operations.md). A live process does not imply readiness.
 
-## 2. Application rollback
+## Common failures
+
+### Installation has no compatible binary
+
+Use an official release bundle on the ARMv6 appliance. A source checkout only builds when Go is already available; the installer does not install a compiler.
+
+### Candidate check fails
+
+Run:
+
+    ./install.sh --check
+
+Read the first explicit error. This checks candidate integrity/contract only; the real installer separately validates host preconditions.
+
+### Registry schema is not current
+
+`status` is intentionally non-mutating. Do not repeatedly restart services hoping for an implicit migration.
+
+For a manual coordinated recovery:
+
+1. create/verify a backup;
+2. stop `mcp-gateway.target`;
+3. run `mcp-gateway migrate`;
+4. run `status`;
+5. start the target and run Doctor.
+
+Normal install/update performs its supported migration inside the installer lifecycle.
+
+### Admin is unreachable
+
+Admin binds to loopback by default. Verify the SSH port forward, then inspect:
+
+    systemctl status mcp-gateway-admin
+    journalctl -u mcp-gateway-admin
+
+### MCP /ready fails
+
+Inspect:
+
+    systemctl status mcp-gateway-mcp
+    journalctl -u mcp-gateway-mcp
+    sudo -u mcp-gateway mcp-gateway doctor
+
+Core/Registry initialization failure intentionally keeps readiness unavailable.
+
+### Target unreachable or moved
+
+Check endpoint, SSH credentials, Target enablement and the pinned host key. A changed host key must be investigated; it is never auto-trusted.
+
+### TOOL_NOT_ALLOWED
+
+Check client enablement, scoped Grants and **Check Effective Access**. `tools/list` is policy-filtered and can expose fewer tools than the Core catalog.
+
+### WRITES_DISABLED / TARGET_SHELL_DISABLED
+
+Confirm the relevant Project/Grant and global switch instead of bypassing the denial; see [configuration.md](configuration.md) and [security.md](security.md).
+
+### Privileged Target command denied
+
+Check ordinary shell/task authorization first, then `target_admin`, Target privilege policy, approval/boot identity and the verified privilege backend.
+
+### Backup or restore fails
+
+Do not copy a live SQLite database as an ordinary file. Use the Go backup/restore commands and inspect their explicit ownership/free-space/integrity/quiescence errors.
+
+### Reboot fails
+
+Do not grant general sudo to work around a reboot failure. Gateway reboot uses the constrained native mechanism described in [security.md](security.md).
+
+### Update/deployment interrupted
+
+Preserve rollback evidence. Do not start a second deployment merely because the control session disappeared; maintainers should inspect the resumable deployment job as described in `CONTRIBUTING.md` in a source checkout.
+
+## Installer rollback
 
 For an installer-managed update:
 
     sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
 
-Exact-commit deployment delegates activation and rollback to the same installed `install.sh`; do not create a second rollback procedure.
+Rollback restores the matching pre-install Registry snapshot without migration, previous runtime/system assets and service state, then requires Doctor before reporting `ROLLBACK_VERIFIED`.
 
-Rollback stops database users, restores the pre-install Registry without migration, restores the previous runtime/system assets, restarts services and requires Doctor before reporting `ROLLBACK_VERIFIED`.
+## Registry backup and restore
 
-## 3. Registry backup
+Create a backup:
 
     sudo -u mcp-gateway mcp-gateway backup
 
-The command uses SQLite's online backup API and records integrity, schema and SHA-256 evidence.
+For manual restore, stop the appliance:
 
-## 4. Registry restore
+    sudo systemctl stop mcp-gateway.target
 
-Stop all database users first:
-
-    sudo systemctl stop mcp-gateway-maintenance.timer
-    sudo systemctl stop mcp-gateway-maintenance.service
-    sudo systemctl stop mcp-gateway-postboot.service
-    sudo systemctl stop mcp-gateway-gemini.service
-    sudo systemctl stop mcp-gateway-mcp.service
-    sudo systemctl stop mcp-gateway-admin.service
-
-The restore command checks the same Registry-user/scheduler inventory and refuses to continue while any of those units is active. OpenAI/Cloudflare edge tunnel processes are not Registry users and do not need to be stopped for SQLite safety.
-
-Then restore:
+Then:
 
     sudo -u mcp-gateway mcp-gateway restore <backup.db>
 
-Restore preserves the backup schema exactly. It does not migrate.
+Restore verifies the backup and preserves its schema exactly; it does not migrate. It also refuses to proceed while semantic Registry users/schedulers are still active.
 
-If the runtime to be activated requires a newer directly supported schema, run migration explicitly while services remain stopped:
+If the runtime needs a newer directly supported schema, migrate explicitly while the appliance remains stopped:
 
     sudo -u mcp-gateway mcp-gateway migrate
 
-Then start/verify the appliance using the procedures in [operations.md](operations.md).
+Then:
 
-## 5. Disaster recovery scope
+    sudo systemctl start mcp-gateway.target
+    sudo -u mcp-gateway mcp-gateway doctor --check-targets
 
-The supported recovery contract is:
-- reinstall the immutable MCP-Pi runtime;
-- restore the Registry from a verified backup;
-- reprovision private host/SSH/tunnel secrets from their authoritative secure source.
+## Disaster recovery
 
-MCP-Pi does not maintain a second appliance-wide secret-archive format without a complete tested restore contract.
+The supported contract is:
 
-## Acceptance after recovery
+1. reinstall an immutable MCP-Pi runtime;
+2. restore the Registry from a verified backup;
+3. reprovision private SSH/host/tunnel credentials from their authoritative secure source;
+4. verify identity, readiness and effective access.
 
-Verify:
-- Registry integrity and expected schema;
-- Admin and MCP services active;
-- MCP `/live` and `/ready`;
-- Doctor;
-- maintenance timer enabled;
-- optional tunnel state if configured;
-- Target SSH identity;
+MCP-Pi does not maintain a second supported archive of all host secrets.
+
+## Recovery acceptance
+
+Verify what applies:
+
+- Registry integrity and runtime compatibility;
+- `mcp-gateway.target` enabled/active;
+- Admin and MCP readiness;
+- maintenance timer/postboot state;
+- optional ingress when enabled;
+- Target SSH identity/reachability;
 - client/grant effective access;
-- deployment provenance when applicable.
+- deployment provenance when relevant.
 
-Do not declare recovery complete solely because systemd reports a process running.
+Do not declare recovery complete from a zero exit code or process state alone.

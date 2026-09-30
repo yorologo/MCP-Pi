@@ -1,4 +1,5 @@
 [Unit]
+PartOf=mcp-gateway.target
 Description=MCP Gateway Post-Boot Health Verification
 After=mcp-gateway-mcp.service mcp-gateway-admin.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service
 Wants=mcp-gateway-mcp.service
@@ -31,4 +32,4 @@ ExecStart=/home/mcp-gateway/mcp-gateway/bin/mcp-gateway doctor
 RemainAfterExit=yes
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=mcp-gateway.target

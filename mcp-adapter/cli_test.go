@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"mcp-gateway-adapter/internal/admin"
 	"mcp-gateway-adapter/internal/registry"
 	"mcp-gateway-adapter/internal/sqliteutil"
 )
@@ -112,9 +113,22 @@ func TestCLISetupExistingAdminIsIdempotent(t *testing.T) {
 	}
 	_ = store.Close()
 
+	home := t.TempDir()
+	t.Setenv("MCP_GATEWAY_HOME", home)
+	tokenPath := admin.BootstrapTokenPath("")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte("stale-bootstrap-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	rc := cmdSetup([]string{"-db", dbPath, "--admin-user", "testadmin"})
 	if rc != 0 {
 		t.Fatalf("cmdSetup returned %d, expected 0", rc)
+	}
+	if _, err := os.Stat(tokenPath); !os.IsNotExist(err) {
+		t.Fatalf("CLI setup did not invalidate bootstrap token: %v", err)
 	}
 }
 

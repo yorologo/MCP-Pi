@@ -41,9 +41,11 @@ if [ -f "$PROJECT_ROOT/.mcp-pi.local.env" ]; then
     set +a
 fi
 
-PI_HOST="${MCP_PI_HOST:-192.168.68.55}"
-PI_USER="${MCP_PI_USER:-yorologo}"
+PI_HOST="${MCP_PI_HOST:-}"
+PI_USER="${MCP_PI_USER:-}"
 PI_IDENTITY_FILE="${MCP_PI_IDENTITY_FILE:-$HOME/.ssh/id_rsa}"
+[ -n "$PI_HOST" ] || fail "MCP_PI_HOST must be set directly or in .mcp-pi.local.env"
+[ -n "$PI_USER" ] || fail "MCP_PI_USER must be set directly or in .mcp-pi.local.env"
 [ -r "$PI_IDENTITY_FILE" ] || fail "SSH identity not readable: $PI_IDENTITY_FILE"
 
 SSH_OPTS=(-i "$PI_IDENTITY_FILE" -o BatchMode=yes -o StrictHostKeyChecking=yes)
@@ -63,6 +65,7 @@ test "$(sha256sum "$current/bin/mcp-gateway-adapter" | awk '{print $1}')" = "$ex
 grep -Fq "\"commit\": \"$expected\"" "$deployment"
 grep -Fq '"runtime": "go-only"' "$deployment"
 grep -Fq '"verified": true' "$deployment"
+systemctl is-active --quiet mcp-gateway.target
 systemctl is-active --quiet mcp-gateway-admin
 systemctl is-active --quiet mcp-gateway-mcp
 systemctl is-active --quiet mcp-gateway-postboot
@@ -187,11 +190,12 @@ candidate="$(find "$upload/extracted" -mindepth 1 -maxdepth 1 -type d -name 'MCP
 test -n "$candidate"
 test "$(sha256sum "$candidate/bin/mcp-gateway-adapter" | awk '{print $1}')" = "$expected_adapter"
 sudo sha256sum "$candidate/bin/mcp-gateway-adapter" >/dev/null
-sudo "$candidate/install.sh" --check >/dev/null
+candidate_check="$(sudo "$candidate/install.sh" --check)"
+printf '%s\n' "$candidate_check" | grep -Fq 'CANDIDATE_CHECK=PASS'
 if sudo find "$candidate" -type f \( -name '*.py' -o -name requirements.txt \) -print -quit | grep -q .; then
     exit 45
 fi
-for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service; do
+for unit in mcp-gateway.target mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service; do
     sudo systemd-analyze verify "$candidate/config/systemd/$unit"
 done
 REMOTE
@@ -218,9 +222,11 @@ ssh_pi bash -s -- "$REMOTE_TARGET_DIR" "$LOCAL_ADAPTER_SHA" "$TUNNEL_WAS_ENABLED
 set -euo pipefail
 current="$1"; expected_sha="$2"; tunnel_enabled="$3"; gemini_enabled="$4"; cloudflared_enabled="$5"
 db=/home/mcp-gateway/.local/share/mcp-gateway/gateway.db
+systemctl is-enabled --quiet mcp-gateway.target
+systemctl is-active --quiet mcp-gateway.target
 systemctl is-active --quiet mcp-gateway-admin
 systemctl is-active --quiet mcp-gateway-mcp
-systemctl is-enabled --quiet mcp-gateway-maintenance.timer
+systemctl is-active --quiet mcp-gateway-maintenance.timer
 curl -fsS http://127.0.0.1/login >/dev/null
 curl -fsS http://127.0.0.1:8090/live >/dev/null
 curl -fsS http://127.0.0.1:8090/ready >/dev/null

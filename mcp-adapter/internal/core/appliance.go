@@ -684,30 +684,38 @@ func (c *Core) GatewayMaintenance(ctx context.Context, requestID, actor string) 
 	bakSize, _ := bakResult["size_bytes"].(int64)
 
 	backupsDir := c.backupDir()
-	prunedCount := 0
+	protectedRollbackBackup := currentRollbackBackup(backupsDir, filepath.Dir(c.dbPath()))
 	entries, err := os.ReadDir(backupsDir)
 	if err != nil {
 		return errorResponse("gateway_maintenance", "BACKUP_ENUMERATION_FAILED", "Failed to enumerate backup directory: "+err.Error(), requestID, "", "", started)
 	}
-	var backupFiles []string
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "gateway_backup_") && strings.HasSuffix(e.Name(), ".db") {
-			backupFiles = append(backupFiles, filepath.Join(backupsDir, e.Name()))
+	groups := map[string][]string{
+		"gateway_backup_":      {},
+		"gateway-pre-install-": {},
+		"pre_restore_":         {},
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".db") {
+			continue
+		}
+		for prefix := range groups {
+			if strings.HasPrefix(entry.Name(), prefix) {
+				groups[prefix] = append(groups[prefix], filepath.Join(backupsDir, entry.Name()))
+				break
+			}
 		}
 	}
-	sort.Slice(backupFiles, func(i, j int) bool {
-		fi, err1 := os.Stat(backupFiles[i])
-		fj, err2 := os.Stat(backupFiles[j])
-		if err1 != nil || err2 != nil {
-			return backupFiles[i] < backupFiles[j]
+	prunedCount := 0
+	for prefix, files := range groups {
+		keep := 3
+		if prefix == "gateway_backup_" {
+			keep = 5
 		}
-		return fi.ModTime().Before(fj.ModTime())
-	})
-	for _, old := range backupFiles[:max(0, len(backupFiles)-5)] {
-		if err := os.Remove(old); err != nil {
+		pruned, err := pruneManagedBackups(files, keep, protectedRollbackBackup)
+		if err != nil {
 			return errorResponse("gateway_maintenance", "BACKUP_PRUNE_FAILED", "Failed to prune old backup: "+err.Error(), requestID, "", "", started)
 		}
-		prunedCount++
+		prunedCount += pruned
 	}
 
 	var integrity string
@@ -749,15 +757,57 @@ func (c *Core) GatewayMaintenance(ctx context.Context, requestID, actor string) 
 		"completed_at": time.Now().UTC().Format(time.RFC3339),
 	}
 
-	durMS := time.Since(started).Milliseconds()
-	_ = c.store.RecordActivity(ctx, registry.Activity{
-		Actor:      nonEmpty(actor, "mcp-local"),
-		Action:     "MAINTENANCE_RUN",
-		DurationMS: &durMS,
-		Success:    true,
-		Detail:     mustJSON(map[string]any{"doctor_status": docStatus, "pruned": prunedCount}),
-	})
+	if err := c.recordAuditRequired(ctx, actor, "MAINTENANCE_RUN", "", "", map[string]any{
+		"doctor_status": docStatus,
+		"pruned":        prunedCount,
+	}, started); err != nil {
+		return errorResponse("gateway_maintenance", "AUDIT_UNAVAILABLE", "Maintenance completed but final audit evidence could not be persisted", requestID, "", "", started)
+	}
 	return successResponse("gateway_maintenance", res, requestID, "", "", started)
+}
+
+func currentRollbackBackup(backupsDir, dataDir string) string {
+	pointer := filepath.Join(dataDir, "install-unit-backup", "registry-backup.path")
+	data, err := os.ReadFile(pointer)
+	if err != nil {
+		return ""
+	}
+	candidate := filepath.Clean(strings.TrimSpace(string(data)))
+	if candidate == "." || filepath.Dir(candidate) != filepath.Clean(backupsDir) {
+		return ""
+	}
+	return candidate
+}
+
+func pruneManagedBackups(files []string, keep int, protected string) (int, error) {
+	if keep < 0 {
+		keep = 0
+	}
+	sort.Slice(files, func(i, j int) bool {
+		fi, err1 := os.Stat(files[i])
+		fj, err2 := os.Stat(files[j])
+		if err1 != nil || err2 != nil {
+			return files[i] < files[j]
+		}
+		return fi.ModTime().After(fj.ModTime())
+	})
+
+	kept := 0
+	pruned := 0
+	for _, path := range files {
+		if filepath.Clean(path) == protected {
+			continue
+		}
+		if kept < keep {
+			kept++
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return pruned, err
+		}
+		pruned++
+	}
+	return pruned, nil
 }
 
 var scheduleReboot = scheduleRebootWithLogind

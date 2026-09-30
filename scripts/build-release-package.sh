@@ -52,10 +52,8 @@ git -C "$ROOT" archive "$SHA" config | tar -xf - -C "$PKG_ROOT"
 mkdir -p "$PKG_ROOT/docs"
 for doc in \
     installation.md configuration.md operations.md recovery.md \
-    security.md troubleshooting.md admin-console.md architecture.md; do
-    if git -C "$ROOT" cat-file -e "$SHA:docs/$doc" 2>/dev/null; then
-        git -C "$ROOT" show "$SHA:docs/$doc" > "$PKG_ROOT/docs/$doc"
-    fi
+    architecture.md security.md; do
+    git -C "$ROOT" show "$SHA:docs/$doc" > "$PKG_ROOT/docs/$doc"
 done
 
 # Normalize package modes so the artifact is independent of the caller's umask.

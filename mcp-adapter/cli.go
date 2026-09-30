@@ -326,10 +326,10 @@ func cmdMaintenance(args []string) int {
 
 	r, _ := resp["result"].(map[string]any)
 	fmt.Printf("[OK] Database Backup      : %v (%v bytes)\n", r["backup_created"], r["backup_size_bytes"])
-	fmt.Printf("[OK] Pruned Old Backups   : %v backup(s) pruned (kept latest 5)\n", r["pruned_backups_count"])
+	fmt.Printf("[OK] Pruned Old Backups   : %v managed backup(s) pruned\n", r["pruned_backups_count"])
 	fmt.Printf("[OK] SQLite Integrity     : %v\n", r["database_integrity"])
 	fmt.Printf("[OK] Doctor Overall       : %v\n", r["doctor_status"])
-	fmt.Printf("[OK] Security Updates     : %v\n", r["security_updates"])
+	fmt.Printf("[INFO] Security Updates   : %v\n", r["security_updates"])
 	if resInfo, ok := r["resources"].(map[string]any); ok {
 		fmt.Printf("[OK] Rootfs Free Space    : %v GB\n", resInfo["disk_free_gb"])
 		fmt.Printf("[OK] Available Memory     : %v MB\n", resInfo["memory_available_mb"])
@@ -547,11 +547,7 @@ func cmdSetup(args []string) int {
 				fmt.Fprintf(os.Stderr, "[ERROR] Failed to hash password: %v\n", err)
 				return 1
 			}
-			_, err = store.DB().ExecContext(ctx, `
-				INSERT INTO admin_users(username, password_hash, enabled)
-				VALUES (?, ?, 1)
-				ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash, enabled = 1
-			`, *adminUser, hash)
+			err = store.SetAdminPassword(ctx, *adminUser, hash)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[ERROR] Failed to store admin user: %v\n", err)
 				return 1
@@ -575,6 +571,10 @@ func cmdSetup(args []string) int {
 	}
 	if enabledAdmins == 0 {
 		fmt.Fprintln(os.Stderr, "[ERROR] Setup is incomplete: no enabled Admin user exists.")
+		return 1
+	}
+	if err := os.Remove(admin.BootstrapTokenPath(os.Getenv("MCP_ADMIN_SECRET_FILE"))); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "[ERROR] Admin configured but bootstrap token could not be removed: %v\n", err)
 		return 1
 	}
 

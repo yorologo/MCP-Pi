@@ -1,4 +1,5 @@
 [Unit]
+PartOf=mcp-gateway.target
 Description=MCP-Pi Secure MCP Tunnel to OpenAI
 Documentation=https://github.com/openai/tunnel-client
 After=network-online.target mcp-gateway-mcp.service
@@ -31,4 +32,4 @@ PrivateTmp=true
 NoNewPrivileges=true
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=mcp-gateway.target

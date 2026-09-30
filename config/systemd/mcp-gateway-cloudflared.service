@@ -1,4 +1,5 @@
 [Unit]
+PartOf=mcp-gateway.target
 Description=MCP-Pi Cloudflare private connector
 After=network-online.target mcp-gateway-gemini.service
 Wants=network-online.target mcp-gateway-gemini.service
@@ -24,4 +25,4 @@ AmbientCapabilities=
 LockPersonality=true
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=mcp-gateway.target

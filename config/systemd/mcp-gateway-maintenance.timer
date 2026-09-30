@@ -1,4 +1,5 @@
 [Unit]
+PartOf=mcp-gateway.target
 Description=Weekly Scheduled Safe Maintenance Timer for MCP-Pi Gateway
 RefuseManualStart=no
 RefuseManualStop=no
@@ -8,4 +9,4 @@ OnCalendar=Sun *-*-* 03:30:00
 Persistent=true
 
 [Install]
-WantedBy=timers.target
+WantedBy=mcp-gateway.target

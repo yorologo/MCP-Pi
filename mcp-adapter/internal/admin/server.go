@@ -45,6 +45,19 @@ type Server struct {
 	mu            sync.Mutex
 }
 
+// BootstrapTokenPath returns the one-time Admin bootstrap token path used by
+// both Web and CLI setup. A custom Admin secret keeps both files together.
+func BootstrapTokenPath(secretFile string) string {
+	if strings.TrimSpace(secretFile) != "" {
+		return filepath.Join(filepath.Dir(secretFile), "admin-bootstrap.token")
+	}
+	home := os.Getenv("MCP_GATEWAY_HOME")
+	if home == "" {
+		home = "/home/mcp-gateway"
+	}
+	return filepath.Join(home, ".config", "mcp-gateway", "admin-bootstrap.token")
+}
+
 // NewServer initializes a new Admin Web Server with all routes and middleware.
 func NewServer(cfg ServerConfig) (*Server, error) {
 	if cfg.Host == "" {
@@ -63,15 +76,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		cfg.Version = buildinfo.GatewayVersion
 	}
 	if strings.TrimSpace(cfg.BootstrapTokenFile) == "" {
-		if strings.TrimSpace(cfg.SecretFile) != "" {
-			cfg.BootstrapTokenFile = filepath.Join(filepath.Dir(cfg.SecretFile), "admin-bootstrap.token")
-		} else {
-			home := os.Getenv("MCP_GATEWAY_HOME")
-			if home == "" {
-				home = "/home/mcp-gateway"
-			}
-			cfg.BootstrapTokenFile = filepath.Join(home, ".config", "mcp-gateway", "admin-bootstrap.token")
-		}
+		cfg.BootstrapTokenFile = BootstrapTokenPath(cfg.SecretFile)
 	}
 
 	sessionMgr, err := NewSessionManager(cfg.SecretFile)

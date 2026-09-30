@@ -1,6 +1,6 @@
 # Architecture
 
-MCP-Pi is a Go-only security gateway. MCP transport, Admin, policy, audit and lifecycle logic use one Core and one SQLite Registry.
+MCP-Pi is a Go-only security gateway. MCP transport, Admin, policy, audit and lifecycle logic share one Core and one SQLite Registry.
 
 ## System boundary
 
@@ -23,80 +23,80 @@ There is no per-call bridge process or alternate Core.
 | Component | Responsibility |
 | --- | --- |
 | MCP server | stdio/Streamable HTTP transport and bound client identity |
-| Go Core | canonical tool behavior, limits, policy orchestration and audit |
-| Policy | client/grant/Target/Project/capability decisions |
-| Registry | settings, Targets, Projects, clients, grants and activity |
+| Go Core | tool behavior, limits, policy orchestration and audit |
+| Policy | Client/Grant/Target/Project/capability decisions |
+| Registry | settings, Targets, Projects, Clients, Grants and Activity |
 | Go Admin | human management of the same Registry/policy model |
-| SSH transport | strict-host-key remote execution and native Target operations |
-| systemd | Admin/MCP services, maintenance timer, postboot and optional tunnel |
-| `install.sh` | canonical install/update/migrate/rollback lifecycle |
-| `deploy-pi.sh` | exact-commit promotion, transport, acceptance and provenance |
+| SSH transport | strict-host-key remote execution/native Target operations |
+| systemd | appliance lifecycle, maintenance timer, postboot, optional ingress |
+| `install.sh` | install/update/migrate/rollback lifecycle |
+| `deploy-pi.sh` | maintainer exact-commit transport/acceptance around the installer |
 
-## MCP transports and identity
+## Identity and request flow
 
-Stdio is used for forced-command/local integrations. Streamable HTTP is used by the appliance MCP service and optional secure tunnel.
+Client identity is bound before tool discovery/invocation. Request arguments cannot replace the authenticated/forced identity.
 
-Client identity is bound before tool discovery/invocation. A forced SSH command can bind a registered client ID to a dedicated SSH key; HTTP authentication binds its configured client identity. Request arguments cannot replace that identity.
+`tools/list` is projected through the same authorization model used by execution, so a client can see fewer tools than exist in the Core catalog.
 
-`tools/list` is projected through the same authorization model used by execution, so a client may see fewer tools than the Core catalog.
+Request flow:
 
-## Request flow
-
-1. bind authenticated client identity;
-2. validate tool and argument schema;
+1. bind client identity;
+2. validate tool/arguments;
 3. evaluate global and scoped policy;
 4. deny immediately when a precondition fails;
 5. execute the bounded local/remote operation;
 6. persist required audit evidence;
-7. return the structured result/error.
+7. return structured result/error.
 
 Missing Core/Registry state never falls back to another implementation.
 
 ## Target execution
 
-Unix-like Targets use native POSIX utilities through pinned SSH. Windows Targets use PowerShell. Target identity is the configured Target plus its pinned SSH host key; address and port are mutable endpoint data.
+Unix-like Targets use native POSIX utilities over pinned SSH; Windows Targets use PowerShell. Target ID plus pinned SSH host key is identity. Address/port are endpoint data.
 
-Structured filesystem mutations validate Project root, canonical path, symlink/reparse state, size/conflict rules and audit availability. They never silently degrade into trusted shell.
+Structured filesystem mutation validates Project root, canonical path, symlink/reparse state, bounds/conflicts and audit availability. It never silently degrades into trusted shell.
 
-## Target privilege
+Privilege is a second authorization gate over an otherwise authorized execution; its security semantics are documented in [security.md](security.md).
 
-Privilege is a second gate over otherwise authorized execution:
-
-    normal execution authorization
-      + explicit target_admin
-      + Target privilege policy
-      + required approval/boot identity
-      + verified native backend
-
-`run_command` and allowlisted `run_task` share this effective-privilege gate.
-
-## Runtime and Registry lifecycle
+## Runtime and Registry
 
     /home/mcp-gateway/mcp-gateway/               root-owned runtime
     /home/mcp-gateway/.local/share/mcp-gateway/ Registry/backups
     /home/mcp-gateway/.config/mcp-gateway/       private mutable config
 
-Runtime Registry open is non-migrating and requires the current schema. Read-only inspection uses SQLite `mode=ro`.
+Runtime Registry open is non-migrating and requires the runtime's current schema. Read-only inspection is non-migrating. Restore preserves the backup schema exactly.
 
-Schema change is explicit:
+Schema transformation is explicit and coordinated:
 
-    stop DB users
+    quiesce Registry users
       -> verified backup
-      -> mcp-gateway migrate
-      -> non-mutating status
-      -> start services
+      -> migrate
+      -> status
+      -> start appliance
       -> Doctor
 
-Restore preserves the source schema exactly.
+The exact supported migrations live in Registry migration code/tests rather than duplicated prose.
 
-## Installation and deployment
+## Compatibility contract
 
-`install.sh` is the single activation/update/rollback engine. The release builder creates the immutable ARMv6 bundle. `deploy-pi.sh` validates exact Git provenance, transfers the canonical bundle, delegates activation/rollback to its installer, performs production acceptance and records provenance.
+Machine-readable authority:
 
-## Version contract
+- `manifest.json` — package/release contract;
+- `compatibility.json` — runtime/API/catalog/schema/protocol contract;
+- `mcp-gateway version --json` — exact binary contract;
+- Registry constants/migrations/tests — database implementation;
+- Core catalog/policy — available and client-visible tool behavior.
 
-Do not duplicate build/API/schema/protocol constants in architecture prose. Machine-readable authority is `manifest.json`, `compatibility.json` and `mcp-gateway version --json`. Source checkouts provide deeper compatibility semantics in `docs/reference/compatibility.md`.
+Installer and project-contract tests require these sources to agree. Newer-than-runtime or unsupported Registry schemas fail closed.
+
+A declared/cross-built architecture is not production evidence; ARMv6 acceptance still requires the real appliance.
+
+## Installation, lifecycle and deployment
+
+`install.sh` is the single activation/update/rollback engine. `mcp-gateway.target` is the canonical systemd lifecycle unit. Release packaging builds the immutable ARMv6 bundle; maintainer deployment proves exact Git provenance, transports that bundle, delegates activation/rollback to its installer and performs live acceptance.
+
+The human release/deployment workflow belongs in `CONTRIBUTING.md` in a source checkout; executable gates belong in CI/scripts.
 
 ## Resource model
 
-The reference appliance is constrained ARMv6 hardware. Tests, frontend builds, vulnerability analysis and cross-compilation belong on a development host; the appliance runs the static gateway binary, SQLite and system services.
+The reference appliance is constrained ARMv6 hardware. Tests, frontend builds, vulnerability analysis and cross-compilation belong on a development host; the appliance runs the static gateway, SQLite and system services.

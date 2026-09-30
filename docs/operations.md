@@ -1,116 +1,94 @@
 # Operations
 
-## Quick health
+## Health
+
+Non-mutating Registry/runtime compatibility:
 
     sudo -u mcp-gateway mcp-gateway status
+
+Appliance health:
+
     sudo -u mcp-gateway mcp-gateway doctor
 
-`status` is non-mutating and reports Registry/runtime compatibility. It does not prove that the whole appliance is ready. Doctor is the canonical appliance diagnostic.
-
-Use:
+Include remote Target reachability when needed:
 
     sudo -u mcp-gateway mcp-gateway doctor --check-targets
 
-when Target reachability must participate in the verdict.
+A running process is not readiness evidence. Doctor is the normal appliance verdict; MCP `/ready` proves initialized Core/Registry for traffic.
 
-## Service lifecycle
+## Start, stop and restart
 
-The base control plane is:
+`mcp-gateway.target` is the canonical lifecycle unit. Required services/timer join that target; optional ingress joins it only when explicitly enabled.
 
-    mcp-gateway-admin.service
-    mcp-gateway-mcp.service
+    sudo systemctl start mcp-gateway.target
+    sudo systemctl stop mcp-gateway.target
+    sudo systemctl restart mcp-gateway.target
 
-Automation:
+After a manual restart, verify:
 
-    mcp-gateway-maintenance.timer
-    mcp-gateway-postboot.service
-
-Optional:
-
-    mcp-gateway-gemini.service
-    mcp-gateway-tunnel.service
-    mcp-gateway-cloudflared.service
-
-`mcp-gateway-gemini.service` is a second isolated MCP ingress for `gemini-main`. It listens on `0.0.0.0:8092` specifically so a private Cloudflare Tunnel hostname route can reach the service through the appliance LAN address, and it is installed disabled by default. Enable it only after creating `/home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token` as private mutable state and configuring the `gemini-main` client/grants in Admin. The ingress still requires that dedicated Bearer token; its HTTP Host allowlist keeps the loopback defaults and adds only `gemini-mcp.internal`, so unrelated Host headers remain rejected.
-
-`mcp-gateway-cloudflared.service` is the optional private connector for that ingress. It is installed disabled by default and uses `/home/mcp-gateway/.config/mcp-gateway/cloudflared.token` as private mutable state. When explicitly enabled, upgrades preserve that state and restart/verify the connector after the Gemini ingress. The unit uses `Wants=` rather than `Requires=` for Gemini so a short Gemini restart does not permanently stop the tunnel. Doctor also records safe provenance for an enabled connector: the resolved cloudflared binary path, version, SHA-256 and size, plus only token file ownership/mode metadata. It never returns token contents or a token hash; an unreadable/missing binary, insecure token metadata or inactive enabled service is reported as a warning.
-
-Stop the base control plane:
-
-    sudo systemctl stop mcp-gateway-mcp mcp-gateway-admin
-
-Start it:
-
-    sudo systemctl start mcp-gateway-admin
-    sudo systemctl start mcp-gateway-mcp
-
-Restart it:
-
-    sudo systemctl restart mcp-gateway-admin
-    sudo systemctl restart mcp-gateway-mcp
     sudo -u mcp-gateway mcp-gateway doctor
 
-For a schema-changing lifecycle operation, quiesce every Registry user/scheduler first: Admin, primary MCP, Gemini when enabled, maintenance timer/service and post-boot verification. Edge tunnel processes do not open the Registry and are not classified as database users.
+Do not add wrapper scripts around normal service lifecycle; systemd is the service manager.
 
-Do not add wrapper scripts for these operations; systemd is the service manager.
+## Daily operating model
 
-## Daily model
+Admin Console modifies the same Registry used by MCP. Prefer structured capabilities and allowlisted Tasks. Keep writes/shell disabled until needed and use **Check Effective Access** before broadening permissions.
 
-Admin Console changes configuration in the same Registry used by MCP. Prefer structured capabilities, keep writes/shell disabled until needed, and verify effective access for AI clients.
+Kill switches are denials, not warnings:
 
-## Kill switches
+- `gateway_enabled` gates delegated operations globally;
+- `writes_enabled` gates structured filesystem mutation;
+- `shell_enabled` gates trusted Target shell.
 
-`gateway_enabled` gates delegated operations globally. It is a required security setting at runtime: a missing or malformed value fails closed instead of falling back to enabled. `writes_enabled` gates structured mutations. `shell_enabled` gates trusted Target shell. Disabled state is a denial, not a warning.
-
-Diagnostic/recovery lifecycle commands remain available so a disabled gateway can still be inspected and recovered.
+Diagnostic/recovery commands remain available so a disabled gateway can still be inspected.
 
 ## Target privilege
 
-Administrative Target execution requires normal authorization plus `target_admin` and the Target privilege policy. The same effective-privilege gate protects both `run_command` and allowlisted `run_task` execution.
+Administrative execution is a second authorization gate; [security.md](security.md) is the source for Grants, approvals and privilege-backend semantics. During routine maintenance keep scope narrow and treat Doctor privilege-hygiene warnings as review items.
 
-Use `ask_always` for temporary privileged maintenance whenever practical. Keep the Client/Target/Project grant narrow, approve only the next request, and revoke/avoid persistent host-side credentials when the maintenance path no longer needs them. Doctor reports Privilege Hygiene warnings for enabled `always_allow` Targets and wildcard `target_admin` grants; treat those warnings as explicit review items rather than silently leaving break-glass state behind.
-
-A command or allowlisted task that exits non-zero is a tool execution error, not a successful tool call. MCP-Pi preserves stdout/stderr/exit code in the structured result while setting the tool error signal; `run_command` timeouts are reported the same way.
+A remote command/task that exits non-zero is an execution error. MCP-Pi preserves stdout/stderr/exit code in the structured result rather than treating transport success as command success.
 
 ## Backup
 
-Registry-only online backup is canonical:
+Canonical Registry backup:
 
     sudo -u mcp-gateway mcp-gateway backup
 
-There is no separate supported host-wide secret backup format.
+This uses SQLite online backup and records verification evidence. MCP-Pi does not define a second appliance-wide secret backup format.
 
 ## Maintenance
 
     sudo -u mcp-gateway mcp-gateway maintenance
 
-Maintenance creates a verified online backup, rotates backups, checks SQLite integrity and runs Doctor. Required failure stops the operation.
+Maintenance creates a verified Registry backup, rotates only MCP-Pi-managed backup classes, protects the snapshot referenced by the active installer rollback set, checks SQLite integrity, runs Doctor and requires its final audit record before reporting success. Unknown/manual backup names are not pruned.
+
+The maintenance timer is part of the appliance lifecycle; the maintenance oneshot itself is not restart-coupled to `mcp-gateway.target`.
 
 ## Logs
 
-systemd/journald is the canonical runtime log:
+journald is the runtime log authority:
 
     journalctl -u mcp-gateway-admin
     journalctl -u mcp-gateway-mcp
-    journalctl -u mcp-gateway-gemini
     journalctl -u mcp-gateway-maintenance
     journalctl -u mcp-gateway-postboot
 
-The optional tunnel uses its own unit journal as well.
+Use the corresponding Gemini/Cloudflare/tunnel unit journal when an optional ingress is enabled.
 
-## Updates
+## Performance
 
-User update:
+Measure before optimizing:
 
-    ./install.sh --check
-    sudo ./install.sh
+    sudo -u mcp-gateway mcp-gateway benchmark
 
-Maintainer exact-commit promotion:
+The command reports measurements from the current execution. Development-host results are useful for regression detection but are not ARMv6 production evidence.
 
-    scripts/run-resumable.sh start --expect-marker DEPLOYMENT_VERIFIED -- scripts/deploy-pi.sh <exact-sha>
+When performance matters, separate in-process Core latency from MCP HTTP overhead and SSH/network/Target execution, and record the exact deployed commit/hardware/configuration with the result.
 
-The deployer delegates activation and rollback to the bundle's canonical installer.
+## Update
+
+Normal user/operator update uses the same installer described in [installation.md](installation.md). Maintainer exact-commit promotion belongs in `CONTRIBUTING.md` in a source checkout, not in the operator lifecycle.
 
 ## Recovery
 
-See [recovery.md](recovery.md). Restore is exact-schema; migration is a distinct explicit operation.
+Failure-oriented diagnosis, backup restore and rollback are in [recovery.md](recovery.md).

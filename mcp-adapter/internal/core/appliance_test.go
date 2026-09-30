@@ -374,6 +374,57 @@ func TestGatewayMaintenance(t *testing.T) {
 	}
 }
 
+func TestManagedBackupRetentionProtectsActiveRollbackSnapshot(t *testing.T) {
+	root := t.TempDir()
+	backupsDir := filepath.Join(root, "backups")
+	if err := os.MkdirAll(backupsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	var files []string
+	for i := 0; i < 5; i++ {
+		path := filepath.Join(backupsDir, fmt.Sprintf("gateway-pre-install-%02d.db", i))
+		if err := os.WriteFile(path, []byte("backup"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stamp := time.Unix(int64(100+i), 0)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, path)
+	}
+	protected := files[0]
+	stateDir := filepath.Join(root, "install-unit-backup")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "registry-backup.path"), []byte(protected+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manual := filepath.Join(backupsDir, "manual-important.db")
+	if err := os.WriteFile(manual, []byte("manual"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	gotProtected := currentRollbackBackup(backupsDir, root)
+	if gotProtected != protected {
+		t.Fatalf("protected rollback backup=%q want %q", gotProtected, protected)
+	}
+	pruned, err := pruneManagedBackups(files, 3, gotProtected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pruned != 1 {
+		t.Fatalf("pruned=%d want 1", pruned)
+	}
+	if _, err := os.Stat(protected); err != nil {
+		t.Fatalf("active rollback snapshot was pruned: %v", err)
+	}
+	if _, err := os.Stat(manual); err != nil {
+		t.Fatalf("manual backup was touched: %v", err)
+	}
+}
+
 func TestGatewayReboot(t *testing.T) {
 	core, ctx, _, _ := seededApplianceCore(t)
 

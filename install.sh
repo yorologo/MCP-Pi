@@ -8,7 +8,7 @@ warn(){ echo "WARNING: $*" >&2; }
 usage() {
 cat <<'USAGE'
 Usage: ./install.sh [--check] [--rollback] [--no-setup]
-  --check      Validate this source/release without changing the system.
+  --check      Validate this source/release candidate without changing the system.
   --rollback   Restore previous installer-managed runtime, Registry and units.
   --no-setup   Skip interactive admin bootstrap.
 USAGE
@@ -36,6 +36,7 @@ PREVIOUS_DIR=${SERVICE_HOME}/mcp-gateway.previous-install
 DATA_DIR=${SERVICE_HOME}/.local/share/mcp-gateway
 CONFIG_DIR=${SERVICE_HOME}/.config/mcp-gateway
 UNIT_BACKUP=${DATA_DIR}/install-unit-backup
+UNIT_BACKUP_OLD=${DATA_DIR}/install-unit-backup.previous
 SYSTEMD_DIR=/etc/systemd/system
 POLKIT_DIR=/etc/polkit-1/rules.d
 POLKIT_RULE=${POLKIT_DIR}/49-mcp-gateway-reboot.rules
@@ -46,10 +47,12 @@ BOOTSTRAP_TOKEN=${CONFIG_DIR}/admin-bootstrap.token
 TUNNEL_CHECK=${BIN_DIR}/mcp-gateway-tunnel-check
 CLI_LINK=${BIN_DIR}/mcp-gateway
 DB_PATH=${DATA_DIR}/gateway.db
-RUNTIME_UNITS="mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service"
+RUNTIME_UNITS="mcp-gateway.target mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service mcp-gateway-maintenance.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service"
+OPTIONAL_UNITS="mcp-gateway-gemini.service mcp-gateway-cloudflared.service mcp-gateway-tunnel.service"
+BASE_ENABLED_UNITS="mcp-gateway.target"
 
 required_source() {
-    for path in         bin/mcp-gateway         bin/mcp-gateway-client-stdio         config/systemd/mcp-gateway-admin.service         config/systemd/mcp-gateway-mcp.service         config/systemd/mcp-gateway-gemini.service         config/systemd/mcp-gateway-cloudflared.service         config/systemd/mcp-gateway-tunnel.service         config/systemd/mcp-gateway-maintenance.service         config/systemd/mcp-gateway-maintenance.timer         config/systemd/mcp-gateway-postboot.service         config/systemd/mcp-gateway-tunnel-check         config/polkit/49-mcp-gateway-reboot.rules         compatibility.json manifest.json; do
+    for path in         bin/mcp-gateway         bin/mcp-gateway-client-stdio         config/systemd/mcp-gateway.target         config/systemd/mcp-gateway-admin.service         config/systemd/mcp-gateway-mcp.service         config/systemd/mcp-gateway-gemini.service         config/systemd/mcp-gateway-cloudflared.service         config/systemd/mcp-gateway-tunnel.service         config/systemd/mcp-gateway-maintenance.service         config/systemd/mcp-gateway-maintenance.timer         config/systemd/mcp-gateway-postboot.service         config/systemd/mcp-gateway-tunnel-check         config/polkit/49-mcp-gateway-reboot.rules         compatibility.json manifest.json; do
         [ -e "${SOURCE_DIR}/${path}" ] || fail "release source is missing: ${path}"
     done
 }
@@ -195,6 +198,14 @@ validate_source() {
     rm -rf "$tmp"
     trap - 0 HUP INT TERM
 }
+host_preflight() {
+    state=$(systemctl is-system-running 2>/dev/null || true)
+    case "$state" in
+        running) ;;
+        degraded) warn "systemd manager is degraded; installation preconditions remain available" ;;
+        *) fail "systemd manager is not ready for installation (state=${state:-unknown})" ;;
+    esac
+}
 
 as_service() {
     if command -v runuser >/dev/null 2>&1; then
@@ -226,24 +237,42 @@ generate_secret() {
 }
 
 save_system_files() {
-    rm -rf "$UNIT_BACKUP"
-    mkdir -p "$UNIT_BACKUP"
-    chmod 0700 "$UNIT_BACKUP"
+    destination=$1
+    rm -rf "$destination"
+    mkdir -p "$destination"
+    chmod 0700 "$destination"
     for unit in $RUNTIME_UNITS; do
-        if [ -f "${SYSTEMD_DIR}/${unit}" ]; then cp "${SYSTEMD_DIR}/${unit}" "$UNIT_BACKUP/$unit"; else touch "$UNIT_BACKUP/$unit.absent"; fi
+        if [ -f "${SYSTEMD_DIR}/${unit}" ]; then
+            cp "${SYSTEMD_DIR}/$unit" "$destination/$unit"
+        else
+            touch "$destination/$unit.absent"
+        fi
+        if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+            touch "$destination/$unit.enabled"
+        fi
     done
-    if [ -f "$POLKIT_RULE" ]; then cp "$POLKIT_RULE" "$UNIT_BACKUP/49-mcp-gateway-reboot.rules"; else touch "$UNIT_BACKUP/49-mcp-gateway-reboot.rules.absent"; fi
-    if [ -e "$TUNNEL_CHECK" ] || [ -L "$TUNNEL_CHECK" ]; then cp -a "$TUNNEL_CHECK" "$UNIT_BACKUP/mcp-gateway-tunnel-check"; else touch "$UNIT_BACKUP/mcp-gateway-tunnel-check.absent"; fi
-    if [ -e "$CLI_LINK" ] || [ -L "$CLI_LINK" ]; then cp -a "$CLI_LINK" "$UNIT_BACKUP/mcp-gateway-cli"; else touch "$UNIT_BACKUP/mcp-gateway-cli.absent"; fi
+    if [ -f "$POLKIT_RULE" ]; then
+        cp "$POLKIT_RULE" "$destination/49-mcp-gateway-reboot.rules"
+    else
+        touch "$destination/49-mcp-gateway-reboot.rules.absent"
+    fi
+    if [ -e "$TUNNEL_CHECK" ] || [ -L "$TUNNEL_CHECK" ]; then
+        cp -a "$TUNNEL_CHECK" "$destination/mcp-gateway-tunnel-check"
+    else
+        touch "$destination/mcp-gateway-tunnel-check.absent"
+    fi
+    if [ -e "$CLI_LINK" ] || [ -L "$CLI_LINK" ]; then
+        cp -a "$CLI_LINK" "$destination/mcp-gateway-cli"
+    else
+        touch "$destination/mcp-gateway-cli.absent"
+    fi
 }
-
 restore_system_files() {
     [ -d "$UNIT_BACKUP" ] || return 0
     for unit in $RUNTIME_UNITS; do
         if [ -f "$UNIT_BACKUP/$unit" ]; then
             install -m 0644 "$UNIT_BACKUP/$unit" "${SYSTEMD_DIR}/${unit}"
         elif [ -f "$UNIT_BACKUP/$unit.absent" ]; then
-            systemctl disable "$unit" >/dev/null 2>&1 || true
             rm -f "${SYSTEMD_DIR}/${unit}"
         fi
     done
@@ -254,39 +283,104 @@ restore_system_files() {
             rm -f "$POLKIT_RULE"
         fi
     fi
-    if [ -f "$UNIT_BACKUP/mcp-gateway-tunnel-check" ]; then install -m 0755 "$UNIT_BACKUP/mcp-gateway-tunnel-check" "$TUNNEL_CHECK"; elif [ -f "$UNIT_BACKUP/mcp-gateway-tunnel-check.absent" ]; then rm -f "$TUNNEL_CHECK"; fi
-    if [ -e "$UNIT_BACKUP/mcp-gateway-cli" ] || [ -L "$UNIT_BACKUP/mcp-gateway-cli" ]; then rm -f "$CLI_LINK"; cp -a "$UNIT_BACKUP/mcp-gateway-cli" "$CLI_LINK"; elif [ -f "$UNIT_BACKUP/mcp-gateway-cli.absent" ]; then rm -f "$CLI_LINK"; fi
+    if [ -f "$UNIT_BACKUP/mcp-gateway-tunnel-check" ]; then
+        install -m 0755 "$UNIT_BACKUP/mcp-gateway-tunnel-check" "$TUNNEL_CHECK"
+    elif [ -f "$UNIT_BACKUP/mcp-gateway-tunnel-check.absent" ]; then
+        rm -f "$TUNNEL_CHECK"
+    fi
+    if [ -e "$UNIT_BACKUP/mcp-gateway-cli" ] || [ -L "$UNIT_BACKUP/mcp-gateway-cli" ]; then
+        rm -f "$CLI_LINK"
+        cp -a "$UNIT_BACKUP/mcp-gateway-cli" "$CLI_LINK"
+    elif [ -f "$UNIT_BACKUP/mcp-gateway-cli.absent" ]; then
+        rm -f "$CLI_LINK"
+    fi
     systemctl daemon-reload
+    for unit in $RUNTIME_UNITS; do
+        systemctl disable "$unit" >/dev/null 2>&1 || true
+        if [ -f "$UNIT_BACKUP/$unit.enabled" ] && [ -f "${SYSTEMD_DIR}/${unit}" ]; then
+            systemctl enable "$unit" >/dev/null
+        fi
+    done
+}
+recover_interrupted_rollback_set() {
+    if [ ! -d "$UNIT_BACKUP" ] && [ -d "$UNIT_BACKUP_OLD" ]; then
+        warn "recovering rollback metadata from an interrupted promotion"
+        mv "$UNIT_BACKUP_OLD" "$UNIT_BACKUP"
+    elif [ -d "$UNIT_BACKUP" ] && [ -d "$UNIT_BACKUP_OLD" ]; then
+        rm -rf "$UNIT_BACKUP_OLD"
+    fi
+}
+
+promote_rollback_set() {
+    candidate=$1
+    [ -d "$candidate" ] || fail "prepared rollback set is missing: $candidate"
+    rm -rf "$UNIT_BACKUP_OLD"
+    if [ -d "$UNIT_BACKUP" ]; then
+        mv "$UNIT_BACKUP" "$UNIT_BACKUP_OLD"
+    fi
+    if mv "$candidate" "$UNIT_BACKUP"; then
+        ROLLBACK_SET_PROMOTED=1
+        rm -rf "$UNIT_BACKUP_OLD"
+        return 0
+    fi
+    if [ -d "$UNIT_BACKUP_OLD" ] && [ ! -e "$UNIT_BACKUP" ]; then
+        mv "$UNIT_BACKUP_OLD" "$UNIT_BACKUP"
+    fi
+    fail "could not promote prepared rollback set"
+}
+detach_component_boot_links() {
+    for unit in mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-maintenance.timer mcp-gateway-postboot.service $OPTIONAL_UNITS; do
+        systemctl disable "$unit" >/dev/null 2>&1 || true
+    done
+}
+
+stop_runtime() {
+    if systemctl cat mcp-gateway.target >/dev/null 2>&1; then
+        systemctl stop mcp-gateway.target 2>/dev/null || true
+        systemctl stop mcp-gateway-maintenance.service 2>/dev/null || true
+    else
+        systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-cloudflared mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
+    fi
 }
 
 restart_runtime() {
     systemctl reset-failed mcp-gateway-admin mcp-gateway-mcp mcp-gateway-gemini mcp-gateway-cloudflared mcp-gateway-tunnel mcp-gateway-postboot 2>/dev/null || true
-    systemctl restart mcp-gateway-admin
+    if systemctl cat mcp-gateway.target >/dev/null 2>&1; then
+        systemctl restart mcp-gateway.target
+    else
+        # Compatibility for rollback to the immediately previous release, which predates mcp-gateway.target.
+        systemctl restart mcp-gateway-admin
+        wait_url http://127.0.0.1/login 45 || fail "mcp-gateway-admin did not become ready"
+        systemctl restart mcp-gateway-mcp
+        wait_url http://127.0.0.1:8090/ready 60 || fail "mcp-gateway-mcp did not become ready"
+        if systemctl is-enabled --quiet mcp-gateway-gemini 2>/dev/null; then
+            systemctl restart mcp-gateway-gemini
+        fi
+        if systemctl is-enabled --quiet mcp-gateway-cloudflared 2>/dev/null; then
+            systemctl restart mcp-gateway-cloudflared
+        fi
+        if systemctl is-enabled --quiet mcp-gateway-tunnel 2>/dev/null; then
+            systemctl restart mcp-gateway-tunnel
+        fi
+        systemctl restart mcp-gateway-postboot.service
+        systemctl start mcp-gateway-maintenance.timer
+    fi
     wait_url http://127.0.0.1/login 45 || fail "mcp-gateway-admin did not become ready"
-    systemctl restart mcp-gateway-mcp
     wait_url http://127.0.0.1:8090/ready 60 || fail "mcp-gateway-mcp did not become ready"
     if systemctl is-enabled --quiet mcp-gateway-gemini 2>/dev/null; then
-        if [ -s "${CONFIG_DIR}/gemini-mcp.token" ]; then
-            systemctl restart mcp-gateway-gemini
-            wait_url http://127.0.0.1:8092/ready 60 || fail "mcp-gateway-gemini did not become ready"
-        else
-            warn "Gemini MCP service is enabled but gemini-mcp.token is missing; leaving it stopped"
-            systemctl stop mcp-gateway-gemini 2>/dev/null || true
-        fi
+        [ -s "${CONFIG_DIR}/gemini-mcp.token" ] || fail "Gemini MCP service is enabled but gemini-mcp.token is missing"
+        wait_url http://127.0.0.1:8092/ready 60 || fail "mcp-gateway-gemini did not become ready"
     fi
     if systemctl is-enabled --quiet mcp-gateway-cloudflared 2>/dev/null; then
-        if [ -s "${CONFIG_DIR}/cloudflared.token" ] && [ -x /usr/local/bin/cloudflared ]; then
-            systemctl restart mcp-gateway-cloudflared
-        else
-            warn "Cloudflare connector is enabled but cloudflared/token is incomplete; leaving it stopped"
-            systemctl stop mcp-gateway-cloudflared 2>/dev/null || true
-        fi
+        [ -s "${CONFIG_DIR}/cloudflared.token" ] && [ -x /usr/local/bin/cloudflared ] || fail "Cloudflare connector is enabled but cloudflared/token is incomplete"
+        systemctl is-active --quiet mcp-gateway-cloudflared || fail "mcp-gateway-cloudflared is enabled but not active"
     fi
     if systemctl is-enabled --quiet mcp-gateway-tunnel 2>/dev/null; then
-        if [ -s "${CONFIG_DIR}/tunnel.env" ] && [ -x /usr/local/bin/openai-tunnel-client ]; then systemctl restart mcp-gateway-tunnel; else warn "tunnel is enabled but credentials/client are incomplete; leaving it stopped"; systemctl stop mcp-gateway-tunnel 2>/dev/null || true; fi
+        [ -s "${CONFIG_DIR}/tunnel.env" ] && [ -x /usr/local/bin/openai-tunnel-client ] || fail "OpenAI tunnel is enabled but credentials/client are incomplete"
+        systemctl is-active --quiet mcp-gateway-tunnel || fail "mcp-gateway-tunnel is enabled but not active"
     fi
-    systemctl restart mcp-gateway-postboot.service
-    systemctl start mcp-gateway-maintenance.timer
+    systemctl is-active --quiet mcp-gateway-maintenance.timer || fail "maintenance timer is not active"
+    systemctl is-active --quiet mcp-gateway-postboot.service || fail "postboot verification is not active"
 }
 
 restore_registry_for_rollback() {
@@ -304,14 +398,7 @@ restore_registry_for_rollback() {
 
 rollback_runtime() {
     echo "ROLLBACK: restoring previous installer-managed runtime..." >&2
-    systemctl stop mcp-gateway-maintenance.timer 2>/dev/null || true
-    systemctl stop mcp-gateway-maintenance.service 2>/dev/null || true
-    systemctl stop mcp-gateway-tunnel 2>/dev/null || true
-    systemctl stop mcp-gateway-cloudflared 2>/dev/null || true
-    systemctl stop mcp-gateway-gemini 2>/dev/null || true
-    systemctl stop mcp-gateway-postboot 2>/dev/null || true
-    systemctl stop mcp-gateway-mcp 2>/dev/null || true
-    systemctl stop mcp-gateway-admin 2>/dev/null || true
+    stop_runtime
     restore_registry_for_rollback
     failed="${SERVICE_HOME}/mcp-gateway.failed-install.$(date -u +%Y%m%dT%H%M%SZ)"
     [ ! -d "$INSTALL_DIR" ] || mv "$INSTALL_DIR" "$failed"
@@ -325,18 +412,34 @@ rollback_runtime() {
 }
 
 if [ "$MODE" = check ]; then
-    echo "=== MCP Gateway Go-only release/install preflight ==="
+    echo "=== MCP Gateway Go-only candidate check ==="
     validate_source
-    echo "INSTALL_CHECK=PASS"
+    echo "CANDIDATE_CHECK=PASS"
     exit 0
 fi
 
 [ "$(id -u)" = "0" ] || fail "install.sh must run as root"
-for cmd in systemctl useradd install cp mv rm mktemp touch curl od tr grep sed head find; do command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required"; done
-if [ "$MODE" = rollback ]; then rollback_runtime; exit 0; fi
+for cmd in systemctl useradd install cp mv rm mktemp touch curl od tr grep sed head find mkdir chmod chown ln cat date uname; do
+    command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required"
+done
+if ! command -v runuser >/dev/null 2>&1 && ! command -v sudo >/dev/null 2>&1; then
+    fail "runuser or sudo is required"
+fi
+recover_interrupted_rollback_set
+if [ "$MODE" = rollback ]; then
+    rollback_runtime
+    exit 0
+fi
+host_preflight
 
 required_source
 verify_source_integrity
+GEMINI_ENABLED=0
+CLOUDFLARED_ENABLED=0
+TUNNEL_ENABLED=0
+systemctl is-enabled --quiet mcp-gateway-gemini.service 2>/dev/null && GEMINI_ENABLED=1 || true
+systemctl is-enabled --quiet mcp-gateway-cloudflared.service 2>/dev/null && CLOUDFLARED_ENABLED=1 || true
+systemctl is-enabled --quiet mcp-gateway-tunnel.service 2>/dev/null && TUNNEL_ENABLED=1 || true
 arch=$(uname -m)
 case "$arch" in armv6*|armv7*|aarch64|arm64|x86_64|amd64) ;; *) warn "architecture $arch is not in the verified compatibility set" ;; esac
 
@@ -346,15 +449,23 @@ echo "=================================================="
 echo "Source: ${SOURCE_DIR}"
 echo "Target: ${INSTALL_DIR}"
 
-if id -u "$SERVICE_USER" >/dev/null 2>&1; then echo "[1/9] Service user exists."; else echo "[1/9] Creating service user ${SERVICE_USER}..."; useradd -r -s /bin/bash -m -d "$SERVICE_HOME" "$SERVICE_USER"; fi
+if id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    echo "[1/9] Service user exists."
+else
+    echo "[1/9] Creating service user ${SERVICE_USER}..."
+    useradd -r -s /bin/bash -m -d "$SERVICE_HOME" "$SERVICE_USER"
+fi
 
 mkdir -p "$DATA_DIR/backups" "$CONFIG_DIR"
 chmod 0700 "$DATA_DIR" "$CONFIG_DIR"
 chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR" "$CONFIG_DIR"
 
 STAGE=$(mktemp -d "${SERVICE_HOME}/mcp-gateway.install.XXXXXX")
+ROLLBACK_STAGE=$(mktemp -d "${DATA_DIR}/install-unit-backup.next.XXXXXX")
+chmod 0700 "$ROLLBACK_STAGE"
 ACTIVATED=0
 CONTROL_PLANE_STOPPED=0
+ROLLBACK_SET_PROMOTED=0
 install_exit() {
     rc=$?
     trap - 0 HUP INT TERM
@@ -362,21 +473,31 @@ install_exit() {
         if [ "$ACTIVATED" -eq 1 ] && [ -d "$PREVIOUS_DIR" ]; then
             rollback_runtime
         elif [ "$ACTIVATED" -eq 1 ]; then
-            systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-cloudflared mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
+            stop_runtime
             restore_registry_for_rollback
             rm -rf "$INSTALL_DIR"
-            restore_system_files
+            [ "$ROLLBACK_SET_PROMOTED" -eq 0 ] || restore_system_files
         elif [ "$CONTROL_PLANE_STOPPED" -eq 1 ] && [ -d "$PREVIOUS_DIR" ]; then
             [ -d "$INSTALL_DIR" ] || mv "$PREVIOUS_DIR" "$INSTALL_DIR"
-            restore_system_files || true
+            [ "$ROLLBACK_SET_PROMOTED" -eq 0 ] || restore_system_files || true
             restart_runtime
         elif [ "$CONTROL_PLANE_STOPPED" -eq 1 ] && [ -d "$INSTALL_DIR" ]; then
+            [ "$ROLLBACK_SET_PROMOTED" -eq 0 ] || restore_system_files || true
             restart_runtime || true
         fi
     fi
-    [ "$ACTIVATED" -ne 0 ] || rm -rf "$STAGE" 2>/dev/null || true
+    if [ "$ACTIVATED" -eq 0 ]; then
+        rm -rf "$STAGE" 2>/dev/null || true
+    fi
+    if [ "$ROLLBACK_SET_PROMOTED" -eq 0 ]; then
+        rm -rf "$ROLLBACK_STAGE" 2>/dev/null || true
+    fi
+    if [ -d "$UNIT_BACKUP" ]; then
+        rm -rf "$UNIT_BACKUP_OLD" 2>/dev/null || true
+    fi
     exit "$rc"
 }
+
 trap install_exit 0
 trap 'exit 130' HUP INT TERM
 
@@ -402,8 +523,8 @@ if [ ! -e "$ADMIN_ENV" ]; then
     fi
 fi
 
-echo "[4/9] Backing up Registry with Go (no migration while services are active)..."
-save_system_files
+echo "[4/9] Preparing verified rollback set (no migration while services are active)..."
+save_system_files "$ROLLBACK_STAGE"
 FRESH_REGISTRY=0
 if [ -f "$DB_PATH" ]; then
     stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -417,18 +538,20 @@ if [ -f "$DB_PATH" ]; then
         *" $backup_schema "*) ;;
         *) fail "Registry backup schema $backup_schema is not supported by this candidate" ;;
     esac
-    printf '%s\n' "$db_backup" > "$UNIT_BACKUP/registry-backup.path"
+    printf '%s\n' "$db_backup" > "$ROLLBACK_STAGE/registry-backup.path"
     echo "      Registry backup: $db_backup"
 else
     FRESH_REGISTRY=1
-    touch "$UNIT_BACKUP/registry.absent"
+    touch "$ROLLBACK_STAGE/registry.absent"
 fi
 
 echo "[5/9] Activating root-owned runtime and migrating Registry with services stopped..."
-systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-tunnel mcp-gateway-cloudflared mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
+stop_runtime
 CONTROL_PLANE_STOPPED=1
 rm -rf "$PREVIOUS_DIR"
 [ ! -d "$INSTALL_DIR" ] || mv "$INSTALL_DIR" "$PREVIOUS_DIR"
+promote_rollback_set "$ROLLBACK_STAGE"
+detach_component_boot_links
 mv "$STAGE" "$INSTALL_DIR"
 ACTIVATED=1
 chown -R root:root "$INSTALL_DIR"
@@ -447,12 +570,21 @@ if [ "$FRESH_REGISTRY" -eq 1 ]; then
 fi
 
 echo "[6/9] Installing systemd and least-privilege policy assets..."
-for unit in $RUNTIME_UNITS; do install -o root -g root -m 0644 "$INSTALL_DIR/config/systemd/$unit" "${SYSTEMD_DIR}/${unit}"; done
+for unit in $RUNTIME_UNITS; do
+    install -o root -g root -m 0644 "$INSTALL_DIR/config/systemd/$unit" "${SYSTEMD_DIR}/${unit}"
+done
 install -o root -g root -m 0755 "$INSTALL_DIR/config/systemd/mcp-gateway-tunnel-check" "$TUNNEL_CHECK"
-if [ -d "$POLKIT_DIR" ]; then install -o root -g root -m 0644 "$INSTALL_DIR/config/polkit/49-mcp-gateway-reboot.rules" "$POLKIT_RULE"; else warn "polkit rules directory unavailable; gateway_reboot remains fail-closed"; fi
+if [ -d "$POLKIT_DIR" ]; then
+    install -o root -g root -m 0644 "$INSTALL_DIR/config/polkit/49-mcp-gateway-reboot.rules" "$POLKIT_RULE"
+else
+    warn "polkit rules directory unavailable; gateway_reboot remains fail-closed"
+fi
 ln -sf "$INSTALL_DIR/bin/mcp-gateway" "$CLI_LINK"
 systemctl daemon-reload
-systemctl enable mcp-gateway-admin mcp-gateway-mcp mcp-gateway-maintenance.timer mcp-gateway-postboot.service >/dev/null
+systemctl enable $BASE_ENABLED_UNITS >/dev/null
+[ "$GEMINI_ENABLED" -eq 0 ] || systemctl enable mcp-gateway-gemini.service >/dev/null
+[ "$CLOUDFLARED_ENABLED" -eq 0 ] || systemctl enable mcp-gateway-cloudflared.service >/dev/null
+[ "$TUNNEL_ENABLED" -eq 0 ] || systemctl enable mcp-gateway-tunnel.service >/dev/null
 
 echo "[7/9] Starting and verifying Go services..."
 restart_runtime
@@ -461,6 +593,7 @@ echo "[8/9] Running Doctor..."
 as_service "$INSTALL_DIR/bin/mcp-gateway" doctor -db "$DB_PATH"
 
 echo "[9/9] Initial admin bootstrap..."
+BOOTSTRAP_STATE=complete
 if [ "$RUN_SETUP" -eq 1 ] && [ -t 0 ]; then
     as_service "$INSTALL_DIR/bin/mcp-gateway" setup -db "$DB_PATH" || fail "initial setup did not complete"
 else
@@ -468,6 +601,7 @@ else
         echo "      Initial Web setup: http://127.0.0.1/setup"
         echo "      Bootstrap token: sudo cat $BOOTSTRAP_TOKEN"
         echo "      The token expires after 15 minutes and is deleted after successful setup."
+        BOOTSTRAP_STATE=required
     else
         echo "      Run: sudo -u ${SERVICE_USER} mcp-gateway setup -db ${DB_PATH}"
     fi
@@ -477,3 +611,4 @@ trap - 0 HUP INT TERM
 echo "INSTALL_VERIFIED"
 echo "runtime=go-only"
 echo "admin_bind_default=127.0.0.1"
+echo "bootstrap=$BOOTSTRAP_STATE"

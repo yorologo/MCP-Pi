@@ -1,4 +1,5 @@
 [Unit]
+PartOf=mcp-gateway.target
 Description=MCP Gateway Admin Console
 After=network-online.target
 Wants=network-online.target
@@ -35,4 +36,4 @@ ReadWritePaths=/home/mcp-gateway/.local/share/mcp-gateway /home/mcp-gateway/.con
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=mcp-gateway.target

@@ -57,6 +57,16 @@ if grep -Eq 'MCP_ADMIN_HOST=0\.0\.0\.0' install.sh scripts/deploy-pi.sh config/s
   fail "lifecycle reintroduces wildcard Admin bind"
 fi
 
+[ -f config/systemd/mcp-gateway.target ] ||
+  fail "canonical appliance lifecycle target is missing"
+grep -Eq '^PartOf=mcp-gateway[.]target$' config/systemd/mcp-gateway-admin.service ||
+  fail "Admin service is not attached to the appliance lifecycle target"
+grep -Eq '^PartOf=mcp-gateway[.]target$' config/systemd/mcp-gateway-mcp.service ||
+  fail "MCP service is not attached to the appliance lifecycle target"
+if grep -Eq 'MCP_PI_HOST:-[0-9]|MCP_PI_USER:-[A-Za-z0-9]' scripts/deploy-pi.sh; then
+  fail "deployment-specific host/user defaults remain embedded in deploy-pi.sh"
+fi
+
 if grep -Eq 'chown -R[[:space:]]+mcp-gateway' install.sh scripts/deploy-pi.sh; then
   fail "runtime ownership is writable by the service account"
 fi

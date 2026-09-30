@@ -1,0 +1,8 @@
+[Unit]
+Description=MCP-Pi Gateway Appliance
+Requires=mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-postboot.service
+Wants=mcp-gateway-maintenance.timer
+After=mcp-gateway-admin.service mcp-gateway-mcp.service mcp-gateway-postboot.service
+
+[Install]
+WantedBy=multi-user.target

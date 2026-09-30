@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [develop, main]
+    tags: ['v*']
   pull_request:
     branches: [develop, main]
 
@@ -61,6 +62,8 @@ jobs:
           sh -n install.sh
           bash -n scripts/build-release-package.sh
           bash -n scripts/deploy-pi.sh
+          bash -n scripts/run-resumable.sh
+          bash -n scripts/verify-go-only.sh
 
 
       - uses: actions/setup-node@v4
@@ -128,3 +131,59 @@ jobs:
 
           (cd "$root" && sha256sum -c SHA256SUMS)
           sha256sum "$pkg"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: mcp-adapter/go.mod
+          cache-dependency-path: mcp-adapter/go.sum
+
+      - name: Verify immutable version tag
+        run: |
+          version="$(awk -F'"' '/GatewayVersion[[:space:]]*=/{print $2; exit}' mcp-adapter/internal/buildinfo/buildinfo.go)"
+          test "v$version" = "$GITHUB_REF_NAME"
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+          test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
+
+      - name: Build canonical ARMv6 release bundle
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          scripts/build-release-package.sh "$GITHUB_SHA" "$RUNNER_TEMP/release"
+          pkg="$(find "$RUNNER_TEMP/release" -maxdepth 1 -name 'MCP-Pi-*-linux-armv6-*.tar.gz' -print -quit)"
+          test -n "$pkg"
+          base="$(basename "$pkg")"
+          (cd "$(dirname "$pkg")" && sha256sum "$base" > "$base.sha256")
+          echo "PACKAGE=$pkg" >> "$GITHUB_ENV"
+          echo "PACKAGE_NAME=$base" >> "$GITHUB_ENV"
+
+      - name: Publish or verify GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          checksum="$PACKAGE.sha256"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/existing-release"
+            gh release download "$GITHUB_REF_NAME" \
+              --dir "$RUNNER_TEMP/existing-release" \
+              --pattern "$PACKAGE_NAME" \
+              --pattern "$PACKAGE_NAME.sha256"
+            cmp "$PACKAGE" "$RUNNER_TEMP/existing-release/$PACKAGE_NAME"
+            cmp "$checksum" "$RUNNER_TEMP/existing-release/$PACKAGE_NAME.sha256"
+            echo "RELEASE_ALREADY_VERIFIED"
+          else
+            gh release create "$GITHUB_REF_NAME" "$PACKAGE" "$checksum" \
+              --verify-tag \
+              --title "MCP-Pi Gateway $GITHUB_REF_NAME" \
+              --generate-notes
+            echo "RELEASE_PUBLISHED"
+          fi

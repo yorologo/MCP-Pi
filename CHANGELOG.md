@@ -1,8 +1,32 @@
 # Changelog
 
-All notable user-visible changes are documented here. Historical release details remain under `docs/releases/`.
+All notable user-visible changes are documented here. Immutable Git tags/GitHub Releases identify published artifacts; Git history preserves removed historical detail.
 
-## 1.6.6 — candidate
+## Unreleased
+
+### Lifecycle / recovery
+- Adds `mcp-gateway.target` as the canonical systemd lifecycle unit for start/stop/restart while keeping optional ingress services opt-in.
+- Installer updates now stage the complete rollback set and promote it only at the activation boundary, keeping runtime/system/Registry rollback evidence aligned.
+- Candidate-only `install.sh --check` now reports `CANDIDATE_CHECK=PASS`; real install separately verifies root, required host tooling and a usable systemd manager before mutation.
+- Install success now reports Admin bootstrap state separately as `bootstrap=complete|required`.
+
+### Maintenance / bootstrap
+- Maintenance rotates managed periodic/install/restore backups while protecting the Registry snapshot referenced by the active rollback set and leaving unknown/manual backups untouched.
+- Successful maintenance now requires its terminal audit record to persist before PASS is returned.
+- CLI Admin setup reuses `Store.SetAdminPassword` and invalidates any remaining one-time Web bootstrap token; security-update package state is informational rather than mislabeled as OK.
+
+### Distribution / operations
+- Maintainer deployment requires explicit `MCP_PI_HOST` and `MCP_PI_USER` configuration instead of repository-specific fallbacks.
+- Version-tag CI validates the exact tag and can publish or verify the canonical ARMv6 bundle plus checksum as GitHub Release assets after the normal validation job passes.
+- CURRENT documentation is consolidated into README plus six responsibility-based guides; redundant reference/runbook/release-note trees are removed from HEAD while Git preserves history.
+
+### Compatibility
+- No Registry schema, Tool Catalog, Core API, Bridge API or MCP protocol change; machine-readable metadata remains authoritative.
+
+### Validation
+- Candidate validation requires the complete local Go/frontend/lifecycle/build gates, exact-SHA remote CI, canonical deployment and live appliance acceptance before promotion.
+
+## 1.6.6
 
 ### Security / authorization
 - `run_command` now requires an explicit Project ID in the MCP contract and runtime; authorization scope is never guessed.
@@ -27,9 +51,9 @@ All notable user-visible changes are documented here. Historical release details
 - Registry schema remains **6**, Core API remains **1**, Bridge API remains **1**, and the MCP protocol remains **2026-07-28**.
 
 ### Validation
-- Candidate validation requires the complete Go test/vet/tidy gate, JavaScript/Tailwind checks, Go-only invariant, shell syntax, vulnerability scans, native build, ARMv6 cross-build, exact-SHA CI, canonical deployment and live appliance acceptance before promotion.
+- `v1.6.6` points to `2060a4910310c4d85f70e9295afac2e04522d2df`; exact-SHA CI passed on `develop` and `main`, and the ARMv6 appliance accepted that same SHA with verified adapter hash, required readiness, postboot and systemd sandbox evidence.
 
-## 1.6.5 — stable
+## 1.6.5
 
 ### Fixed
 - Post-boot Doctor now observes optional ingress services after their startup order instead of racing them: the installer starts the optional OpenAI tunnel before postboot verification, and the postboot unit orders itself after Gemini, Cloudflare and the tunnel without making any of them hard dependencies.
@@ -39,7 +63,7 @@ All notable user-visible changes are documented here. Historical release details
 - `v1.6.5` was published at commit `878701e23a6626f3a3e40c223e7adf1bd502e902`; `main` and `develop` converged on that exact SHA.
 - The ARMv6 appliance was subsequently observed running Gateway 1.6.5 with its Registry/services/endpoints available; 1.6.6 supersedes it only after repeating exact-SHA CI, canonical deployment and live acceptance.
 
-## 1.6.4 — stable
+## 1.6.4
 
 ### Fixed
 - Post-boot verification now gates on the real MCP `/ready` endpoint using bounded native `curl` retries instead of a fixed five-second delay. This removes the ARMv6 startup race where the service process was active but not yet responsive enough for Doctor.
@@ -59,7 +83,7 @@ All notable user-visible changes are documented here. Historical release details
 - 1.6.2 remains immutable and is the currently deployed stable release.
 - 1.6.3 must repeat exact-SHA CI, ARMv6 bundle validation, canonical deployment and live acceptance before promotion.
 
-## 1.6.2 — stable
+## 1.6.2
 
 ### Fixed
 - Carries forward the 1.6.1 authorization-scope correction for safe observability and Target-only status checks.
@@ -81,7 +105,7 @@ All notable user-visible changes are documented here. Historical release details
 - Exact-SHA CI passed and v1.6.1 was published immutably, but deployment stopped before activation because the installer backup check accepted only schemas 4/5 while the live Registry was already schema 6.
 - No service shutdown, runtime replacement or Registry mutation occurred during the failed 1.6.1 activation attempt.
 
-## 1.6.0 — stable
+## 1.6.0
 
 ### Security
 - The critical gateway_enabled kill-switch setting now fails closed when its required Registry row is missing instead of inheriting the fresh-install default at runtime.
@@ -105,7 +129,7 @@ All notable user-visible changes are documented here. Historical release details
 ### Verification
 - Promotion remains blocked until the complete local gates, ARMv6 package inspection, exact pushed-SHA CI, immutable tag creation and later production acceptance all pass.
 
-## 1.5.0 — stable
+## 1.5.0
 
 ### Security
 - Security-sensitive Admin mutations now record their successful Activity entry in the same SQLite transaction as the authorization/state change; audit failure rolls the mutation back.
@@ -125,7 +149,7 @@ All notable user-visible changes are documented here. Historical release details
 - Release guidance requires successful CI for the exact pushed SHA before an immutable version tag is created.
 
 
-## 1.5.0-rc.4 — candidate
+## 1.5.0-rc.4
 
 ### Fixed
 - Admin Console text fallbacks no longer use boolean `or` expressions in Pongo2 output tags, which rendered literal `True` instead of display names, provider/privilege values, grant scopes and other fallback text.
@@ -135,7 +159,7 @@ All notable user-visible changes are documented here. Historical release details
 - Core API, Bridge API, Tool Catalog, MCP protocol and Registry schema are unchanged from rc.3.
 
 
-## 1.5.0-rc.3 — candidate
+## 1.5.0-rc.3
 
 ### Fixed
 - Doctor now distinguishes a real MCP-Pi systemd installation from a generic Linux/systemd host, so CI and development Linux hosts no longer fail appliance-only service/readiness checks.
@@ -144,7 +168,7 @@ All notable user-visible changes are documented here. Historical release details
 ### Compatibility
 - Core API, Bridge API, Tool Catalog, MCP protocol and Registry schema are unchanged from rc.2.
 
-## 1.5.0-rc.2 — candidate
+## 1.5.0-rc.2
 
 ### Security
 - `run_task` now reuses the same effective Target privilege gate as `run_command`; allowlisted tasks cannot execute through an already root/Administrator transport without explicit `target_admin` authorization and the configured privilege policy/approval.
@@ -310,7 +334,7 @@ All notable user-visible changes are documented here. Historical release details
 - fresh Registry defaults keep both structured writes and trusted Target shell disabled;
 - `install.sh` now installs from the directory containing the release/source, preserves persistent state, stages application updates, verifies readiness/Doctor and provides rollback;
 - `mcp-gateway update/rollback` no longer present the historical symlink lifecycle as the production update path;
-- active documentation is consolidated into a small CURRENT set; technical detail and historical evidence are separated into `reference/` and `archive/`;
+- active documentation is consolidated into a small CURRENT set; historical evidence is isolated from operating guidance;
 - only `scripts/deploy-pi.sh` remains an active production deploy entrypoint.
 
 ### Fixed
@@ -322,3 +346,32 @@ All notable user-visible changes are documented here. Historical release details
 ### Verification
 
 1.3.0 promotion requires Python, Go, ARMv6 build, JavaScript, Tailwind, documentation, release-package, installer preflight, CI, exact-commit production deployment and live acceptance gates to pass on the same final commit.
+
+## 1.2.1 — September 2026
+
+### Changed
+- Integrated the secure MCP tunnel with deterministic backend readiness and automatic recovery when the local MCP endpoint becomes available late.
+- Separated permanent product/credential gates from transient backend startup failure so systemd can retry the latter without weakening fail-closed behavior.
+
+## 1.2.0 — September 2026
+
+### Added
+- Added dynamic Target endpoint rediscovery while keeping Target ID plus pinned SSH host key as immutable identity and host/port as mutable endpoint data.
+- Distinguished stale/DHCP-reused endpoints from authentication failures and required an exact pinned-key match before updating the Registry.
+
+## 1.1.1 — September 2026
+
+### Fixed
+- Corrected secure-tunnel header wiring and introduced the dedicated gateway-auth header while preserving anti-spoofing and constant-time token verification.
+- Verified private token/config ownership and restrictive permissions on the appliance.
+
+## 1.1.0 — September 2026
+
+### Added
+- Added authenticated external MCP ingress, client-ID anti-spoofing, appliance status/Doctor/backup/maintenance/reboot operations and the initial secure tunnel integration.
+- Introduced conservative appliance security-update reporting and explicit post-boot/health acceptance.
+
+## 1.0.1 — September 2026
+
+### Changed
+- Maintenance release aligning metadata/documentation and replacing environment-specific example endpoints while preserving pinned Target identity semantics.

@@ -1,135 +1,88 @@
-# AGENTS.md — operational contract for AI/automation
+# AGENTS.md — automation operational contract
 
 ## Purpose
 
-This file defines how automated contributors must work on MCP-Pi. The product runtime is Go-only; release/promotion status comes from immutable tags/releases and live deployment evidence, not mutable labels in source prose.
+This file adds rules for automated contributors. Human development/release/deployment procedure is canonical in `CONTRIBUTING.md`; product behavior is canonical in code/tests/metadata and the six CURRENT operator guides.
 
-## Non-negotiable principles
+## Principles
 
-Use KISS + Reuse First + Least Privilege + Deny by Default + Fail Closed + Evidence Before PASS.
+Use **KISS + Reuse First + Least Privilege + Deny by Default + Fail Closed + Evidence Before PASS**.
 
-Before mutating:
-1. prove the repository/Target/project and current Git state;
-2. understand the existing mechanism before adding another;
+Before mutation:
+
+1. prove Target/project/repository/branch/worktree identity;
+2. inspect the existing mechanism before adding another;
 3. limit changes to the requested cause;
-4. preserve rollback and audit evidence;
-5. never infer success from a command merely returning zero when observable state can be checked.
+4. preserve rollback/audit evidence;
+5. verify observable state rather than treating exit code zero as sufficient evidence.
 
-## One Core
+## Product boundaries
 
-MCP, Admin, CLI lifecycle commands and policy decisions use the same Go Core and Registry. Do not add a parallel policy path, secondary runtime or hidden compatibility bridge.
+MCP, Admin, CLI lifecycle operations and policy decisions share one Go Core and one SQLite Registry. Do not add a parallel policy path, secondary runtime or hidden compatibility bridge.
 
-Python is not a project/runtime dependency. Historical behavior that remains valuable is represented by frozen JSON fixtures and Go tests.
+The appliance runtime is a static Go gateway plus SQLite, systemd, thin lifecycle shell and OpenSSH. Release installation must not require a compiler/development runtime.
 
-## Authorization model
+Runtime code is root-owned. Only persistent data, private config, backups and SSH material required by the service are writable by `mcp-gateway`.
 
-Normal access is explicit:
-- AI client identity;
-- Target;
-- Project;
-- capability grant;
-- global and Target kill switches.
+## Authorization and identity
 
-Structured writes require writes_enabled and Project write permission. Trusted shell additionally requires shell_enabled and target_shell authorization.
+Normal delegated access requires authenticated Client identity plus explicit Target/Project/capability scope and applicable kill switches.
 
-### Target administrative privilege
+Structured writes additionally require write policy. Trusted shell additionally requires shell policy. Target administrative privilege is a second gate requiring explicit `target_admin`, Target privilege policy, any required approval/boot identity and a verified native backend. Missing proof means deny.
 
-Administrative execution is a second gate, not a shortcut. Require normal authorization first, then an explicit target_admin grant, Target privilege policy and a verified native privilege backend. Missing proof means deny.
+Treat Target ID + pinned SSH host key as identity. Host/IP/port are endpoints. Preserve strict host-key checking and never auto-trust a replacement key.
 
-## SSH identity
+## Lifecycle authority
 
-Treat Target ID + pinned host key as identity. Host/IP/port are endpoints. Preserve StrictHostKeyChecking and do not auto-trust replacement keys.
+User install/reinstall/update/rollback goes through `install.sh`. systemd/`mcp-gateway.target` owns normal process lifecycle. Maintainer deployment uses the resumable exact-commit path documented in `CONTRIBUTING.md` and delegates activation/rollback to the same installer.
 
-## Runtime boundaries
+Registry open is non-migrating. Schema transformation is explicit; restore preserves backup schema. Use the Go SQLite backup/restore implementation rather than copying a live database.
 
-Production runtime:
-- one Go gateway executable;
-- SQLite Registry;
-- systemd;
-- thin shell lifecycle scripts;
-- OpenSSH transport;
-- embedded Admin templates/static files.
+Keep `NoNewPrivileges`; gateway reboot uses systemd-logind plus narrow polkit, never arbitrary sudo.
 
-The appliance must not require a compiler or development tooling when installed from a release bundle.
+## Documentation
 
-Runtime code is root-owned. Only persistent data, local config, backups and SSH material that the service must update are writable by mcp-gateway.
+Do not add another documentation tree for a behavior already covered by README, the six CURRENT guides, CONTRIBUTING, AGENTS, CHANGELOG, executable `--help`, machine-readable metadata, systemd units or tests.
 
-## Installation versus deployment
+Historical files under `docs/archive/` are evidence only and must not be used as current operating instructions.
 
-install.sh is the user install/reinstall/rollback entrypoint.
+When behavior changes, update the single relevant CURRENT source and remove obsolete parallel instructions.
 
-scripts/deploy-pi.sh is the maintainer exact-commit promotion path and must be launched through scripts/run-resumable.sh unless explicit break-glass is used. It builds and validates the canonical release bundle, then delegates activation and rollback to that bundle's install.sh. Do not maintain a second deployment lifecycle engine.
+## Workflow
 
-Do not deploy production merely to make it match source or documentation.
+For substantive work:
 
-## Registry lifecycle
-
-Schema version is 6. Runtime Open is non-migrating and requires the current schema. Fresh install and coordinated updates use the explicit Go migrate command; setup requires an already-current Registry and never migrates it. Direct migration supports v4 -> v5 -> v6, v5 -> v6 and current v6. Restore preserves supported backup schemas 4, 5 and 6 exactly; migration remains a separate explicit action. Do not claim support for older schemas unless migrations are implemented and tested.
-
-Use the Go Online Backup/Restore implementation. Do not copy a live SQLite database as an ordinary file.
-
-## Reboots
-
-Keep NoNewPrivileges. Appliance reboot is delegated through systemd-logind and the narrowly scoped polkit rule for mcp-gateway. Never replace this with arbitrary sudo access.
-
-## Documentation contract
-
-CURRENT docs describe the current source architecture. Release notes and archive material may describe older implementations, but must not be presented as current guidance.
-
-The executable contract is checked by Go tests plus scripts/verify-go-only.sh.
-
-## Change workflow
-
-For a substantive change:
-1. prove Git state and branch;
-2. inspect relevant code/tests/docs;
-3. implement the smallest coherent fix;
-4. review the diff;
+1. prove Git/environment state;
+2. inspect code/tests/docs;
+3. implement the smallest coherent change;
+4. review the complete diff;
 5. run focused tests;
-6. run full relevant gates;
-7. update documentation and remove redundant paths;
+6. run the relevant full gates defined by the repository/CI;
+7. correct documentation and redundant paths;
 8. commit/push only after local evidence is clean;
-9. before any release tag, require the exact pushed SHA's remote CI to complete successfully and verify its `headSha`;
-10. create/push the immutable tag only after that evidence;
-11. deploy only in an explicit later promotion/validation phase.
+9. require successful exact-SHA remote CI before any release tag;
+10. deploy only in an explicit later promotion/validation phase.
 
-## Required gates
-
-At minimum before a candidate commit:
-
-    cd mcp-adapter
-    go test -count=1 ./...
-    go vet ./...
-    go mod tidy -diff
-    cd ..
-    scripts/verify-go-only.sh
-    node mcp-adapter/internal/admin/app_js_test.mjs
-    (cd tailwind && npm run build)
-    sh -n install.sh
-    bash -n scripts/build-release-package.sh
-    bash -n scripts/deploy-pi.sh
-    git diff --check
-
-Also cross-build Linux ARMv6 before promotion. The canonical release package must contain no legacy runtime payload.
+Do not mutate production merely to make it match source/documentation.
 
 ## STOP conditions
 
 Stop mutation and investigate when:
-- Git state is unexpected;
-- target/project identity is uncertain;
-- a destructive operation lacks a verified backup/rollback path;
-- readiness depends on unavailable Core/Registry state;
+
+- Git or target/project identity is unexpected;
+- a destructive operation lacks verified recovery evidence;
+- Core/Registry readiness is unavailable;
 - a host key changes unexpectedly;
-- schema is newer than supported or older than the supported direct migration floor;
-- a requested privileged backend cannot be proven;
+- Registry compatibility is unsupported;
+- requested privilege cannot be proven;
 - validation contradicts the intended change.
 
 ## Source-of-truth order
 
-For source contracts: Go code/tests, manifest/compatibility metadata, CURRENT docs.
+For source behavior: Go code/tests and executable/config metadata first, then CURRENT documentation.
 
-For live production: gateway_status, .deployment.json, .deployed-git-sha and the live Registry.
+For live production: gateway/deployment status, live Registry and systemd/readiness evidence.
 
 ## Final rule
 
-Do not report PASS because the implementation looks plausible. Report only what was actually verified, and keep production separate from source validation.
+Never report PASS because an implementation looks plausible. Report only evidence actually observed.
