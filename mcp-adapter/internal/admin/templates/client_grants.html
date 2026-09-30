@@ -15,17 +15,17 @@
     Use <strong>Check Effective Access</strong> to evaluate the real Policy Engine before relying on a permission.
   </div>
 
-  <form id="grant-form" method="POST" action="{% if editing_grant %}{{ url_for('admin.client_grant_edit', client.id, editing_grant.id) }}{% else %}{{ url_for('admin.client_grant_add', client.id) }}{% endif %}" class="card space-y-5 p-4 sm:p-6">
+  <form id="grant-form" method="POST" action="{% if editing_grant %}{{ url_for('admin.client_grant_edit', client.id, editing_grant.id) }}{% else %}{{ url_for('admin.client_grant_add', client.id) }}{% endif %}" class="card space-y-5 p-4 sm:p-6" data-grant-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="flex items-center justify-between gap-4">
       <div>
-        <h2 class="text-lg font-semibold text-white">{% if editing_grant %}Edit Grant{% else %}Add Grant{% endif %}</h2>
-        <p class="text-xs text-slate-400">One explicit capability per grant. Prefer the narrowest Target and Project that meet the need.</p>
+        <h2 class="text-lg font-semibold text-white">{% if editing_grant %}Edit Grant{% else %}Add Grants{% endif %}</h2>
+        <p class="text-xs text-slate-400">{% if editing_grant %}Edit one persisted Grant. Toggle and Delete also remain individual operations.{% else %}Select one or more real capabilities. Presets are interface shortcuts only; each capability is stored and audited as an independent Grant.{% endif %}</p>
       </div>
       {% if editing_grant %}<a href="{{ url_for('admin.client_grants', client.id) }}" class="btn-secondary">Cancel edit</a>{% endif %}
     </div>
 
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div>
         <label for="grant-target" class="field-label">Target</label>
         <select id="grant-target" name="target_id" class="field font-mono" required data-project-select="grant-project">
@@ -49,32 +49,83 @@
           {% endfor %}
         </select>
       </div>
-      <div>
-        <label for="grant-capability" class="field-label">Capability</label>
-        <select id="grant-capability" name="capability" class="field font-mono" required>
-          {% if not editing_grant %}<option value="">Select capability</option>{% endif %}
-          {% for capability in grant_capabilities %}
-          <option value="{{ capability }}" {% if grant_form and grant_form.capability == capability %}selected{% endif %}>
-            {{ capability }}{% if capability == '*' %} — all compatible ordinary capabilities{% elif capability == 'target_admin' %} — explicit OS privilege{% endif %}
-          </option>
-          {% endfor %}
-        </select>
-        <p class="field-help"><code>*</code> never implies <code>target_admin</code>.</p>
-      </div>
     </div>
 
-    <div class="flex flex-wrap items-center gap-5">
+    {% if editing_grant %}
+    <div>
+      <label for="grant-capability" class="field-label">Capability</label>
+      <select id="grant-capability" name="capability" class="field font-mono" required>
+        {% for capability in grant_capabilities %}
+        <option value="{{ capability }}" {% if grant_form and grant_form.capability == capability %}selected{% endif %}>{{ capability }}{% if capability == '*' %} — all compatible ordinary capabilities{% elif capability == 'target_admin' %} — explicit OS privilege{% endif %}</option>
+        {% endfor %}
+      </select>
+      <p class="field-help"><code>*</code> never implies <code>target_admin</code>; <code>target_admin</code> never implies <code>target_shell</code>.</p>
+    </div>
+    {% else %}
+    <div class="space-y-4" data-grant-builder>
+      <div>
+        <h3 class="field-label">Capabilities</h3>
+        <p class="field-help">Choose presets for convenience or customize the same underlying capability checkboxes below.</p>
+      </div>
+
+      {% for category in "Target presets,Gateway presets,Broad access"|split:"," %}
+      <fieldset class="space-y-2 rounded border border-slate-800 p-3">
+        <legend class="px-1 text-xs font-semibold uppercase tracking-wider text-slate-400">{{ category }}</legend>
+        {% for preset in grant_presets %}
+        {% if preset.category == category %}
+        <div class="flex items-start gap-2">
+          <input id="preset-{{ preset.id }}" type="checkbox" class="mt-1 rounded" data-grant-preset data-capabilities="{{ preset.capabilities_csv }}">
+          <label for="preset-{{ preset.id }}" class="min-w-0 flex-1 text-sm text-slate-200">
+            {{ preset.name }}{% if preset.high_impact %} <span class="text-amber-300">⚠</span>{% endif %}
+          </label>
+          <button type="button" class="rounded border border-slate-700 px-2 text-xs text-slate-300 hover:text-white" aria-label="About {{ preset.name }}" aria-describedby="tooltip-preset-{{ preset.id }}" data-tooltip-trigger>ⓘ</button>
+          <span id="tooltip-preset-{{ preset.id }}" role="tooltip" hidden class="absolute z-20 max-w-sm rounded border border-slate-700 bg-slate-950 p-2 text-xs text-slate-200 shadow-lg">{{ preset.description }}</span>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </fieldset>
+      {% endfor %}
+
+      <div class="rounded border border-slate-800 p-3">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-400">Selected access</div>
+        <div class="mt-2 flex flex-wrap gap-2 text-xs" data-grant-summary><span class="text-slate-500">Nothing selected.</span></div>
+      </div>
+
+      <details class="rounded border border-slate-800 p-3">
+        <summary class="cursor-pointer text-sm font-medium text-indigo-300">Advanced / Customize capabilities</summary>
+        <div class="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
+          {% for capability in grant_capability_rows %}
+          <div class="flex items-start gap-2 rounded border border-slate-800/70 p-2">
+            <input id="capability-{{ capability.name }}" type="checkbox" name="capability" value="{{ capability.name }}" class="mt-1 rounded" data-grant-capability {% if capability.selected %}checked{% endif %}>
+            <label for="capability-{{ capability.name }}" class="min-w-0 flex-1">
+              <span class="font-mono text-sm text-indigo-300">{{ capability.name }}</span>{% if capability.high_impact %} <span class="text-amber-300">⚠</span>{% endif %}
+              <span class="block text-[10px] uppercase tracking-wider text-slate-500">{{ capability.category }}</span>
+            </label>
+            <button type="button" class="rounded border border-slate-700 px-2 text-xs text-slate-300 hover:text-white" aria-label="About {{ capability.name }}" aria-describedby="tooltip-capability-{{ capability.name }}" data-tooltip-trigger>ⓘ</button>
+            <span id="tooltip-capability-{{ capability.name }}" role="tooltip" hidden class="absolute z-20 max-w-sm rounded border border-slate-700 bg-slate-950 p-2 text-xs text-slate-200 shadow-lg">{{ capability.description }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    {% endif %}
+
+    <div class="flex flex-wrap items-start gap-5">
       <label class="inline-flex items-center gap-2 text-sm text-slate-300">
         <input type="checkbox" name="enabled" class="rounded" {% if not grant_form or grant_form.enabled %}checked{% endif %}> Enabled
       </label>
-      <label class="inline-flex items-start gap-2 text-xs text-amber-300">
-        <input type="checkbox" name="confirm_global" class="mt-0.5 rounded">
-        <span>I understand that a global wildcard or global <code>target_admin</code> grant is high impact.</span>
-      </label>
+      <div class="rounded border border-amber-800/70 bg-amber-950/20 p-3 text-xs text-amber-200" data-high-impact-confirm>
+        <div class="font-semibold">⚠ High-impact access</div>
+        <label class="mt-2 inline-flex items-start gap-2">
+          <input type="checkbox" name="confirm_high_impact" class="mt-0.5 rounded" data-high-impact-checkbox>
+          <span>I understand that this selection includes wildcard ordinary access and/or Target administrative privilege.</span>
+        </label>
+        <p class="mt-1 text-amber-300/80">Required only when <code>*</code> or <code>target_admin</code> is selected. The server always enforces this rule.</p>
+      </div>
     </div>
 
     <div class="flex justify-end">
-      <button type="submit" class="btn-primary">{% if editing_grant %}Save Grant{% else %}Add Grant{% endif %}</button>
+      <button type="submit" class="btn-primary">{% if editing_grant %}Save Grant{% else %}Add Grants{% endif %}</button>
     </div>
   </form>
 

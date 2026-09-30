@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 )
 
@@ -123,6 +124,36 @@ func (s *Store) AddGrantAudited(ctx context.Context, grant Grant, activity Activ
 		return recordActivityExec(ctx, tx, activity)
 	})
 	return id, err
+}
+
+// AddGrantsAudited creates explicit Grants and records one granular Activity
+// per Grant in a single SQLite transaction. Any insert or audit failure rolls
+// back the complete batch.
+func (s *Store) AddGrantsAudited(ctx context.Context, grants []Grant, activities []Activity) ([]int64, error) {
+	if len(grants) == 0 {
+		return nil, fmt.Errorf("grant batch cannot be empty")
+	}
+	if len(grants) != len(activities) {
+		return nil, fmt.Errorf("grant/activity batch length mismatch")
+	}
+	ids := make([]int64, 0, len(grants))
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		for i, grant := range grants {
+			id, err := addGrantExec(ctx, tx, grant)
+			if err != nil {
+				return err
+			}
+			if err := recordActivityExec(ctx, tx, activities[i]); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // UpdateGrantForClientAudited updates only a Grant that belongs to clientID

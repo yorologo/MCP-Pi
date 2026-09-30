@@ -85,7 +85,7 @@ Updates and installer rollback reuse `install.sh`; Registry restore and schema m
 | Need | Source |
 | --- | --- |
 | Install, bootstrap, update, rollback | [docs/installation.md](docs/installation.md) |
-| Admin, Targets, Projects, Clients, ingress/configuration | [docs/configuration.md](docs/configuration.md) |
+| Admin, Targets, Projects, Clients, ChatGPT/Gemini connection and ingress | [docs/configuration.md](docs/configuration.md) |
 | Start/stop, health, maintenance, logs, benchmark | [docs/operations.md](docs/operations.md) |
 | Troubleshooting, backup/restore, recovery | [docs/recovery.md](docs/recovery.md) |
 | Components, lifecycle and compatibility semantics | [docs/architecture.md](docs/architecture.md) |

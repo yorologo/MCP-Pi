@@ -1639,6 +1639,225 @@ func (s *Server) handleClientSubroutes(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+type grantPreset struct {
+	ID           string
+	Name         string
+	Category     string
+	Description  string
+	Capabilities []string
+	HighImpact   bool
+}
+
+func grantPresets() []grantPreset {
+	return []grantPreset{
+		{ID: "read-only", Name: "Read only", Category: "Target presets", Description: "Structured read-only access to files, directories, search, Git status and Target status.", Capabilities: []string{"read"}},
+		{ID: "structured-operator", Name: "Structured operator", Category: "Target presets", Description: "Read/write access plus allowlisted Tasks using structured tools; no arbitrary Target shell.", Capabilities: []string{"read", "write", "tasks"}},
+		{ID: "trusted-shell", Name: "Trusted shell", Category: "Target presets", Description: "Structured operator access plus arbitrary run_command execution in the authorized Project scope.", Capabilities: []string{"read", "write", "tasks", "target_shell"}},
+		{ID: "privileged-shell", Name: "Privileged shell", Category: "Target presets", Description: "Trusted shell plus explicit target_admin. OS elevation still requires Target privilege policy, backend readiness and any configured approval.", Capabilities: []string{"read", "write", "tasks", "target_shell", policy.TargetPrivilegeCapability}, HighImpact: true},
+		{ID: "gateway-diagnostics", Name: "Gateway diagnostics", Category: "Gateway presets", Description: "Read-only Gateway operational diagnostics through status and Doctor.", Capabilities: []string{"status", "doctor"}},
+		{ID: "gateway-maintenance", Name: "Gateway maintenance", Category: "Gateway presets", Description: "Gateway diagnostics plus backup and maintenance operations; excludes reboot.", Capabilities: []string{"status", "doctor", "backup", "maintenance"}},
+		{ID: "gateway-administrator", Name: "Gateway administrator", Category: "Gateway presets", Description: "Administrative Gateway operations through the admin capability.", Capabilities: []string{"admin"}},
+		{ID: "all-ordinary-access", Name: "All ordinary access", Category: "Broad access", Description: "Wildcard * for all compatible ordinary capabilities. It never grants target_admin.", Capabilities: []string{"*"}, HighImpact: true},
+	}
+}
+
+func grantPresetRows() []map[string]interface{} {
+	presets := grantPresets()
+	rows := make([]map[string]interface{}, 0, len(presets))
+	for _, preset := range presets {
+		rows = append(rows, map[string]interface{}{
+			"id":               preset.ID,
+			"name":             preset.Name,
+			"category":         preset.Category,
+			"description":      preset.Description,
+			"capabilities":     preset.Capabilities,
+			"capabilities_csv": strings.Join(preset.Capabilities, ","),
+			"high_impact":      preset.HighImpact,
+		})
+	}
+	return rows
+}
+
+func grantCapabilityDescription(capability string) string {
+	switch capability {
+	case "read":
+		return "Structured read-only operations such as file reads, directory listing, search, Git status and Target status."
+	case "write":
+		return "Structured filesystem mutations. Still subject to global writes and Project write policy."
+	case "tasks":
+		return "Execution of allowlisted Project Tasks."
+	case "execute":
+		return "Authorizes execution capabilities currently associated with run_task and run_command."
+	case "target_shell":
+		return "Authorizes arbitrary run_command execution within an authorized Project. Does not grant OS administrative privilege."
+	case policy.TargetPrivilegeCapability:
+		return "Second authorization gate for OS privilege elevation. Does not grant target_shell by itself."
+	case "admin":
+		return "Gateway administrative operations such as status, Doctor, backup, maintenance and reboot."
+	case "*":
+		return "All compatible ordinary capabilities. Never grants target_admin."
+	}
+	tools := make([]string, 0, 1)
+	for tool, allowed := range policy.ToolCapabilities {
+		for _, candidate := range allowed {
+			if candidate == capability {
+				tools = append(tools, tool)
+				break
+			}
+		}
+	}
+	sort.Strings(tools)
+	if len(tools) == 1 {
+		return fmt.Sprintf("Authorizes the %s tool.", tools[0])
+	}
+	if len(tools) > 1 {
+		return fmt.Sprintf("Authorizes Policy-mapped tools: %s.", strings.Join(tools, ", "))
+	}
+	return "Supported grant capability from the current Policy catalog."
+}
+
+func grantCapabilityRows(r *http.Request, formGrant *registry.Grant) []map[string]interface{} {
+	selected := map[string]bool{}
+	if r != nil {
+		_ = r.ParseForm()
+		for _, raw := range r.PostForm["capability"] {
+			selected[strings.TrimSpace(raw)] = true
+		}
+	}
+	if formGrant != nil && formGrant.Capability != "" {
+		selected[strings.TrimSpace(formGrant.Capability)] = true
+	}
+	priority := map[string]int{
+		"read": 0, "write": 1, "tasks": 2, "execute": 3,
+		"target_shell": 4, policy.TargetPrivilegeCapability: 5, "admin": 6, "*": 7,
+	}
+	capabilities := policy.GrantCapabilities()
+	sort.SliceStable(capabilities, func(i, j int) bool {
+		pi, iok := priority[capabilities[i]]
+		pj, jok := priority[capabilities[j]]
+		if iok != jok {
+			return iok
+		}
+		if iok && pi != pj {
+			return pi < pj
+		}
+		return capabilities[i] < capabilities[j]
+	})
+	rows := make([]map[string]interface{}, 0, len(capabilities))
+	for _, capability := range capabilities {
+		category := "Specific capabilities"
+		switch capability {
+		case "read", "write", "tasks", "execute", "target_shell", policy.TargetPrivilegeCapability:
+			category = "Target capabilities"
+		case "admin", "status", "doctor", "backup", "maintenance", "reboot":
+			category = "Gateway capabilities"
+		case "*":
+			category = "Broad access"
+		}
+		rows = append(rows, map[string]interface{}{
+			"name":        capability,
+			"description": grantCapabilityDescription(capability),
+			"category":    category,
+			"high_impact": capability == "*" || capability == policy.TargetPrivilegeCapability,
+			"selected":    selected[capability],
+		})
+	}
+	return rows
+}
+
+func normalizeGrantCapabilities(values []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		capability := strings.TrimSpace(raw)
+		if capability == "" {
+			continue
+		}
+		if !policy.IsGrantCapability(capability) {
+			return nil, fmt.Errorf("unsupported capability %q", capability)
+		}
+		if _, ok := seen[capability]; ok {
+			continue
+		}
+		seen[capability] = struct{}{}
+		out = append(out, capability)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("at least one capability is required")
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func validateGrantScope(ctx context.Context, store *registry.Store, targetID, projectID string) error {
+	if targetID == "" {
+		return fmt.Errorf("Target is required")
+	}
+	if targetID != "*" {
+		if _, err := store.GetTarget(ctx, targetID, true); err != nil {
+			return fmt.Errorf("invalid Target scope: %w", err)
+		}
+	}
+	if projectID != "*" {
+		if targetID == "*" {
+			return fmt.Errorf("a specific Project requires a specific Target")
+		}
+		if _, err := store.GetProject(ctx, targetID, projectID, true); err != nil {
+			return fmt.Errorf("invalid Project scope: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateGrantBatchForm(ctx context.Context, store *registry.Store, r *http.Request, clientID string) ([]registry.Grant, registry.Grant, error) {
+	if err := r.ParseForm(); err != nil {
+		return nil, registry.Grant{}, fmt.Errorf("parse grant form: %w", err)
+	}
+	targetID := strings.TrimSpace(r.PostForm.Get("target_id"))
+	projectID := strings.TrimSpace(r.PostForm.Get("project_id"))
+	if projectID == "" {
+		projectID = "*"
+	}
+	formGrant := registry.Grant{ClientID: clientID, TargetID: targetID, ProjectID: projectID, Enabled: r.PostForm.Get("enabled") == "on"}
+	capabilities, err := normalizeGrantCapabilities(r.PostForm["capability"])
+	if err != nil {
+		return nil, formGrant, err
+	}
+	formGrant.Capability = capabilities[0]
+	if err := validateGrantScope(ctx, store, targetID, projectID); err != nil {
+		return nil, formGrant, err
+	}
+	highImpact := false
+	for _, capability := range capabilities {
+		if capability == "*" || capability == policy.TargetPrivilegeCapability {
+			highImpact = true
+			break
+		}
+	}
+	if highImpact && r.PostForm.Get("confirm_high_impact") != "on" {
+		return nil, formGrant, fmt.Errorf("high-impact access requires explicit confirmation")
+	}
+	existing, err := store.ListGrants(ctx, clientID)
+	if err != nil {
+		return nil, formGrant, fmt.Errorf("list existing grants: %w", err)
+	}
+	for _, capability := range capabilities {
+		for _, candidate := range existing {
+			if candidate.TargetID == targetID && candidate.ProjectID == projectID && strings.TrimSpace(candidate.Capability) == capability {
+				return nil, formGrant, fmt.Errorf("duplicate grant already exists for this client, Target, Project, and capability %q", capability)
+			}
+		}
+	}
+	grants := make([]registry.Grant, 0, len(capabilities))
+	for _, capability := range capabilities {
+		grants = append(grants, registry.Grant{
+			ClientID: clientID, TargetID: targetID, ProjectID: projectID,
+			Capability: capability, Enabled: formGrant.Enabled,
+		})
+	}
+	return grants, formGrant, nil
+}
+
 func (s *Server) renderClientGrants(w http.ResponseWriter, r *http.Request, client registry.Client, editingGrant *registry.Grant, accessResult interface{}) bool {
 	return s.renderClientGrantsStatus(w, r, client, editingGrant, editingGrant, accessResult, http.StatusOK)
 }
@@ -1665,16 +1884,18 @@ func (s *Server) renderClientGrantsStatus(
 		return false
 	}
 	s.renderStatus(w, r, "client_grants.html", pongo2.Context{
-		"client":             client,
-		"grants":             grants,
-		"targets":            targets,
-		"projects":           projects,
-		"tool_names":         core.CatalogTools(),
-		"grant_capabilities": policy.GrantCapabilities(),
-		"editing_grant":      editingGrant,
-		"grant_form":         formGrant,
-		"access_result":      accessResult,
-		"section":            "clients",
+		"client":                client,
+		"grants":                grants,
+		"targets":               targets,
+		"projects":              projects,
+		"tool_names":            core.CatalogTools(),
+		"grant_capabilities":    policy.GrantCapabilities(),
+		"grant_capability_rows": grantCapabilityRows(r, formGrant),
+		"grant_presets":         grantPresetRows(),
+		"editing_grant":         editingGrant,
+		"grant_form":            formGrant,
+		"access_result":         accessResult,
+		"section":               "clients",
 	}, status)
 	return true
 }
@@ -1683,24 +1904,18 @@ func validateGrantForm(ctx context.Context, store *registry.Store, r *http.Reque
 	if err := r.ParseForm(); err != nil {
 		return registry.Grant{}, fmt.Errorf("parse grant form: %w", err)
 	}
-	targetID := strings.TrimSpace(r.FormValue("target_id"))
-	projectID := strings.TrimSpace(r.FormValue("project_id"))
-	capability := strings.TrimSpace(r.FormValue("capability"))
+	targetID := strings.TrimSpace(r.PostForm.Get("target_id"))
+	projectID := strings.TrimSpace(r.PostForm.Get("project_id"))
+	capability := strings.TrimSpace(r.PostForm.Get("capability"))
 	if projectID == "" {
 		projectID = "*"
 	}
 	grant := registry.Grant{
-		ClientID:   clientID,
-		TargetID:   targetID,
-		ProjectID:  projectID,
-		Capability: capability,
-		Enabled:    r.FormValue("enabled") == "on",
+		ClientID: clientID, TargetID: targetID, ProjectID: projectID,
+		Capability: capability, Enabled: r.PostForm.Get("enabled") == "on",
 	}
 	if existing != nil {
 		grant.ID = existing.ID
-	}
-	if targetID == "" {
-		return grant, fmt.Errorf("Target is required")
 	}
 	if capability == "" {
 		return grant, fmt.Errorf("Capability is required")
@@ -1708,24 +1923,12 @@ func validateGrantForm(ctx context.Context, store *registry.Store, r *http.Reque
 	if !policy.IsGrantCapability(capability) {
 		return grant, fmt.Errorf("unsupported capability %q", capability)
 	}
-	if targetID != "*" {
-		if _, err := store.GetTarget(ctx, targetID, true); err != nil {
-			return grant, fmt.Errorf("invalid Target scope: %w", err)
-		}
+	if err := validateGrantScope(ctx, store, targetID, projectID); err != nil {
+		return grant, err
 	}
-	if projectID != "*" {
-		if targetID == "*" {
-			return grant, fmt.Errorf("a specific Project requires a specific Target")
-		}
-		if _, err := store.GetProject(ctx, targetID, projectID, true); err != nil {
-			return grant, fmt.Errorf("invalid Project scope: %w", err)
-		}
+	if (capability == "*" || capability == policy.TargetPrivilegeCapability) && r.PostForm.Get("confirm_high_impact") != "on" {
+		return grant, fmt.Errorf("high-impact access requires explicit confirmation")
 	}
-	highImpactCapability := capability == "*" || capability == policy.TargetPrivilegeCapability
-	if highImpactCapability && (targetID == "*" || projectID == "*") && r.FormValue("confirm_global") != "on" {
-		return grant, fmt.Errorf("high-impact wildcard scope requires explicit confirmation")
-	}
-
 	grants, err := store.ListGrants(ctx, clientID)
 	if err != nil {
 		return grant, fmt.Errorf("list existing grants: %w", err)
@@ -1758,18 +1961,24 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		grant, err := validateGrantForm(r.Context(), s.cfg.Store, r, client.ID, nil)
+		grants, formGrant, err := validateGrantBatchForm(r.Context(), s.cfg.Store, r, client.ID)
 		if err != nil {
-			sess.Flash(fmt.Sprintf("Invalid grant: %v", err), "danger")
-			s.renderClientGrantsStatus(w, r, client, nil, &grant, nil, http.StatusUnprocessableEntity)
+			sess.Flash(fmt.Sprintf("Invalid grants: %v", err), "danger")
+			s.renderClientGrantsStatus(w, r, client, nil, &formGrant, nil, http.StatusUnprocessableEntity)
 			return
 		}
-		s.RecordAudit(r, "add_grant_attempt", grant.TargetID, grant.ProjectID, true, "", fmt.Sprintf("Add grant '%s' for client '%s'", grant.Capability, client.ID), true)
-		activity := s.auditEntry(r, "add_grant", grant.TargetID, grant.ProjectID, true, "", fmt.Sprintf("Added grant '%s' for client '%s'", grant.Capability, client.ID))
-		if _, err := s.cfg.Store.AddGrantAudited(r.Context(), grant, activity); s.failStoreMutation(w, r, "add_grant", grant.TargetID, grant.ProjectID, err) {
+		capabilities := make([]string, 0, len(grants))
+		activities := make([]registry.Activity, 0, len(grants))
+		for _, grant := range grants {
+			capabilities = append(capabilities, grant.Capability)
+			activities = append(activities, s.auditEntry(r, "add_grant", grant.TargetID, grant.ProjectID, true, "", fmt.Sprintf("Added grant '%s' for client '%s'", grant.Capability, client.ID)))
+		}
+		targetID, projectID := grants[0].TargetID, grants[0].ProjectID
+		s.RecordAudit(r, "add_grants_attempt", targetID, projectID, true, "", fmt.Sprintf("Add grants [%s] for client '%s'", strings.Join(capabilities, ", "), client.ID), true)
+		if _, err := s.cfg.Store.AddGrantsAudited(r.Context(), grants, activities); s.failStoreMutation(w, r, "add_grants", targetID, projectID, err) {
 			return
 		}
-		sess.Flash("Grant added successfully.", "success")
+		sess.Flash(fmt.Sprintf("%d grant(s) added successfully.", len(grants)), "success")
 		http.Redirect(w, r, fmt.Sprintf("/clients/%s/grants", client.ID), http.StatusFound)
 		return
 	}

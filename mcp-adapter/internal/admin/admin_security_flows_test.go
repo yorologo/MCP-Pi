@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"mcp-gateway-adapter/internal/core"
+	"mcp-gateway-adapter/internal/policy"
 	"mcp-gateway-adapter/internal/registry"
 )
 
@@ -539,5 +540,176 @@ func TestCapabilityBundleIsRejectedByAdminValidation(t *testing.T) {
 	if _, err := validateGrantForm(context.Background(), store, req, "test-client", nil); err == nil ||
 		!strings.Contains(err.Error(), "unsupported capability") {
 		t.Fatalf("capability bundle was not rejected: %v", err)
+	}
+}
+
+func TestGrantPresetsMatchPolicyCatalog(t *testing.T) {
+	expected := map[string][]string{
+		"read-only":             {"read"},
+		"structured-operator":   {"read", "write", "tasks"},
+		"trusted-shell":         {"read", "write", "tasks", "target_shell"},
+		"privileged-shell":      {"read", "write", "tasks", "target_shell", "target_admin"},
+		"gateway-diagnostics":   {"status", "doctor"},
+		"gateway-maintenance":   {"status", "doctor", "backup", "maintenance"},
+		"gateway-administrator": {"admin"},
+		"all-ordinary-access":   {"*"},
+	}
+	presets := grantPresets()
+	if len(presets) != len(expected) {
+		t.Fatalf("preset count=%d want %d", len(presets), len(expected))
+	}
+	for _, preset := range presets {
+		want, ok := expected[preset.ID]
+		if !ok {
+			t.Fatalf("unexpected preset %q", preset.ID)
+		}
+		if strings.Join(preset.Capabilities, ",") != strings.Join(want, ",") {
+			t.Fatalf("preset %s=%v want %v", preset.ID, preset.Capabilities, want)
+		}
+		for _, capability := range preset.Capabilities {
+			if !policy.IsGrantCapability(capability) {
+				t.Fatalf("preset %s contains unsupported capability %q", preset.ID, capability)
+			}
+		}
+	}
+}
+
+func TestGrantBatchNormalizesDeduplicatesAndAddsAtomically(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	ctx := context.Background()
+	before, err := store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, "/clients/test-client/grants/add", url.Values{
+		"target_id":  {"test-target"},
+		"project_id": {"test-proj"},
+		"capability": {" write ", "tasks", "write"},
+		"enabled":    {"on"},
+	}))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("batch add returned %d: %s", rec.Code, rec.Body.String())
+	}
+	after, err := store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before)+2 {
+		t.Fatalf("batch add count=%d want %d: %+v", len(after), len(before)+2, after)
+	}
+	got := map[string]int{}
+	for _, grant := range after {
+		got[grant.Capability]++
+	}
+	if got["write"] != 1 || got["tasks"] != 1 {
+		t.Fatalf("batch normalization/dedupe failed: %+v", got)
+	}
+
+	before = after
+	rec = httptest.NewRecorder()
+	srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, "/clients/test-client/grants/add", url.Values{
+		"target_id":  {"test-target"},
+		"project_id": {"test-proj"},
+		"capability": {"doctor", "not-a-capability"},
+		"enabled":    {"on"},
+	}))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid batch returned %d want 422", rec.Code)
+	}
+	after, err = store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("invalid batch partially mutated grants: before=%d after=%d", len(before), len(after))
+	}
+}
+
+func TestGrantBatchRejectsExistingDuplicateWithoutPartialInsert(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	ctx := context.Background()
+	before, err := store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, "/clients/test-client/grants/add", url.Values{
+		"target_id":  {"test-target"},
+		"project_id": {"test-proj"},
+		"capability": {"write", "read"},
+		"enabled":    {"on"},
+	}))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("duplicate batch returned %d want 422", rec.Code)
+	}
+	after, err := store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("duplicate batch partially mutated grants: before=%d after=%d", len(before), len(after))
+	}
+}
+
+func TestGrantHighImpactConfirmationIsScopeIndependent(t *testing.T) {
+	tests := []struct {
+		name       string
+		capability string
+	}{
+		{name: "target_admin", capability: "target_admin"},
+		{name: "wildcard", capability: "*"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, store := setupTestAdminServer(t)
+			ctx := context.Background()
+			before, err := store.ListGrants(ctx, "test-client")
+			if err != nil {
+				t.Fatal(err)
+			}
+			form := url.Values{
+				"target_id":  {"test-target"},
+				"project_id": {"test-proj"},
+				"capability": {tt.capability},
+				"enabled":    {"on"},
+			}
+			rec := httptest.NewRecorder()
+			srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, "/clients/test-client/grants/add", form))
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("without confirmation returned %d want 422", rec.Code)
+			}
+			after, err := store.ListGrants(ctx, "test-client")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(after) != len(before) {
+				t.Fatalf("high-impact rejection mutated grants: before=%d after=%d", len(before), len(after))
+			}
+
+			form.Set("confirm_high_impact", "on")
+			rec = httptest.NewRecorder()
+			srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, "/clients/test-client/grants/add", form))
+			if rec.Code != http.StatusFound {
+				t.Fatalf("with confirmation returned %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestNormalizeGrantCapabilitiesRejectsEmptyAndInvalid(t *testing.T) {
+	if _, err := normalizeGrantCapabilities([]string{"", "  "}); err == nil {
+		t.Fatal("empty capability selection was accepted")
+	}
+	if _, err := normalizeGrantCapabilities([]string{"read", "invalid"}); err == nil {
+		t.Fatal("invalid capability selection was accepted")
+	}
+	got, err := normalizeGrantCapabilities([]string{"tasks", "read", "tasks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "read,tasks" {
+		t.Fatalf("normalized capabilities=%v want [read tasks]", got)
 	}
 }

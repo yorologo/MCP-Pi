@@ -4,6 +4,12 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 
 ## Unreleased
 
+### Admin / authorization
+- Client Grant creation now supports atomic multi-capability **Add Grants** while preserving one capability per persisted/audited Grant and the existing Registry uniqueness constraint.
+- Admin presets are presentation-only shortcuts over the Policy capability catalog; Advanced customization submits real capability values and does not introduce roles, permission inheritance or a second authorization path.
+- `*` and `target_admin` now require explicit high-impact confirmation regardless of Target/Project wildcard scope; `*` still never implies `target_admin`, and `target_admin` still never implies trusted shell.
+- Grant selection remains usable without JavaScript; progressive enhancement adds preset expansion, compact selection summaries and accessible hover/focus/touch descriptions.
+
 ### Fixed
 - Doctor now validates the maintenance timer by active lifecycle state under `mcp-gateway.target` instead of requiring a redundant independent enablement symlink.
 - Local HTTP readiness probes remain bounded but allow five seconds, preventing false postboot failure on the constrained ARMv6 appliance under startup load.

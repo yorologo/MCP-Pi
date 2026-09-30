@@ -183,6 +183,161 @@ function setupProjectScope(targetSelect) {
   apply();
 }
 
+function applyGrantPreset(capabilityInputs, capabilities, checked) {
+  const selected = new Set(capabilities || []);
+  (capabilityInputs || []).forEach(input => {
+    if (selected.has(input.value)) input.checked = Boolean(checked);
+  });
+}
+
+function isHighImpactGrantSelection(selectedCapabilities) {
+  const selected = new Set(selectedCapabilities || []);
+  return selected.has('*') || selected.has('target_admin');
+}
+
+function summarizeGrantAccess(selectedCapabilities, presets) {
+  const selected = new Set(selectedCapabilities || []);
+  const uncovered = new Set(selected);
+  const ordered = (presets || [])
+    .map(preset => ({ ...preset, capabilities: Array.from(preset.capabilities || []) }))
+    .sort((a, b) => b.capabilities.length - a.capabilities.length || String(a.name).localeCompare(String(b.name)));
+
+  const summary = [];
+  ordered.forEach(preset => {
+    const contained = preset.capabilities.length > 0 && preset.capabilities.every(capability => selected.has(capability));
+    const addsCoverage = preset.capabilities.some(capability => uncovered.has(capability));
+    if (!contained || !addsCoverage) return;
+    summary.push({ name: preset.name, highImpact: Boolean(preset.highImpact) });
+    preset.capabilities.forEach(capability => uncovered.delete(capability));
+  });
+
+  Array.from(uncovered).sort().forEach(capability => {
+    summary.push({ name: capability, highImpact: capability === '*' || capability === 'target_admin' });
+  });
+  return summary;
+}
+
+function setupGrantBuilder(builder) {
+  if (!builder) return;
+  const form = builder.closest?.('form') || document.querySelector?.('[data-grant-form]');
+  const capabilityInputs = Array.from(builder.querySelectorAll?.('[data-grant-capability]') || []);
+  const presetInputs = Array.from(builder.querySelectorAll?.('[data-grant-preset]') || []);
+  const summary = builder.querySelector?.('[data-grant-summary]');
+  const highImpactRegion = form?.querySelector?.('[data-high-impact-confirm]');
+  const highImpactCheckbox = form?.querySelector?.('[data-high-impact-checkbox]');
+
+  const presetModels = presetInputs.map(input => ({
+    input,
+    name: input.parentElement?.querySelector?.('label')?.textContent?.replace('⚠', '').trim() || input.id || 'Preset',
+    highImpact: (input.parentElement?.textContent || '').includes('⚠'),
+    capabilities: String(input.dataset?.capabilities || '').split(',').map(value => value.trim()).filter(Boolean),
+  }));
+
+  const selectedSet = () => new Set(capabilityInputs.filter(input => input.checked).map(input => input.value));
+
+  const render = () => {
+    const selected = selectedSet();
+    presetModels.forEach(preset => {
+      preset.input.checked = preset.capabilities.length > 0 && preset.capabilities.every(capability => selected.has(capability));
+    });
+
+    const highImpact = isHighImpactGrantSelection(selected);
+    if (highImpactRegion) highImpactRegion.hidden = !highImpact;
+    if (highImpactCheckbox) {
+      highImpactCheckbox.required = highImpact;
+      if (!highImpact) highImpactCheckbox.checked = false;
+    }
+
+    if (!summary || typeof document.createElement !== 'function') return;
+    summary.textContent = '';
+    const items = summarizeGrantAccess(selected, presetModels);
+    if (items.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'text-slate-500';
+      empty.textContent = 'Nothing selected.';
+      summary.appendChild(empty);
+      return;
+    }
+    items.forEach(item => {
+      const chip = document.createElement('span');
+      chip.className = item.highImpact
+        ? 'rounded border border-amber-800 bg-amber-950/30 px-2 py-1 text-amber-200'
+        : 'rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200';
+      chip.textContent = item.name + (item.highImpact ? ' ⚠' : '');
+      summary.appendChild(chip);
+    });
+  };
+
+  presetModels.forEach(preset => {
+    preset.input.addEventListener('change', () => {
+      applyGrantPreset(capabilityInputs, preset.capabilities, preset.input.checked);
+      render();
+    });
+  });
+  capabilityInputs.forEach(input => input.addEventListener('change', render));
+  render();
+}
+
+function setupTooltip(trigger) {
+  const tooltipId = trigger?.getAttribute?.('aria-describedby');
+  if (!tooltipId) return;
+  const tooltip = document.getElementById?.(tooltipId);
+  if (!tooltip) return;
+
+  let openTimer = null;
+  let closeTimer = null;
+  const cancelTimers = () => {
+    if (openTimer) clearTimeout(openTimer);
+    if (closeTimer) clearTimeout(closeTimer);
+    openTimer = null;
+    closeTimer = null;
+  };
+  const open = (delay = 0) => {
+    cancelTimers();
+    openTimer = setTimeout(() => {
+      tooltip.hidden = false;
+      trigger.setAttribute?.('aria-expanded', 'true');
+    }, delay);
+  };
+  const close = (delay = 0) => {
+    cancelTimers();
+    closeTimer = setTimeout(() => {
+      tooltip.hidden = true;
+      trigger.setAttribute?.('aria-expanded', 'false');
+    }, delay);
+  };
+
+  trigger.setAttribute?.('aria-expanded', 'false');
+  trigger.addEventListener('mouseenter', () => open(600));
+  trigger.addEventListener('mouseleave', event => {
+    if (tooltip.contains?.(event.relatedTarget)) return;
+    close(100);
+  });
+  trigger.addEventListener('focus', () => open(0));
+  trigger.addEventListener('blur', event => {
+    if (tooltip.contains?.(event.relatedTarget)) return;
+    close(100);
+  });
+  trigger.addEventListener('click', () => {
+    if (tooltip.hidden) open(0);
+    else close(0);
+  });
+  tooltip.addEventListener?.('mouseenter', cancelTimers);
+  tooltip.addEventListener?.('mouseleave', event => {
+    if (event.relatedTarget === trigger) return;
+    close(100);
+  });
+  tooltip.addEventListener?.('focusin', cancelTimers);
+  tooltip.addEventListener?.('focusout', event => {
+    if (event.relatedTarget === trigger || tooltip.contains?.(event.relatedTarget)) return;
+    close(100);
+  });
+}
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.MCPGrantUI = { applyGrantPreset, isHighImpactGrantSelection, summarizeGrantAccess };
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const navButton = document.querySelector('[data-nav-toggle]');
   const navigation = document.getElementById('primary-navigation');
@@ -205,7 +360,14 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeNavigation();
+    if (e.key !== 'Escape') return;
+    closeNavigation();
+    document.querySelectorAll?.('[data-tooltip-trigger]').forEach(trigger => {
+      const tooltipId = trigger.getAttribute?.('aria-describedby');
+      const tooltip = tooltipId ? document.getElementById?.(tooltipId) : null;
+      if (tooltip) tooltip.hidden = true;
+      trigger.setAttribute?.('aria-expanded', 'false');
+    });
   });
 
   document.querySelectorAll('[data-confirm]').forEach(el => {
@@ -217,4 +379,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.querySelectorAll('[data-project-select]').forEach(setupProjectScope);
   document.querySelectorAll('table[data-admin-table]').forEach(setupDataTable);
+  document.querySelectorAll('[data-grant-builder]').forEach(setupGrantBuilder);
+  document.querySelectorAll('[data-tooltip-trigger]').forEach(setupTooltip);
 });

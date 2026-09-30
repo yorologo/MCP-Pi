@@ -503,7 +503,7 @@ func TestGrantFormPreservesScopeAndFiltersProjectsByTarget(t *testing.T) {
 	for _, want := range []string{
 		`value="test-target" selected`,
 		`value="*" selected`,
-		`value="target_admin" selected`,
+		`name="capability" value="target_admin" class="mt-1 rounded" data-grant-capability checked`,
 		`data-target-id="test-target"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -531,7 +531,7 @@ func TestDuplicateGrantValidationPreservesFormAndReturns422(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "duplicate grant already exists") ||
-		!strings.Contains(body, "value=\"read\" selected") {
+		!strings.Contains(body, `name="capability" value="read" class="mt-1 rounded" data-grant-capability checked`) {
 		t.Fatalf("duplicate grant validation did not preserve useful context: %s", body)
 	}
 }
