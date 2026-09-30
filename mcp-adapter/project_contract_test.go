@@ -314,6 +314,23 @@ func TestApplianceTargetIsCanonicalLifecycleUnit(t *testing.T) {
 	}
 }
 
+func TestDoctorUsesTargetLifecycleSemantics(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("internal", "core", "appliance.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := string(data)
+	if !strings.Contains(core, "timerActive := serviceIsActive(gatewayMaintenanceTimerUnit)") {
+		t.Fatal("Doctor must verify the maintenance timer by active lifecycle state")
+	}
+	if strings.Contains(core, "timerEnabled := serviceIsEnabled(gatewayMaintenanceTimerUnit)") {
+		t.Fatal("Doctor must not require independent timer enablement under mcp-gateway.target")
+	}
+	if !strings.Contains(core, "context.WithTimeout(ctx, 5*time.Second)") {
+		t.Fatal("local readiness probe must retain a bounded Raspberry Pi-compatible timeout")
+	}
+}
+
 func TestPostbootWaitsForRealMCPReadiness(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "config", "systemd", "mcp-gateway-postboot.service"))
 	if err != nil {

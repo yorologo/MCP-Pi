@@ -4,6 +4,10 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 
 ## Unreleased
 
+### Fixed
+- Doctor now validates the maintenance timer by active lifecycle state under `mcp-gateway.target` instead of requiring a redundant independent enablement symlink.
+- Local HTTP readiness probes remain bounded but allow five seconds, preventing false postboot failure on the constrained ARMv6 appliance under startup load.
+
 ### Lifecycle / recovery
 - Adds `mcp-gateway.target` as the canonical systemd lifecycle unit for start/stop/restart while keeping optional ingress services opt-in.
 - Installer updates now stage the complete rollback set and promote it only at the activation boundary, keeping runtime/system/Registry rollback evidence aligned.

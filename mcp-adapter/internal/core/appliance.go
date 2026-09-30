@@ -513,10 +513,10 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 			mcpAdapterStatus, mcpAdapterMsg = "PASS", mcpReadyMsg
 		}
 
-		timerEnabled := serviceIsEnabled(gatewayMaintenanceTimerUnit)
+		timerActive := serviceIsActive(gatewayMaintenanceTimerUnit)
 		checks = append(checks, DoctorCheck{
-			Name: "Maintenance Timer", Passed: timerEnabled,
-			Message: enabledStateMessage(gatewayMaintenanceTimerUnit, timerEnabled), Severity: "warning", Required: true,
+			Name: "Maintenance Timer", Passed: timerActive,
+			Message: serviceStateMessage(gatewayMaintenanceTimerUnit, timerActive), Severity: "warning", Required: true,
 		})
 
 		postbootPassed := true
@@ -529,8 +529,8 @@ func (c *Core) GatewayDoctor(ctx context.Context, requestID string, opts DoctorO
 		}
 
 		applianceStatus, applianceMsg = "FAIL", "required appliance service/readiness checks failed"
-		if servicesPassed && mcpReady && postbootPassed {
-			applianceStatus, applianceMsg = "PASS", "Admin/MCP services and readiness verified"
+		if servicesPassed && mcpReady && timerActive && postbootPassed {
+			applianceStatus, applianceMsg = "PASS", "Admin/MCP services, readiness, and maintenance timer verified"
 		}
 
 		if serviceIsEnabled(gatewayTunnelServiceUnit) {
@@ -1078,13 +1078,13 @@ func failedStateMessage(service string, failed bool) string {
 }
 
 func httpEndpointReady(ctx context.Context, endpoint string) (bool, string) {
-	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return false, "invalid readiness endpoint: " + err.Error()
 	}
-	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
 		return false, endpoint + " unavailable: " + err.Error()
 	}
