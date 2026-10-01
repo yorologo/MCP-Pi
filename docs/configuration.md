@@ -104,7 +104,25 @@ Admin is not part of the external MCP path and should remain loopback unless the
 
 These procedures cover the two externally validated client paths. Connectivity only transports MCP traffic; Go Core/Policy remains authoritative for discovery and execution.
 
+Complete the base MCP-Pi path before configuring any external AI client:
+
+    install/bootstrap
+      -> Target
+      -> Project
+      -> Client
+      -> minimal Grants
+      -> Check Effective Access
+      -> status / doctor
+      -> external client integration
+
+External integrations are optional. MCP-Pi installs their systemd units, but it does not invent provider credentials, buy/configure domains or silently install provider-owned tunnel binaries. A missing external prerequisite is a stop condition, not a reason to weaken the local security model.
+
 Never store MCP bearer tokens, tunnel credentials, OAuth client secrets or private SSH keys in Git. Start with a read-only capability such as `health`, verify the complete path, and broaden Grants only when needed.
+
+| Client | External prerequisites | Local optional services | Final acceptance |
+| --- | --- | --- | --- |
+| ChatGPT | OpenAI tunnel access, official `openai-tunnel-client`, tunnel credentials, ChatGPT-side MCP-Pi app/connector provisioned for the account | `mcp-gateway-tunnel.service` | ChatGPT executes live MCP-Pi `health` |
+| Gemini Spark | Cloudflare Zero Trust, a controlled HTTPS domain/hostname, official `cloudflared`, Cloudflare Tunnel/MCP Portal access | `mcp-gateway-gemini.service`, `mcp-gateway-cloudflared.service` | Gemini executes live `gemini-main` `health` |
 
 ### ChatGPT through the secure OpenAI tunnel
 
@@ -117,6 +135,24 @@ Server-side flow:
       -> Go Core / Policy
       -> authorized Targets / Projects
 
+#### Prerequisites
+
+Before changing MCP-Pi, obtain through the approved OpenAI product workflow:
+
+- access to the supported OpenAI secure MCP tunnel;
+- the official tunnel client, installed as executable `/usr/local/bin/openai-tunnel-client`;
+- `CONTROL_PLANE_TUNNEL_ID`;
+- `CONTROL_PLANE_API_KEY`;
+- the ChatGPT-side MCP-Pi app/connector provisioned for the intended account.
+
+MCP-Pi cannot generate or recover those provider credentials and does not vendor the OpenAI tunnel binary. If any item above is unavailable, stop here. The local preflight intentionally reports `OPENAI_PRODUCT_GATE_PENDING` rather than exposing another ingress path.
+
+Verify the provider binary before continuing:
+
+    test -x /usr/local/bin/openai-tunnel-client
+
+#### Configure MCP-Pi
+
 1. In **AI Clients**, create or reuse `chatgpt-main` and keep it enabled.
 2. Add only the Grants required for the intended work. Use **Check Effective Access** before widening scope.
 3. Verify the local MCP endpoint:
@@ -124,17 +160,36 @@ Server-side flow:
        systemctl is-active mcp-gateway-mcp.service
        curl -fsS http://127.0.0.1:8090/ready
 
-4. Provision the official tunnel client and private `/home/mcp-gateway/.config/mcp-gateway/tunnel.env` through the approved operator workflow. These credentials are mutable private state, not release artifacts.
-5. Enable the optional tunnel only after MCP readiness and Client policy are correct:
+4. Create the private tunnel environment file without placing credentials in shell arguments or Git:
+
+       sudo -u mcp-gateway sh -c 'umask 077; cat > /home/mcp-gateway/.config/mcp-gateway/tunnel.env'
+
+   Paste exactly the provider-issued values in environment-file form, then press **Ctrl-D**:
+
+       CONTROL_PLANE_TUNNEL_ID=<provider-issued-value>
+       CONTROL_PLANE_API_KEY=<provider-issued-value>
+
+5. Verify ownership/mode without printing the credentials:
+
+       sudo stat -c '%U:%G %a %n' /home/mcp-gateway/.config/mcp-gateway/tunnel.env
+       sudo -u mcp-gateway /usr/local/bin/mcp-gateway-tunnel-check credentials
+
+   Expected file ownership is `mcp-gateway:mcp-gateway` with mode `600`, and the credential preflight must exit successfully.
+
+6. Enable the optional tunnel only after MCP readiness and Client policy are correct:
 
        sudo systemctl enable --now mcp-gateway-tunnel.service
        systemctl is-enabled mcp-gateway-tunnel.service
        systemctl is-active mcp-gateway-tunnel.service
        sudo -u mcp-gateway mcp-gateway doctor
 
-6. In ChatGPT, connect or enable the MCP-Pi app/plugin provisioned for the account.
-7. In a chat, invoke MCP-Pi and request `health`.
-8. Accept the integration only when ChatGPT returns live MCP-Pi health data through the connector.
+#### Connect ChatGPT and verify
+
+1. In ChatGPT, enable/connect the MCP-Pi app/plugin already provisioned for the account.
+2. In a chat, invoke MCP-Pi and request `health`.
+3. Accept the integration only when ChatGPT returns live MCP-Pi health data through the connector.
+
+If the ChatGPT-side app/connector has not been provisioned, that is an external product gate; changing Grants or exposing Admin/MCP directly will not solve it.
 
 If ChatGPT can see the connector but a tool is missing, inspect `chatgpt-main` Grants and **Check Effective Access** before changing the tunnel. A connected transport does not widen the tool catalog.
 
@@ -150,12 +205,37 @@ Validated flow:
       -> Go Core / Policy
       -> authorized Targets / Projects
 
+#### Prerequisites
+
+Before enabling the Gemini ingress, prepare:
+
+- a Cloudflare account with Zero Trust/MCP Portal access;
+- a controlled domain/HTTPS hostname for the public MCP Portal;
+- the official `cloudflared` executable installed at `/usr/local/bin/cloudflared`;
+- permission to create a Cloudflare Tunnel and private hostname route;
+- a way for the connector host to resolve `gemini-mcp.internal` to the MCP-Pi LAN address.
+
+MCP-Pi installs the `mcp-gateway-cloudflared.service` unit but intentionally does not install or update the provider-owned `cloudflared` binary and does not create the external Cloudflare account/domain configuration.
+
+Install `cloudflared` using Cloudflare's official procedure for the appliance architecture, then verify the exact path expected by the packaged unit:
+
+    test -x /usr/local/bin/cloudflared
+
 #### 1. Prepare MCP-Pi
 
 1. In **AI Clients**, create or reuse `gemini-main`.
 2. Grant only the capability required for initial acceptance; `health` is sufficient.
-3. Provision `/home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token` as private mutable state owned by `mcp-gateway` with mode `0600`.
-4. Enable and verify the dedicated ingress:
+3. Generate the dedicated MCP bearer token using the same native entropy source/format used by the installer:
+
+       sudo -u mcp-gateway sh -c 'umask 077; od -An -N48 -tx1 /dev/urandom | tr -d "[:space:]" > /home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token'
+
+4. Verify the token file without printing its value:
+
+       sudo stat -c '%U:%G %a %s %n' /home/mcp-gateway/.config/mcp-gateway/gemini-mcp.token
+
+   Expected ownership is `mcp-gateway:mcp-gateway`, mode `600`, and a non-zero size.
+
+5. Enable and verify the dedicated ingress:
 
        sudo systemctl enable --now mcp-gateway-gemini.service
        systemctl is-enabled mcp-gateway-gemini.service
@@ -167,18 +247,30 @@ The packaged Gemini unit binds `0.0.0.0:8092` deliberately so a private connecto
 #### 2. Prepare the private Cloudflare route
 
 1. Create a Cloudflare Tunnel and a private hostname route for `gemini-mcp.internal`.
-2. Make `gemini-mcp.internal` resolve from the connector host to the MCP-Pi LAN address. Do not resolve it to `127.0.0.1`.
-3. Check local resolution and overrides:
+2. When Cloudflare provides the connector/tunnel token, store it through stdin rather than placing the token in a command argument or repository file:
+
+       sudo -u mcp-gateway sh -c 'umask 077; cat > /home/mcp-gateway/.config/mcp-gateway/cloudflared.token'
+
+   Paste only the Cloudflare-issued tunnel token, then press **Ctrl-D**.
+
+3. Verify the file without printing the token:
+
+       sudo stat -c '%U:%G %a %s %n' /home/mcp-gateway/.config/mcp-gateway/cloudflared.token
+
+4. Make `gemini-mcp.internal` resolve from the connector host to the MCP-Pi LAN address. Do not resolve it to `127.0.0.1`.
+5. Check system resolution and local overrides before starting the connector:
 
        getent ahostsv4 gemini-mcp.internal
        grep -n 'gemini-mcp.internal' /etc/hosts
 
-4. Provision the Cloudflare tunnel token in `/home/mcp-gateway/.config/mcp-gateway/cloudflared.token` as private `0600` state.
-5. Enable and verify the connector:
+   The effective result must be the appliance LAN address; a stale `/etc/hosts` loopback entry takes precedence over DNS on common NSS configurations.
+
+6. Enable and verify the connector:
 
        sudo systemctl enable --now mcp-gateway-cloudflared.service
        systemctl is-enabled mcp-gateway-cloudflared.service
        systemctl is-active mcp-gateway-cloudflared.service
+       sudo -u mcp-gateway mcp-gateway doctor
 
 The Cloudflare tunnel token and the Gemini MCP bearer token are different secrets and must not be reused.
 
@@ -201,7 +293,7 @@ The server must reach **Ready/Prepared** and expose only the tools authorized to
 
 In **Cloudflare Zero Trust -> MCP Portals**:
 
-1. create a portal on a controlled HTTPS hostname such as `https://mcp-pi.example.com/mcp`;
+1. create a portal on the controlled HTTPS hostname, for example `https://mcp-pi.example.com/mcp`;
 2. add the synchronized MCP-Pi server;
 3. protect the portal with a narrow Access policy for the intended user/account;
 4. enable **Managed OAuth**;
@@ -211,6 +303,10 @@ In **Cloudflare Zero Trust -> MCP Portals**:
        https://oauth-redirect.googleusercontent.com/r/*
 
 Do not widen this to all of `googleusercontent.com`.
+
+Before opening Gemini, verify the public portal is actually protected: an unauthenticated request to the MCP resource should not return an authorized MCP response, and the protected-resource metadata should be available at:
+
+    https://<PORTAL_HOST>/.well-known/oauth-protected-resource/mcp
 
 #### 5. Connect Gemini Spark
 
@@ -253,9 +349,11 @@ If authorization returns to Gemini but Gemini still says the account must be lin
 
 Before declaring either integration complete:
 
+- the base installation/bootstrap is complete and `status`/Doctor are healthy;
 - the intended AI Client is enabled;
 - its effective Grants match the requested scope;
 - the local MCP ingress is ready;
+- each required provider binary/credential preflight passes;
 - each required optional tunnel/connector is enabled and active;
 - Admin was not exposed as part of the MCP path;
 - the external client discovers only the expected tools;
@@ -266,6 +364,10 @@ Before declaring either integration complete:
 
 | Symptom | Check first |
 | --- | --- |
+| OpenAI tunnel exits before starting | Run `mcp-gateway-tunnel-check credentials`; missing provider credentials are an external product gate, not an MCP readiness failure. |
+| OpenAI tunnel credentials pass but the service waits/fails | Verify `http://127.0.0.1:8090/ready` and `mcp-gateway-mcp.service` before changing tunnel configuration. |
+| Gemini service does not start | Verify `gemini-mcp.token` exists, is non-empty and is readable by `mcp-gateway`. |
+| Cloudflare connector does not start | Verify both `/usr/local/bin/cloudflared` and the private non-empty `cloudflared.token`. |
 | Cloudflare reports **Unable to connect to server** | Verify `gemini-mcp.internal` resolves to the appliance LAN IP, `:8092` is listening and `mcp-gateway-cloudflared.service` is active. |
 | Local `127.0.0.1:8092` works but Cloudflare does not | Verify the packaged Gemini unit listens on `0.0.0.0:8092` and the private route uses the LAN address rather than loopback. |
 | DNS tooling returns the LAN IP but the connector still uses `127.0.0.1` | Inspect `/etc/hosts` and NSS ordering for a stale local override. |

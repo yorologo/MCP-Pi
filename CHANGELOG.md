@@ -33,6 +33,7 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 - CLI Admin setup reuses `Store.SetAdminPassword` and invalidates any remaining one-time Web bootstrap token; security-update package state is informational rather than mislabeled as OK.
 
 ### Distribution / operations
+- ChatGPT/Gemini onboarding now makes provider-owned prerequisites, local secret provisioning, binary preflights and end-to-end acceptance explicit in the existing configuration guide instead of relying on hidden/manual setup knowledge.
 - Maintainer deployment requires explicit `MCP_PI_HOST` and `MCP_PI_USER` configuration instead of repository-specific fallbacks.
 - Version-tag CI validates the exact tag and can publish or verify the canonical ARMv6 bundle plus checksum as GitHub Release assets after the normal validation job passes.
 - CURRENT documentation is consolidated into README plus six responsibility-based guides; redundant reference/runbook/release-note trees are removed from HEAD while Git preserves history.
