@@ -51,8 +51,7 @@ git -C "$ROOT" archive "$SHA" config | tar -xf - -C "$PKG_ROOT"
 
 mkdir -p "$PKG_ROOT/docs"
 for doc in \
-    installation.md configuration.md operations.md recovery.md \
-    architecture.md security.md; do
+    configuration.md operations.md recovery.md architecture.md security.md; do
     git -C "$ROOT" show "$SHA:docs/$doc" > "$PKG_ROOT/docs/$doc"
 done
 

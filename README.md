@@ -20,14 +20,14 @@ MCP-Pi follows **KISS + Reuse First + Least Privilege + Deny by Default + Fail C
 
 ### 1. Obtain MCP-Pi
 
-For the reference Raspberry Pi appliance, prefer an official GitHub Release bundle because it already contains the Linux ARMv6 binary.
+For the reference Raspberry Pi appliance, prefer an official GitHub Release bundle because it already contains the Linux ARMv6 binary and does not require a compiler.
 
 For development or a machine with Go already installed:
 
     git clone https://github.com/yorologo/MCP-Pi.git
     cd MCP-Pi
 
-A source checkout does not install a compiler. See [Installation](docs/installation.md) for release-bundle contents and requirements.
+A source checkout uses the same installer only when a compatible prebuilt gateway is present or Go is already installed. The installer never installs a compiler. Published software is identified by immutable Git tags/GitHub Releases.
 
 ### 2. Install and start
 
@@ -78,20 +78,20 @@ Use `doctor --check-targets` when remote Target reachability must participate in
 
 systemd owns service lifecycle through `mcp-gateway.target`. The Go CLI provides `status`, `doctor`, `backup` and `maintenance`. Exact operational commands and logging are in [Operations](docs/operations.md).
 
-Updates and installer rollback reuse `install.sh`; Registry restore and schema migration remain separate explicit recovery operations. See [Installation](docs/installation.md) and [Recovery](docs/recovery.md).
+Normal update commands and lifecycle verification are in [Operations](docs/operations.md). Installer rollback, Registry restore and schema recovery are in [Recovery](docs/recovery.md). Maintainer release/deployment procedure belongs only in `CONTRIBUTING.md`.
 
 ## Documentation
 
 | Need | Source |
 | --- | --- |
-| Install, bootstrap, update, rollback | [docs/installation.md](docs/installation.md) |
+| Install, bootstrap, first run | this README |
 | Admin, Targets, Projects, Clients, ChatGPT/Gemini connection and ingress | [docs/configuration.md](docs/configuration.md) |
-| Start/stop, health, maintenance, logs, benchmark | [docs/operations.md](docs/operations.md) |
-| Troubleshooting, backup/restore, recovery | [docs/recovery.md](docs/recovery.md) |
+| Start/stop, health, update, maintenance, logs, benchmark | [docs/operations.md](docs/operations.md) |
+| Rollback, troubleshooting, backup/restore, disaster recovery | [docs/recovery.md](docs/recovery.md) |
 | Components, lifecycle and compatibility semantics | [docs/architecture.md](docs/architecture.md) |
 | Authorization, privilege and security invariants | [docs/security.md](docs/security.md) |
 | Development, CI, release and deployment (source checkout) | `CONTRIBUTING.md` |
 | Automation-specific rules (source checkout) | `AGENTS.md` |
 | Change history | [CHANGELOG.md](CHANGELOG.md) |
 
-Historical evidence that still has value is isolated under `docs/archive/`; it is not current operating guidance.
+Historical reconstruction belongs to Git history rather than a parallel documentation tree in HEAD.

@@ -4,6 +4,8 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 
 ## Unreleased
 
+## 1.6.7
+
 ### Admin / authorization
 - Client Grant creation now supports atomic multi-capability **Add Grants** while preserving one capability per persisted/audited Grant and the existing Registry uniqueness constraint.
 - Admin presets are presentation-only shortcuts over the Policy capability catalog; Advanced customization submits real capability values and does not introduce roles, permission inheritance or a second authorization path.
@@ -38,13 +40,13 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 - ChatGPT/Gemini onboarding now makes provider-owned prerequisites, local secret provisioning, binary preflights and end-to-end acceptance explicit in the existing configuration guide instead of relying on hidden/manual setup knowledge.
 - Maintainer deployment requires explicit `MCP_PI_HOST` and `MCP_PI_USER` configuration instead of repository-specific fallbacks.
 - Version-tag CI validates the exact tag and can publish or verify the canonical ARMv6 bundle plus checksum as GitHub Release assets after the normal validation job passes.
-- CURRENT documentation is consolidated into README plus six responsibility-based guides; redundant reference/runbook/release-note trees are removed from HEAD while Git preserves history.
+- CURRENT documentation is consolidated into README plus five responsibility-based guides: README owns install/bootstrap/first run, Operations owns updates, and Recovery owns rollback/restore. The obsolete installation guide and dated archive tree are removed from HEAD while Git preserves historical reconstruction.
 
 ### Compatibility
 - No Registry schema, Tool Catalog, Core API, Bridge API or MCP protocol change; machine-readable metadata remains authoritative.
 
 ### Validation
-- Candidate validation requires the complete local Go/frontend/lifecycle/build gates, exact-SHA remote CI, canonical deployment and live appliance acceptance before promotion.
+- Release promotion requires the complete local Go/frontend/lifecycle/build gates, exact-SHA remote CI and canonical bundle inspection. Production deployment/acceptance remains a separate evidence boundary.
 
 ## 1.6.6
 

@@ -89,7 +89,6 @@ func TestCurrentDocumentationIsConsolidatedAndGoOnly(t *testing.T) {
 		"README.md",
 		"AGENTS.md",
 		"CONTRIBUTING.md",
-		"docs/installation.md",
 		"docs/configuration.md",
 		"docs/operations.md",
 		"docs/recovery.md",
@@ -124,7 +123,7 @@ func TestCurrentDocumentationIsConsolidatedAndGoOnly(t *testing.T) {
 		}
 	}
 
-	for _, rel := range []string{"README.md", "docs/installation.md"} {
+	for _, rel := range []string{"README.md"} {
 		data, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)
@@ -145,7 +144,6 @@ func TestCurrentDocumentationIsConsolidatedAndGoOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantRootDocs := map[string]bool{
-		"installation.md":  true,
 		"configuration.md": true,
 		"operations.md":    true,
 		"recovery.md":      true,
@@ -167,13 +165,13 @@ func TestCurrentDocumentationIsConsolidatedAndGoOnly(t *testing.T) {
 
 	obsolete := []string{
 		"docs/README.md",
+		"docs/installation.md",
+		"docs/archive",
 		"docs/admin-console.md",
 		"docs/troubleshooting.md",
 		"docs/project-state.md",
 		"docs/reference",
 		"docs/releases",
-		"docs/archive/runbooks",
-		"docs/archive/superpowers",
 	}
 	for _, rel := range obsolete {
 		if _, err := os.Stat(filepath.Join("..", filepath.FromSlash(rel))); !os.IsNotExist(err) {
@@ -187,6 +185,26 @@ func TestCurrentDocumentationIsConsolidatedAndGoOnly(t *testing.T) {
 	}
 	if !strings.Contains(string(changelog), "## Unreleased") {
 		t.Fatal("CHANGELOG must use an Unreleased section instead of a mutable candidate/stable label")
+	}
+}
+
+func TestReadmeOwnsNewUserOnboarding(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"git clone https://github.com/yorologo/MCP-Pi.git",
+		"sudo ./install.sh",
+		"mcp-gateway setup",
+		"Check Effective Access",
+		"mcp-gateway status",
+		"mcp-gateway doctor",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("README onboarding is missing %q", required)
+		}
 	}
 }
 
@@ -236,12 +254,12 @@ func TestReleasePackageUsesConsolidatedOperatorDocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	builder := string(data)
-	for _, doc := range []string{"installation.md", "configuration.md", "operations.md", "recovery.md", "architecture.md", "security.md"} {
+	for _, doc := range []string{"configuration.md", "operations.md", "recovery.md", "architecture.md", "security.md"} {
 		if !strings.Contains(builder, doc) {
 			t.Errorf("release package builder missing CURRENT operator doc %s", doc)
 		}
 	}
-	for _, obsolete := range []string{"admin-console.md", "troubleshooting.md", "project-state.md"} {
+	for _, obsolete := range []string{"installation.md", "admin-console.md", "troubleshooting.md", "project-state.md"} {
 		if strings.Contains(builder, obsolete) {
 			t.Errorf("release package builder still includes redundant doc %s", obsolete)
 		}

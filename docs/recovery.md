@@ -115,6 +115,8 @@ For an installer-managed update:
 
 Rollback restores the matching pre-install Registry snapshot without migration, previous runtime/system assets and service state, then requires Doctor before reporting `ROLLBACK_VERIFIED`.
 
+If an update was interrupted while rollback metadata was being promoted, invoke the canonical installer again rather than reconstructing state manually; it recovers the last complete rollback set before proceeding.
+
 ## Registry backup and restore
 
 Create a backup:

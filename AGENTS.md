@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file adds rules for automated contributors. Human development/release/deployment procedure is canonical in `CONTRIBUTING.md`; product behavior is canonical in code/tests/metadata and the six CURRENT operator guides.
+This file adds rules for automated contributors. Human development/release/deployment procedure is canonical in `CONTRIBUTING.md`; product behavior is canonical in code/tests/metadata and the CURRENT operator guides.
 
 ## Principles
 
@@ -42,9 +42,9 @@ Keep `NoNewPrivileges`; gateway reboot uses systemd-logind plus narrow polkit, n
 
 ## Documentation
 
-Do not add another documentation tree for a behavior already covered by README, the six CURRENT guides, CONTRIBUTING, AGENTS, CHANGELOG, executable `--help`, machine-readable metadata, systemd units or tests.
+Do not add another documentation tree for a behavior already covered by README, the CURRENT guides, CONTRIBUTING, AGENTS, CHANGELOG, executable `--help`, machine-readable metadata, systemd units or tests.
 
-Historical files under `docs/archive/` are evidence only and must not be used as current operating instructions.
+Historical reconstruction belongs to Git history. Do not keep a parallel archive tree in HEAD unless a concrete current audit requirement cannot be satisfied by immutable Git/tag/release evidence.
 
 When behavior changes, update the single relevant CURRENT source and remove obsolete parallel instructions.
 

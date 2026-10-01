@@ -45,18 +45,17 @@ Tailwind writes directly to the embedded static directory. Do not create a secon
 
 ## Documentation
 
-Current documentation has one entry point and six responsibility-based guides:
+Current documentation has one onboarding entry point and responsibility-based guides:
 
-- `README.md` — onboarding and navigation;
-- `docs/installation.md` — install/bootstrap/update/installer rollback;
+- `README.md` — obtain/install/bootstrap/first run and navigation;
 - `docs/configuration.md` — Admin/Targets/Projects/Clients/ingress;
-- `docs/operations.md` — lifecycle/health/maintenance/logs/performance;
-- `docs/recovery.md` — troubleshooting/restore/disaster recovery;
+- `docs/operations.md` — lifecycle/health/update/maintenance/logs/performance;
+- `docs/recovery.md` — rollback/troubleshooting/restore/disaster recovery;
 - `docs/architecture.md` — system and compatibility semantics;
 - `docs/security.md` — grants/writes/shell/privilege/security;
 - `CHANGELOG.md` — repository change history.
 
-`AGENTS.md` contains only automation-specific operating rules. `docs/archive/` keeps selected historical evidence, never current runbooks.
+`AGENTS.md` contains only automation-specific operating rules. Historical reconstruction belongs to Git history rather than a second documentation tree in HEAD.
 
 Do not duplicate numeric compatibility values, SQL definitions, CLI flags, systemd dependency graphs or CI command lists in prose when code/metadata/`--help`/units/CI are the better authority.
 

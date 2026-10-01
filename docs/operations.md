@@ -112,7 +112,14 @@ When performance matters, separate in-process Core latency from MCP HTTP overhea
 
 ## Update
 
-Normal user/operator update uses the same installer described in [installation.md](installation.md). Maintainer exact-commit promotion belongs in `CONTRIBUTING.md` in a source checkout, not in the operator lifecycle.
+Normal user/operator updates use the same installer as first installation:
+
+    ./install.sh --check     # optional, non-mutating candidate validation
+    sudo ./install.sh
+
+The installer preserves the existing Registry/settings and private configuration, stages rollback evidence before activation, performs any supported schema migration explicitly, restarts the canonical appliance target and requires readiness/Doctor before reporting `INSTALL_VERIFIED`.
+
+Exact compatibility values belong to `compatibility.json`, `manifest.json`, Registry migrations/tests and `mcp-gateway version --json`. Maintainer exact-commit promotion and release publication belong in `CONTRIBUTING.md`, not in the operator lifecycle.
 
 ## Recovery
 
