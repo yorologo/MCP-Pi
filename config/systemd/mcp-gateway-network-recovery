@@ -21,7 +21,7 @@ fail_closed() {
 }
 
 require_commands() {
-    for cmd in awk basename cat chmod date head ip logger mkdir nmcli ping readlink sleep; do
+    for cmd in awk basename cat chmod date head ip logger mkdir nmcli ping readlink sleep systemctl; do
         command -v "$cmd" >/dev/null 2>&1 || {
             log "NETWORK_RECOVERY_ERROR missing_command=$cmd"
             exit 1
@@ -91,6 +91,19 @@ read_failures() {
     printf '%s\n' "$failures"
 }
 
+restart_tunnel_after_network_change() {
+    reason="$1"
+    service="mcp-gateway-tunnel.service"
+    if ! systemctl is-active --quiet "$service" 2>/dev/null; then
+        return 0
+    fi
+    log "NETWORK_RECOVERY_ACTION action=tunnel_restart reason=$reason service=$service"
+    if ! systemctl try-restart --no-block "$service" >/dev/null 2>&1; then
+        log "NETWORK_RECOVERY_ERROR action=tunnel_restart reason=$reason service=$service"
+        return 1
+    fi
+}
+
 check_current() {
     iface="$(default_interface)"
     valid_iface "$iface" || {
@@ -122,20 +135,37 @@ recover() {
     mkdir -p "$STATE_DIR"
     chmod 0700 "$STATE_DIR" 2>/dev/null || true
 
-    iface=""
+    saved_iface=""
     if [ -r "$INTERFACE_FILE" ]; then
-        iface="$(cat "$INTERFACE_FILE" 2>/dev/null || true)"
+        saved_iface="$(cat "$INTERFACE_FILE" 2>/dev/null || true)"
     fi
-    if ! valid_iface "$iface"; then
-        iface="$(default_interface)"
-    fi
-    valid_iface "$iface" || fail_closed "no_known_interface"
+    valid_iface "$saved_iface" || saved_iface=""
 
-    if network_healthy "$iface"; then
-        record_baseline "$iface"
-        log "NETWORK_RECOVERY_HEALTHY interface=$iface"
+    current_iface="$(default_interface)"
+    if valid_iface "$current_iface" && network_healthy "$current_iface"; then
+        route_changed=0
+        if [ -n "$saved_iface" ] && [ "$saved_iface" != "$current_iface" ]; then
+            route_changed=1
+        fi
+        record_baseline "$current_iface"
+        if [ "$route_changed" -eq 1 ]; then
+            log "NETWORK_RECOVERY_ROUTE_CHANGED old_interface=$saved_iface new_interface=$current_iface"
+            restart_tunnel_after_network_change "route_changed" ||
+                log "NETWORK_RECOVERY_WARN reason=tunnel_restart_failed interface=$current_iface"
+        fi
+        log "NETWORK_RECOVERY_HEALTHY interface=$current_iface"
         exit 0
     fi
+
+    if valid_iface "$current_iface" && [ -n "$saved_iface" ] && [ "$current_iface" != "$saved_iface" ]; then
+        fail_closed "active_interface_differs_from_usb_baseline"
+    fi
+
+    iface="$current_iface"
+    if ! valid_iface "$iface"; then
+        iface="$saved_iface"
+    fi
+    valid_iface "$iface" || fail_closed "no_known_interface"
 
     [ -r "$INTERFACE_FILE" ] && [ -r "$DEVICE_FILE" ] && [ -r "$DRIVER_FILE" ] ||
         fail_closed "no_healthy_usb_baseline"
@@ -163,6 +193,8 @@ recover() {
     if network_healthy "$iface"; then
         record_baseline "$iface"
         log "NETWORK_RECOVERY_RECOVERED action=networkmanager_reconnect interface=$iface"
+        restart_tunnel_after_network_change "networkmanager_reconnect" ||
+            log "NETWORK_RECOVERY_WARN reason=tunnel_restart_failed interface=$iface"
         exit 0
     fi
 
@@ -200,6 +232,8 @@ recover() {
     if network_healthy "$iface"; then
         record_baseline "$iface"
         log "NETWORK_RECOVERY_RECOVERED action=usb_driver_rebind interface=$iface"
+        restart_tunnel_after_network_change "usb_driver_rebind" ||
+            log "NETWORK_RECOVERY_WARN reason=tunnel_restart_failed interface=$iface"
         exit 0
     fi
 

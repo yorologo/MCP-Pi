@@ -233,6 +233,15 @@ func TestOperationalContractsRemainExplicit(t *testing.T) {
 			"runtime=go-only",
 			"chmod -R u=rwX,go=rX",
 		},
+		"config/systemd/mcp-gateway-network-recovery": {
+			"NETWORK_RECOVERY_ROUTE_CHANGED",
+			"active_interface_differs_from_usb_baseline",
+			"systemctl try-restart --no-block",
+		},
+		"config/systemd/mcp-gateway-tunnel.service": {
+			"Restart=always",
+			"RestartPreventExitStatus=2",
+		},
 	}
 	for rel, required := range checks {
 		data, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(rel)))

@@ -81,7 +81,7 @@ If the optional network recovery timer is enabled, verify it is active and run i
     systemctl is-active mcp-gateway-network-recovery.timer
     sudo /bin/sh /home/mcp-gateway/mcp-gateway/config/systemd/mcp-gateway-network-recovery --check
 
-Do not add global USB autosuspend overrides, replace the in-kernel Wi-Fi driver, reboot the appliance or create a second watchdog merely because the tunnel was stale. Escalate only from evidence showing the failing layer.
+A healthy route migration or successful network-recovery action now refreshes the USB baseline and recycles an already-active OpenAI tunnel once, because long-poll sockets can remain stale across interface changes. Manual tunnel restart should therefore be a diagnostic exception rather than the normal recovery path. Do not add global USB autosuspend overrides, replace the in-kernel Wi-Fi driver, reboot the appliance or create a second watchdog merely because the tunnel was stale. Escalate only from evidence showing the failing layer.
 
 ### TOOL_NOT_ALLOWED
 

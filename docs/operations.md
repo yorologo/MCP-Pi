@@ -85,9 +85,9 @@ Only after `NETWORK_RECOVERY_CHECK=PASS` should an operator enable it:
 
     sudo systemctl enable --now mcp-gateway-network-recovery.timer
 
-The timer runs once per minute. A healthy observation only refreshes a volatile baseline under `/run`. Recovery requires three consecutive LAN failures. It first asks NetworkManager to reconnect the known interface; only if that fails, a previously verified USB interface may be unbound/rebound from its recorded driver. USB rebinds are rate-limited to once per 15 minutes. Unknown interfaces, non-USB drivers, missing baseline state or unavailable bind/unbind controls fail closed without mutation.
+The timer runs once per minute. Each run re-evaluates the current default-route interface before consulting the saved USB baseline, so a healthy route migration replaces stale baseline state instead of mutating the old interface. Recovery requires three consecutive LAN failures. It first asks NetworkManager to reconnect the currently active/last verified interface; only if that fails, a previously verified USB interface may be unbound/rebound from its recorded driver. USB rebinds are rate-limited to once per 15 minutes. Unknown interfaces, non-USB drivers, a current route that conflicts with stale baseline state, missing baseline state or unavailable bind/unbind controls fail closed without mutation.
 
-The probe targets the current local default gateway, not DNS, Internet or the OpenAI tunnel. The recovery worker does not restart MCP services and never reboots the appliance.
+The probe targets the current local default gateway, not DNS or Internet. After a verified route change or successful network recovery, it asks systemd to recycle an already-active optional OpenAI tunnel once so stale control-plane connections are discarded. It does not restart required MCP services and never reboots the appliance.
 
 Operational evidence is in journald:
 
