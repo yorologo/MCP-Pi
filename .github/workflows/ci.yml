@@ -153,6 +153,9 @@ jobs:
         run: |
           version="$(awk -F'"' '/GatewayVersion[[:space:]]*=/{print $2; exit}' mcp-adapter/internal/buildinfo/buildinfo.go)"
           test "v$version" = "$GITHUB_REF_NAME"
+          # checkout@v4 normalizes the event tag ref to the commit after its full
+          # fetch. Restore the immutable remote tag object before verifying it.
+          git fetch --force origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
           test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
           test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
 

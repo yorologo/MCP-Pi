@@ -278,6 +278,7 @@ func TestTaggedReleaseWaitsForValidationAndReusesCanonicalBundle(t *testing.T) {
 		"needs: validate",
 		"contents: write",
 		"scripts/build-release-package.sh",
+		"git fetch --force origin",
 		"git cat-file -t",
 		"--verify-tag",
 		"gh release create",

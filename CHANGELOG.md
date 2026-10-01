@@ -4,6 +4,9 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 
 ## Unreleased
 
+### Distribution
+- Tag-release verification now re-fetches the immutable remote tag object after `actions/checkout`, avoiding checkout's local annotated-tag normalization while preserving the existing exact-commit and `--verify-tag` gates.
+
 ## 1.6.7
 
 ### Admin / authorization
