@@ -72,6 +72,8 @@ Admin **Add Grants** can create several capabilities for one common Target/Proje
 
 Presets are not roles and are never stored or consulted by Policy. **Advanced / Customize capabilities** exposes the real current Policy capability catalog as ordinary form checkboxes. Whether chosen through a preset or manually, each resulting capability remains a separate Grant and a separately auditable authorization record.
 
+**Edit** on any Grant edits the complete capability set for that client's exact Target/Project scope using the same builder and presets as **Add Grants**. The scope itself is fixed during Edit; use **Add Grants** for another Target/Project. Existing Grants that remain selected keep their ID and enabled/disabled state, while newly selected capabilities are created enabled. **Enable / Disable** remains an individual Grant operation. Saving an empty capability set requires explicit remove-all confirmation, and a stale editor is rejected rather than overwriting a concurrently changed scope.
+
 Selections containing `*` or `target_admin` require explicit **High-impact access** confirmation even for a specific Target and Project. The server repeats this check; JavaScript is only progressive enhancement. `*` covers compatible ordinary capabilities but never grants `target_admin`, and `target_admin` does not grant `target_shell`.
 
 **Check Effective Access** continues to use the real Policy Engine. For `run_command` it also evaluates the live Target privilege gate without consuming a pending one-use approval.

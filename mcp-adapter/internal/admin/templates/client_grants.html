@@ -17,14 +17,31 @@
 
   <form id="grant-form" method="POST" action="{% if editing_grant %}{{ url_for('admin.client_grant_edit', client.id, editing_grant.id) }}{% else %}{{ url_for('admin.client_grant_add', client.id) }}{% endif %}" class="card space-y-5 p-4 sm:p-6" data-grant-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if editing_grant %}
+    {% for capability in expected_capabilities %}
+    <input type="hidden" name="expected_capability" value="{{ capability }}">
+    {% endfor %}
+    {% endif %}
     <div class="flex items-center justify-between gap-4">
       <div>
-        <h2 class="text-lg font-semibold text-white">{% if editing_grant %}Edit Grant{% else %}Add Grants{% endif %}</h2>
-        <p class="text-xs text-slate-400">{% if editing_grant %}Edit one persisted Grant. Toggle and Delete also remain individual operations.{% else %}Select one or more real capabilities. Presets are interface shortcuts only; each capability is stored and audited as an independent Grant.{% endif %}</p>
+        <h2 class="text-lg font-semibold text-white">{% if editing_grant %}Edit Access{% else %}Add Grants{% endif %}</h2>
+        <p class="text-xs text-slate-400">{% if editing_grant %}Edit the capabilities granted to this client for one fixed Target / Project scope. Each capability remains stored and audited as an independent Grant.{% else %}Select one or more real capabilities. Presets are interface shortcuts only; each capability is stored and audited as an independent Grant.{% endif %}</p>
       </div>
       {% if editing_grant %}<a href="{{ url_for('admin.client_grants', client.id) }}" class="btn-secondary">Cancel edit</a>{% endif %}
     </div>
 
+    {% if editing_grant %}
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div class="rounded border border-slate-800 bg-slate-950/30 p-3">
+        <div class="field-label">Target</div>
+        <div class="font-mono text-sm text-slate-200">{{ editing_grant.target_id }}</div>
+      </div>
+      <div class="rounded border border-slate-800 bg-slate-950/30 p-3">
+        <div class="field-label">Project</div>
+        <div class="font-mono text-sm text-slate-200">{{ editing_grant.project_id }}</div>
+      </div>
+    </div>
+    {% else %}
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div>
         <label for="grant-target" class="field-label">Target</label>
@@ -50,18 +67,8 @@
         </select>
       </div>
     </div>
+    {% endif %}
 
-    {% if editing_grant %}
-    <div>
-      <label for="grant-capability" class="field-label">Capability</label>
-      <select id="grant-capability" name="capability" class="field font-mono" required>
-        {% for capability in grant_capabilities %}
-        <option value="{{ capability }}" {% if grant_form and grant_form.capability == capability %}selected{% endif %}>{{ capability }}{% if capability == '*' %} — all compatible ordinary capabilities{% elif capability == 'target_admin' %} — explicit OS privilege{% endif %}</option>
-        {% endfor %}
-      </select>
-      <p class="field-help"><code>*</code> never implies <code>target_admin</code>; <code>target_admin</code> never implies <code>target_shell</code>.</p>
-    </div>
-    {% else %}
     <div class="space-y-4" data-grant-builder>
       <div>
         <h3 class="field-label">Capabilities</h3>
@@ -108,12 +115,13 @@
         </div>
       </details>
     </div>
-    {% endif %}
 
     <div class="flex flex-wrap items-start gap-5">
+      {% if not editing_grant %}
       <label class="inline-flex items-center gap-2 text-sm text-slate-300">
         <input type="checkbox" name="enabled" class="rounded" {% if not grant_form or grant_form.enabled %}checked{% endif %}> Enabled
       </label>
+      {% endif %}
       <div class="rounded border border-amber-800/70 bg-amber-950/20 p-3 text-xs text-amber-200" data-high-impact-confirm>
         <div class="font-semibold">⚠ High-impact access</div>
         <label class="mt-2 inline-flex items-start gap-2">
@@ -122,10 +130,20 @@
         </label>
         <p class="mt-1 text-amber-300/80">Required only when <code>*</code> or <code>target_admin</code> is selected. The server always enforces this rule.</p>
       </div>
+      {% if editing_grant %}
+      <div class="rounded border border-rose-800/70 bg-rose-950/20 p-3 text-xs text-rose-200">
+        <div class="font-semibold">Remove all access from this scope</div>
+        <label class="mt-2 inline-flex items-start gap-2">
+          <input type="checkbox" name="confirm_remove_all" class="mt-0.5 rounded">
+          <span>I understand that saving with no capabilities selected deletes every Grant in this Target / Project scope.</span>
+        </label>
+        <p class="mt-1 text-rose-300/80">This confirmation is required only when no capability is selected.</p>
+      </div>
+      {% endif %}
     </div>
 
     <div class="flex justify-end">
-      <button type="submit" class="btn-primary">{% if editing_grant %}Save Grant{% else %}Add Grants{% endif %}</button>
+      <button type="submit" class="btn-primary">{% if editing_grant %}Save Access{% else %}Add Grants{% endif %}</button>
     </div>
   </form>
 

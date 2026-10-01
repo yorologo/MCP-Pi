@@ -335,3 +335,156 @@ func TestTargetEndpointAuditedRollsBackWhenAuditFails(t *testing.T) {
 		t.Fatalf("endpoint mutation survived failed audit: %s:%d", target.Host, target.Port)
 	}
 }
+
+func TestSyncGrantScopeAuditedPreservesUnchangedGrantState(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	readID, err := store.AddGrant(ctx, Grant{ClientID: "c", TargetID: "t", ProjectID: "p", Capability: "read", Enabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddGrant(ctx, Grant{ClientID: "c", TargetID: "t", ProjectID: "p", Capability: "write", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	added, removed, err := store.SyncGrantScopeAudited(
+		ctx, "c", "t", "p",
+		[]string{"read", "write"},
+		[]string{"read", "tasks"},
+		Activity{Actor: "admin", Success: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added) != 1 || added[0] != "tasks" || len(removed) != 1 || removed[0] != "write" {
+		t.Fatalf("unexpected sync diff added=%v removed=%v", added, removed)
+	}
+
+	grants, err := store.ListGrants(ctx, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byCapability := map[string]Grant{}
+	for _, grant := range grants {
+		if grant.TargetID == "t" && grant.ProjectID == "p" {
+			byCapability[grant.Capability] = grant
+		}
+	}
+	if got := byCapability["read"]; got.ID != readID || got.Enabled {
+		t.Fatalf("unchanged disabled read grant was rewritten: %+v", got)
+	}
+	if _, exists := byCapability["write"]; exists {
+		t.Fatal("removed write grant still exists")
+	}
+	if got := byCapability["tasks"]; got.ID == 0 || !got.Enabled {
+		t.Fatalf("new tasks grant must be enabled: %+v", got)
+	}
+	var addedActivities, removedActivities int
+	if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM activity WHERE action = 'add_grant'").Scan(&addedActivities); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM activity WHERE action = 'delete_grant'").Scan(&removedActivities); err != nil {
+		t.Fatal(err)
+	}
+	if addedActivities != 1 || removedActivities != 1 {
+		t.Fatalf("granular grant activities add=%d delete=%d want 1/1", addedActivities, removedActivities)
+	}
+}
+
+func TestSyncGrantScopeAuditedFailsClosedOnStaleExpectedSet(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	for _, capability := range []string{"read", "write"} {
+		if _, err := store.AddGrant(ctx, Grant{ClientID: "c", TargetID: "t", ProjectID: "p", Capability: capability, Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, _, err := store.SyncGrantScopeAudited(
+		ctx, "c", "t", "p",
+		[]string{"read"},
+		[]string{"read", "tasks"},
+		Activity{Actor: "admin", Success: true},
+	)
+	if ErrorCode(err) != "GRANT_SCOPE_CONFLICT" {
+		t.Fatalf("err=%v code=%q want GRANT_SCOPE_CONFLICT", err, ErrorCode(err))
+	}
+	grants, err := store.ListGrants(ctx, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grants) != 2 || grants[0].Capability != "read" || grants[1].Capability != "write" {
+		t.Fatalf("stale sync mutated scope: %+v", grants)
+	}
+}
+
+func TestSyncGrantScopeAuditedRollsBackCompleteDiffWhenAuditFails(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	for _, grant := range []Grant{
+		{ClientID: "c", TargetID: "t", ProjectID: "p", Capability: "read", Enabled: false},
+		{ClientID: "c", TargetID: "t", ProjectID: "p", Capability: "write", Enabled: true},
+	} {
+		if _, err := store.AddGrant(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		"CREATE TRIGGER block_scope_add_audit BEFORE INSERT ON activity WHEN NEW.action = 'add_grant' BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := store.SyncGrantScopeAudited(
+		ctx, "c", "t", "p",
+		[]string{"read", "write"},
+		[]string{"read", "tasks"},
+		Activity{Actor: "admin", Success: true},
+	)
+	if err == nil {
+		t.Fatal("scope sync succeeded despite audit failure")
+	}
+	grants, err := store.ListGrants(ctx, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grants) != 2 || grants[0].Capability != "read" || grants[1].Capability != "write" || grants[0].Enabled {
+		t.Fatalf("failed scope sync left partial mutation: %+v", grants)
+	}
+}
+
+func TestSyncGrantScopeAuditedNoopDoesNotRewriteOrAudit(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	id, err := store.AddGrant(ctx, Grant{ClientID: "c", TargetID: "t", ProjectID: "p", Capability: "read", Enabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	added, removed, err := store.SyncGrantScopeAudited(
+		ctx, "c", "t", "p",
+		[]string{"read"},
+		[]string{"read"},
+		Activity{Actor: "admin", Success: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added) != 0 || len(removed) != 0 {
+		t.Fatalf("no-op sync produced changes added=%v removed=%v", added, removed)
+	}
+	grant, err := store.GetGrantForClient(ctx, "c", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.Enabled {
+		t.Fatal("no-op sync changed disabled grant")
+	}
+	var activities int
+	if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM activity WHERE action IN ('add_grant','delete_grant')").Scan(&activities); err != nil {
+		t.Fatal(err)
+	}
+	if activities != 0 {
+		t.Fatalf("no-op sync wrote %d grant activities", activities)
+	}
+}

@@ -4,12 +4,18 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 
 ## Unreleased
 
+## 1.6.8
+
 ### Distribution
 - Tag-release verification now re-fetches the immutable remote tag object after `actions/checkout`, avoiding checkout's local annotated-tag normalization while preserving the existing exact-commit and `--verify-tag` gates.
 
 ### Reliability / network recovery
 - Network recovery now re-evaluates the current default-route interface before using its saved USB baseline, preventing a former `usb0` path from being repeatedly disconnected/rebound after traffic has migrated to another interface.
 - A verified route change or successful NetworkManager/USB recovery recycles an already-active OpenAI tunnel once, and the tunnel unit uses `Restart=always` with the existing configuration-error stop condition so stale long-poll connections do not require routine manual restarts.
+
+### Admin / Grants
+- Grant editing now works at the client + Target + Project access-scope level using the same capability/preset builder as Grant creation, while retaining one persisted/audited Grant per capability.
+- Scope edits preserve unchanged Grant IDs and enabled state, reject stale concurrent updates, require explicit confirmation before removing all scope access, and keep Target/Project immutable during Edit.
 
 ## 1.6.7
 

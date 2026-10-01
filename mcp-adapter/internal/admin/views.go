@@ -1716,16 +1716,17 @@ func grantCapabilityDescription(capability string) string {
 	return "Supported grant capability from the current Policy catalog."
 }
 
-func grantCapabilityRows(r *http.Request, formGrant *registry.Grant) []map[string]interface{} {
+func grantCapabilityRows(r *http.Request, selectedCapabilities []string) []map[string]interface{} {
 	selected := map[string]bool{}
-	if r != nil {
+	if r != nil && r.Method == http.MethodPost {
 		_ = r.ParseForm()
 		for _, raw := range r.PostForm["capability"] {
 			selected[strings.TrimSpace(raw)] = true
 		}
-	}
-	if formGrant != nil && formGrant.Capability != "" {
-		selected[strings.TrimSpace(formGrant.Capability)] = true
+	} else {
+		for _, raw := range selectedCapabilities {
+			selected[strings.TrimSpace(raw)] = true
+		}
 	}
 	priority := map[string]int{
 		"read": 0, "write": 1, "tasks": 2, "execute": 3,
@@ -1765,7 +1766,7 @@ func grantCapabilityRows(r *http.Request, formGrant *registry.Grant) []map[strin
 	return rows
 }
 
-func normalizeGrantCapabilities(values []string) ([]string, error) {
+func normalizeGrantCapabilitiesAllowEmpty(values []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
 	for _, raw := range values {
@@ -1782,11 +1783,28 @@ func normalizeGrantCapabilities(values []string) ([]string, error) {
 		seen[capability] = struct{}{}
 		out = append(out, capability)
 	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func normalizeGrantCapabilities(values []string) ([]string, error) {
+	out, err := normalizeGrantCapabilitiesAllowEmpty(values)
+	if err != nil {
+		return nil, err
+	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("at least one capability is required")
 	}
-	sort.Strings(out)
 	return out, nil
+}
+
+func grantSelectionIsHighImpact(capabilities []string) bool {
+	for _, capability := range capabilities {
+		if capability == "*" || capability == policy.TargetPrivilegeCapability {
+			return true
+		}
+	}
+	return false
 }
 
 func validateGrantScope(ctx context.Context, store *registry.Store, targetID, projectID string) error {
@@ -1827,14 +1845,7 @@ func validateGrantBatchForm(ctx context.Context, store *registry.Store, r *http.
 	if err := validateGrantScope(ctx, store, targetID, projectID); err != nil {
 		return nil, formGrant, err
 	}
-	highImpact := false
-	for _, capability := range capabilities {
-		if capability == "*" || capability == policy.TargetPrivilegeCapability {
-			highImpact = true
-			break
-		}
-	}
-	if highImpact && r.PostForm.Get("confirm_high_impact") != "on" {
+	if grantSelectionIsHighImpact(capabilities) && r.PostForm.Get("confirm_high_impact") != "on" {
 		return nil, formGrant, fmt.Errorf("high-impact access requires explicit confirmation")
 	}
 	existing, err := store.ListGrants(ctx, clientID)
@@ -1856,6 +1867,38 @@ func validateGrantBatchForm(ctx context.Context, store *registry.Store, r *http.
 		})
 	}
 	return grants, formGrant, nil
+}
+
+func grantScopeCapabilities(grants []registry.Grant, anchor registry.Grant) []string {
+	capabilities := make([]string, 0)
+	for _, grant := range grants {
+		if grant.TargetID == anchor.TargetID && grant.ProjectID == anchor.ProjectID {
+			capabilities = append(capabilities, strings.TrimSpace(grant.Capability))
+		}
+	}
+	sort.Strings(capabilities)
+	return capabilities
+}
+
+func validateGrantScopeEditForm(r *http.Request) ([]string, []string, error) {
+	if err := r.ParseForm(); err != nil {
+		return nil, nil, fmt.Errorf("parse grant scope form: %w", err)
+	}
+	expected, err := normalizeGrantCapabilities(r.PostForm["expected_capability"])
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid original access scope: %w", err)
+	}
+	desired, err := normalizeGrantCapabilitiesAllowEmpty(r.PostForm["capability"])
+	if err != nil {
+		return nil, expected, err
+	}
+	if len(desired) == 0 && r.PostForm.Get("confirm_remove_all") != "on" {
+		return nil, expected, fmt.Errorf("removing all access from this scope requires explicit confirmation")
+	}
+	if grantSelectionIsHighImpact(desired) && r.PostForm.Get("confirm_high_impact") != "on" {
+		return nil, expected, fmt.Errorf("high-impact access requires explicit confirmation")
+	}
+	return desired, expected, nil
 }
 
 func (s *Server) renderClientGrants(w http.ResponseWriter, r *http.Request, client registry.Client, editingGrant *registry.Grant, accessResult interface{}) bool {
@@ -1883,65 +1926,33 @@ func (s *Server) renderClientGrantsStatus(
 	if s.failStoreRead(w, r, "list_projects_for_grants", err) {
 		return false
 	}
+
+	scopeCapabilities := []string(nil)
+	expectedCapabilities := []string(nil)
+	if editingGrant != nil {
+		scopeCapabilities = grantScopeCapabilities(grants, *editingGrant)
+		expectedCapabilities = append(expectedCapabilities, scopeCapabilities...)
+		if r.Method == http.MethodPost {
+			_ = r.ParseForm()
+			expectedCapabilities = append([]string(nil), r.PostForm["expected_capability"]...)
+		}
+	}
+
 	s.renderStatus(w, r, "client_grants.html", pongo2.Context{
 		"client":                client,
 		"grants":                grants,
 		"targets":               targets,
 		"projects":              projects,
 		"tool_names":            core.CatalogTools(),
-		"grant_capabilities":    policy.GrantCapabilities(),
-		"grant_capability_rows": grantCapabilityRows(r, formGrant),
+		"grant_capability_rows": grantCapabilityRows(r, scopeCapabilities),
 		"grant_presets":         grantPresetRows(),
 		"editing_grant":         editingGrant,
 		"grant_form":            formGrant,
+		"expected_capabilities": expectedCapabilities,
 		"access_result":         accessResult,
 		"section":               "clients",
 	}, status)
 	return true
-}
-
-func validateGrantForm(ctx context.Context, store *registry.Store, r *http.Request, clientID string, existing *registry.Grant) (registry.Grant, error) {
-	if err := r.ParseForm(); err != nil {
-		return registry.Grant{}, fmt.Errorf("parse grant form: %w", err)
-	}
-	targetID := strings.TrimSpace(r.PostForm.Get("target_id"))
-	projectID := strings.TrimSpace(r.PostForm.Get("project_id"))
-	capability := strings.TrimSpace(r.PostForm.Get("capability"))
-	if projectID == "" {
-		projectID = "*"
-	}
-	grant := registry.Grant{
-		ClientID: clientID, TargetID: targetID, ProjectID: projectID,
-		Capability: capability, Enabled: r.PostForm.Get("enabled") == "on",
-	}
-	if existing != nil {
-		grant.ID = existing.ID
-	}
-	if capability == "" {
-		return grant, fmt.Errorf("Capability is required")
-	}
-	if !policy.IsGrantCapability(capability) {
-		return grant, fmt.Errorf("unsupported capability %q", capability)
-	}
-	if err := validateGrantScope(ctx, store, targetID, projectID); err != nil {
-		return grant, err
-	}
-	if (capability == "*" || capability == policy.TargetPrivilegeCapability) && r.PostForm.Get("confirm_high_impact") != "on" {
-		return grant, fmt.Errorf("high-impact access requires explicit confirmation")
-	}
-	grants, err := store.ListGrants(ctx, clientID)
-	if err != nil {
-		return grant, fmt.Errorf("list existing grants: %w", err)
-	}
-	for _, candidate := range grants {
-		if existing != nil && candidate.ID == existing.ID {
-			continue
-		}
-		if candidate.TargetID == targetID && candidate.ProjectID == projectID && strings.TrimSpace(candidate.Capability) == capability {
-			return grant, fmt.Errorf("duplicate grant already exists for this client, Target, Project, and capability")
-		}
-	}
-	return grant, nil
 }
 
 func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, client registry.Client, sub []string) {
@@ -2073,18 +2084,39 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 				return
 			}
-			updated, err := validateGrantForm(r.Context(), s.cfg.Store, r, client.ID, &grant)
+			desired, expected, err := validateGrantScopeEditForm(r)
 			if err != nil {
-				sess.Flash(fmt.Sprintf("Invalid grant: %v", err), "danger")
-				s.renderClientGrantsStatus(w, r, client, &grant, &updated, nil, http.StatusUnprocessableEntity)
+				sess.Flash(fmt.Sprintf("Invalid access scope: %v", err), "danger")
+				s.renderClientGrantsStatus(w, r, client, &grant, &grant, nil, http.StatusUnprocessableEntity)
 				return
 			}
-			s.RecordAudit(r, "update_grant_attempt", updated.TargetID, updated.ProjectID, true, "", fmt.Sprintf("Update grant %d for client '%s'", grantID, client.ID), true)
-			activity := s.auditEntry(r, "update_grant", updated.TargetID, updated.ProjectID, true, "", fmt.Sprintf("Updated grant %d for client '%s'", grantID, client.ID))
-			if s.failStoreMutation(w, r, "update_grant", updated.TargetID, updated.ProjectID, s.cfg.Store.UpdateGrantForClientAudited(r.Context(), client.ID, updated, activity)) {
+			s.RecordAudit(
+				r, "sync_grant_scope_attempt", grant.TargetID, grant.ProjectID, true, "",
+				fmt.Sprintf("Synchronize access scope for client '%s': expected=[%s] desired=[%s]", client.ID, strings.Join(expected, ", "), strings.Join(desired, ", ")),
+				true,
+			)
+			activity := s.auditEntry(
+				r, "sync_grant_scope", grant.TargetID, grant.ProjectID, true, "",
+				fmt.Sprintf("Synchronized access scope for client '%s'", client.ID),
+			)
+			added, removed, err := s.cfg.Store.SyncGrantScopeAudited(
+				r.Context(), client.ID, grant.TargetID, grant.ProjectID,
+				expected, desired, activity,
+			)
+			if registry.ErrorCode(err) == "GRANT_SCOPE_CONFLICT" {
+				s.RecordAudit(r, "sync_grant_scope", grant.TargetID, grant.ProjectID, false, "GRANT_SCOPE_CONFLICT", err.Error(), false)
+				sess.Flash("This access scope changed while you were editing it. Reload and review the current Grants before saving.", "danger")
+				s.renderClientGrantsStatus(w, r, client, &grant, &grant, nil, http.StatusConflict)
 				return
 			}
-			sess.Flash("Grant updated.", "success")
+			if s.failStoreMutation(w, r, "sync_grant_scope", grant.TargetID, grant.ProjectID, err) {
+				return
+			}
+			if len(added) == 0 && len(removed) == 0 {
+				sess.Flash("Access scope is already up to date.", "info")
+			} else {
+				sess.Flash(fmt.Sprintf("Access updated: %d added, %d removed.", len(added), len(removed)), "success")
+			}
 			http.Redirect(w, r, fmt.Sprintf("/clients/%s/grants", client.ID), http.StatusFound)
 			return
 		}

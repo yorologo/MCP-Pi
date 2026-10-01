@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -202,6 +203,174 @@ func (s *Store) AddGrantsAudited(ctx context.Context, grants []Grant, activities
 		return nil, err
 	}
 	return ids, nil
+}
+
+func normalizeGrantScopeCapabilities(values []string, requireNonEmpty bool) ([]string, error) {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		capability, err := normalizeGrantCapability(raw)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seen[capability]; exists {
+			continue
+		}
+		seen[capability] = struct{}{}
+		out = append(out, capability)
+	}
+	sort.Strings(out)
+	if requireNonEmpty && len(out) == 0 {
+		return nil, fmt.Errorf("grant scope capability set cannot be empty")
+	}
+	return out, nil
+}
+
+func sameGrantCapabilitySet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func listGrantScopeTx(ctx context.Context, tx *sql.Tx, clientID, targetID, projectID string) ([]Grant, error) {
+	rows, err := tx.QueryContext(ctx, `
+SELECT id, client_id, target_id, project_id, capability, enabled, created_at
+FROM grants
+WHERE client_id = ?
+  AND COALESCE(target_id, '*') = ?
+  AND COALESCE(project_id, '*') = ?
+ORDER BY id
+`, clientID, targetID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list grant scope: %w", err)
+	}
+	defer rows.Close()
+
+	var grants []Grant
+	for rows.Next() {
+		grant, err := scanGrant(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan grant scope: %w", err)
+		}
+		grants = append(grants, grant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate grant scope: %w", err)
+	}
+	return grants, nil
+}
+
+// SyncGrantScopeAudited synchronizes the capabilities stored for one exact
+// client/Target/Project scope. Existing Grants that remain selected are left
+// untouched so their IDs and Enabled state are preserved. The expected set is
+// checked inside the same transaction to fail closed on stale form updates.
+func (s *Store) SyncGrantScopeAudited(
+	ctx context.Context,
+	clientID, targetID, projectID string,
+	expectedCapabilities, desiredCapabilities []string,
+	baseActivity Activity,
+) ([]string, []string, error) {
+	clientID = strings.TrimSpace(clientID)
+	targetID = strings.TrimSpace(targetID)
+	projectID = strings.TrimSpace(projectID)
+	if clientID == "" {
+		return nil, nil, fmt.Errorf("client id cannot be empty")
+	}
+	if targetID == "" {
+		return nil, nil, fmt.Errorf("target id cannot be empty")
+	}
+	if projectID == "" {
+		projectID = "*"
+	}
+
+	expected, err := normalizeGrantScopeCapabilities(expectedCapabilities, true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("normalize expected grant scope: %w", err)
+	}
+	desired, err := normalizeGrantScopeCapabilities(desiredCapabilities, false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("normalize desired grant scope: %w", err)
+	}
+
+	added := []string{}
+	removed := []string{}
+	err = s.withTx(ctx, func(tx *sql.Tx) error {
+		current, err := listGrantScopeTx(ctx, tx, clientID, targetID, projectID)
+		if err != nil {
+			return err
+		}
+		currentByCapability := make(map[string]Grant, len(current))
+		currentCapabilities := make([]string, 0, len(current))
+		for _, grant := range current {
+			capability := strings.TrimSpace(grant.Capability)
+			currentByCapability[capability] = grant
+			currentCapabilities = append(currentCapabilities, capability)
+		}
+		sort.Strings(currentCapabilities)
+		if !sameGrantCapabilitySet(currentCapabilities, expected) {
+			return &LookupError{
+				Code:    "GRANT_SCOPE_CONFLICT",
+				Message: "grant scope changed while it was being edited; reload before saving",
+			}
+		}
+
+		desiredSet := make(map[string]struct{}, len(desired))
+		for _, capability := range desired {
+			desiredSet[capability] = struct{}{}
+		}
+
+		for _, capability := range currentCapabilities {
+			if _, keep := desiredSet[capability]; keep {
+				continue
+			}
+			grant := currentByCapability[capability]
+			if err := deleteGrantExec(ctx, tx, clientID, grant.ID); err != nil {
+				return err
+			}
+			activity := baseActivity
+			activity.Action = "delete_grant"
+			activity.Success = true
+			activity.Detail = fmt.Sprintf("Deleted grant '%s' for client '%s' via access scope edit", capability, clientID)
+			if err := recordActivityExec(ctx, tx, activity); err != nil {
+				return err
+			}
+			removed = append(removed, capability)
+		}
+
+		for _, capability := range desired {
+			if _, exists := currentByCapability[capability]; exists {
+				continue
+			}
+			if _, err := addGrantExec(ctx, tx, Grant{
+				ClientID: clientID, TargetID: targetID, ProjectID: projectID,
+				Capability: capability, Enabled: true,
+			}); err != nil {
+				return err
+			}
+			activity := baseActivity
+			activity.Action = "add_grant"
+			activity.Success = true
+			activity.Detail = fmt.Sprintf("Added grant '%s' for client '%s' via access scope edit", capability, clientID)
+			if err := recordActivityExec(ctx, tx, activity); err != nil {
+				return err
+			}
+			added = append(added, capability)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return added, removed, nil
 }
 
 // UpdateGrantForClientAudited updates only a Grant that belongs to clientID

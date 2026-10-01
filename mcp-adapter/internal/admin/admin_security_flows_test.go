@@ -144,6 +144,12 @@ func TestGrantEditRoundTripAndClientScope(t *testing.T) {
 		t.Fatalf("seed grants: %v %+v", err, grants)
 	}
 	grantID := grants[0].ID
+	if _, err := store.AddGrant(ctx, registry.Grant{
+		ClientID: "test-client", TargetID: "test-target", ProjectID: "test-proj",
+		Capability: "write", Enabled: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := httptest.NewRecorder()
 	srv.handleClientSubroutes(rec, adminTestRequest(http.MethodGet, fmt.Sprintf("/clients/test-client/grants/%d/edit", grantID)))
@@ -151,16 +157,25 @@ func TestGrantEditRoundTripAndClientScope(t *testing.T) {
 		t.Fatalf("edit GET returned %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Edit Grant") || !strings.Contains(body, "name=\"capability\"") {
-		t.Fatal("canonical edit route did not render the grant form")
+	for _, want := range []string{
+		"Edit Access",
+		"name=\"capability\" value=\"read\" class=\"mt-1 rounded\" data-grant-capability checked",
+		"name=\"capability\" value=\"write\" class=\"mt-1 rounded\" data-grant-capability checked",
+		"name=\"expected_capability\" value=\"read\"",
+		"name=\"expected_capability\" value=\"write\"",
+		"Save Access",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("grouped edit form missing %q: %s", want, body)
+		}
 	}
 
 	rec = httptest.NewRecorder()
 	srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, fmt.Sprintf("/clients/test-client/grants/%d/edit", grantID), url.Values{
-		"target_id":  {"test-target"},
-		"project_id": {"test-proj"},
-		"capability": {"write"},
-		"enabled":    {"on"},
+		"target_id":           {"forged-target"},
+		"project_id":          {"forged-project"},
+		"expected_capability": {"read", "write"},
+		"capability":          {"read", "tasks"},
 	}))
 	if rec.Code != http.StatusFound {
 		t.Fatalf("edit POST returned %d: %s", rec.Code, rec.Body.String())
@@ -169,8 +184,28 @@ func TestGrantEditRoundTripAndClientScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Capability != "write" {
-		t.Fatalf("grant capability=%q want write", updated.Capability)
+	if updated.Capability != "read" || updated.TargetID != "test-target" || updated.ProjectID != "test-proj" {
+		t.Fatalf("anchor grant or immutable scope changed: %+v", updated)
+	}
+
+	after, err := store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byCapability := map[string]registry.Grant{}
+	for _, candidate := range after {
+		if candidate.TargetID == "test-target" && candidate.ProjectID == "test-proj" {
+			byCapability[candidate.Capability] = candidate
+		}
+	}
+	if _, ok := byCapability["write"]; ok {
+		t.Fatal("write grant was not removed by grouped edit")
+	}
+	if taskGrant, ok := byCapability["tasks"]; !ok || !taskGrant.Enabled {
+		t.Fatalf("new tasks grant missing or disabled: %+v", taskGrant)
+	}
+	if readGrant := byCapability["read"]; readGrant.ID != grantID {
+		t.Fatalf("unchanged read grant was rewritten: %+v", readGrant)
 	}
 
 	if err := store.AddClient(ctx, registry.Client{ID: "other", DisplayName: "Other", Enabled: true}); err != nil {
@@ -193,6 +228,84 @@ func TestGrantEditRoundTripAndClientScope(t *testing.T) {
 	}
 	if !otherGrant.Enabled {
 		t.Fatal("cross-client route modified another client's grant")
+	}
+}
+
+func TestGrantScopeEditRejectsStaleExpectedSet(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	ctx := context.Background()
+	grants, err := store.ListGrants(ctx, "test-client")
+	if err != nil || len(grants) == 0 {
+		t.Fatalf("seed grants: %v %+v", err, grants)
+	}
+	grantID := grants[0].ID
+	if _, err := store.AddGrant(ctx, registry.Grant{
+		ClientID: "test-client", TargetID: "test-target", ProjectID: "test-proj",
+		Capability: "write", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, fmt.Sprintf("/clients/test-client/grants/%d/edit", grantID), url.Values{
+		"expected_capability": {"read"},
+		"capability":          {"read", "tasks"},
+	}))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale scope edit returned %d want 409: %s", rec.Code, rec.Body.String())
+	}
+
+	after, err := store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps := map[string]bool{}
+	for _, grant := range after {
+		if grant.TargetID == "test-target" && grant.ProjectID == "test-proj" {
+			caps[grant.Capability] = true
+		}
+	}
+	if !caps["read"] || !caps["write"] || caps["tasks"] {
+		t.Fatalf("stale edit mutated current scope: %+v", caps)
+	}
+}
+
+func TestGrantScopeEditRequiresExplicitRemoveAllConfirmation(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	ctx := context.Background()
+	grants, err := store.ListGrants(ctx, "test-client")
+	if err != nil || len(grants) == 0 {
+		t.Fatalf("seed grants: %v %+v", err, grants)
+	}
+	grantID := grants[0].ID
+
+	rec := httptest.NewRecorder()
+	srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, fmt.Sprintf("/clients/test-client/grants/%d/edit", grantID), url.Values{
+		"expected_capability": {"read"},
+	}))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unconfirmed remove-all returned %d want 422: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.GetGrantForClient(ctx, "test-client", grantID); err != nil {
+		t.Fatalf("unconfirmed remove-all deleted anchor grant: %v", err)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, fmt.Sprintf("/clients/test-client/grants/%d/edit", grantID), url.Values{
+		"expected_capability": {"read"},
+		"confirm_remove_all":  {"on"},
+	}))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("confirmed remove-all returned %d: %s", rec.Code, rec.Body.String())
+	}
+	after, err := store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range after {
+		if grant.TargetID == "test-target" && grant.ProjectID == "test-proj" {
+			t.Fatalf("confirmed remove-all left scope grant: %+v", grant)
+		}
 	}
 }
 
@@ -537,9 +650,33 @@ func TestCapabilityBundleIsRejectedByAdminValidation(t *testing.T) {
 		"capability": {"target_shell,target_admin"},
 		"enabled":    {"on"},
 	})
-	if _, err := validateGrantForm(context.Background(), store, req, "test-client", nil); err == nil ||
+	if _, _, err := validateGrantBatchForm(context.Background(), store, req, "test-client"); err == nil ||
 		!strings.Contains(err.Error(), "unsupported capability") {
 		t.Fatalf("capability bundle was not rejected: %v", err)
+	}
+}
+
+func TestGrantScopeEditHighImpactRequiresExplicitConfirmation(t *testing.T) {
+	req := adminFormRequest(http.MethodPost, "/clients/test-client/grants/1/edit", url.Values{
+		"expected_capability": {"read"},
+		"capability":          {"read", "target_admin"},
+	})
+	if _, _, err := validateGrantScopeEditForm(req); err == nil ||
+		!strings.Contains(err.Error(), "high-impact access requires explicit confirmation") {
+		t.Fatalf("high-impact scope edit was not rejected: %v", err)
+	}
+
+	req = adminFormRequest(http.MethodPost, "/clients/test-client/grants/1/edit", url.Values{
+		"expected_capability": {"read"},
+		"capability":          {"read", "target_admin"},
+		"confirm_high_impact": {"on"},
+	})
+	desired, expected, err := validateGrantScopeEditForm(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(expected, ",") != "read" || strings.Join(desired, ",") != "read,target_admin" {
+		t.Fatalf("unexpected normalized scope expected=%v desired=%v", expected, desired)
 	}
 }
 
