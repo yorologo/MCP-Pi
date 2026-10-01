@@ -14,6 +14,27 @@ import (
 
 const SchemaVersion = 6
 
+var upgradeFromSchemaVersions = [...]int{4, 5, SchemaVersion}
+
+// UpgradeFromSchemaVersions returns the Registry schemas this runtime can
+// restore and, when needed, migrate explicitly to SchemaVersion.
+func UpgradeFromSchemaVersions() []int {
+	out := make([]int, len(upgradeFromSchemaVersions))
+	copy(out, upgradeFromSchemaVersions[:])
+	return out
+}
+
+// CanUpgradeFrom reports whether version belongs to the runtime compatibility
+// contract. Schema 0 is reserved for fresh Registry creation.
+func CanUpgradeFrom(version int) bool {
+	for _, supported := range upgradeFromSchemaVersions {
+		if version == supported {
+			return true
+		}
+	}
+	return false
+}
+
 const schemaV6 = `
 CREATE TABLE targets (
     id TEXT PRIMARY KEY,
@@ -268,6 +289,10 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	var version int
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
+	}
+
+	if version != 0 && !CanUpgradeFrom(version) {
+		return fmt.Errorf("unsupported database schema version: %d", version)
 	}
 
 	switch version {

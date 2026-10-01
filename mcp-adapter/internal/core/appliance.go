@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -106,8 +107,14 @@ func (c *Core) GatewayStatus(ctx context.Context, requestID string) Response {
 	tempC := getTemperature()
 	throttled := getThrottled()
 	services := getServiceStates(ApplianceObservedServiceUnits())
-	writesEnabled, _ := c.boolSetting(ctx, "writes_enabled", false)
-	targetCount, _ := c.store.TargetCount(ctx)
+	writesEnabled, err := c.boolSetting(ctx, "writes_enabled", false)
+	if err != nil {
+		return errorResponse("gateway_status", "INTERNAL_ERROR", "Failed to read writes_enabled setting: "+err.Error(), requestID, "", "", started)
+	}
+	targetCount, err := c.store.TargetCount(ctx)
+	if err != nil {
+		return errorResponse("gateway_status", "INTERNAL_ERROR", "Failed to count configured targets: "+err.Error(), requestID, "", "", started)
+	}
 
 	dbPath := c.dbPath()
 	var dbSize int64
@@ -169,27 +176,14 @@ func (c *Core) GatewayBackup(ctx context.Context, requestID, actor, destPath str
 	info, err := sqliteutil.Backup(ctx, c.store.DB(), destPath)
 	if err != nil {
 		code := "INTERNAL_ERROR"
-		if strings.Contains(err.Error(), "already exists") {
+		switch {
+		case errors.Is(err, sqliteutil.ErrBackupIntegrity):
+			code = "BACKUP_INTEGRITY_FAILED"
+		case strings.Contains(err.Error(), "already exists"):
 			code = "ALREADY_EXISTS"
 		}
 		return errorResponse("gateway_backup", code, "Failed to backup database: "+err.Error(), requestID, "", "", started)
 	}
-	if info.Integrity != "ok" {
-		_ = os.Remove(destPath)
-		return errorResponse("gateway_backup", "BACKUP_INTEGRITY_FAILED", "Backup integrity check failed: "+info.Integrity, requestID, "", "", started)
-	}
-
-	size := info.SizeBytes
-	durMS := time.Since(started).Milliseconds()
-	_ = c.store.RecordActivity(ctx, registry.Activity{
-		Actor:            nonEmpty(actor, "mcp-local"),
-		Action:           "REGISTRY_BACKUP",
-		DurationMS:       &durMS,
-		Success:          true,
-		BytesTransferred: &size,
-		Detail:           mustJSON(map[string]any{"backup_path": destPath, "sha256": info.SHA256, "schema_version": info.SchemaVersion}),
-	})
-
 	res := map[string]any{
 		"backup_path":    destPath,
 		"sha256":         info.SHA256,
@@ -197,6 +191,24 @@ func (c *Core) GatewayBackup(ctx context.Context, requestID, actor, destPath str
 		"schema_version": info.SchemaVersion,
 		"integrity":      info.Integrity,
 		"created_at":     time.Now().UTC().Format(time.RFC3339),
+	}
+	size := info.SizeBytes
+	durMS := time.Since(started).Milliseconds()
+	if err := c.store.RecordActivity(ctx, registry.Activity{
+		Actor:            nonEmpty(actor, "mcp-local"),
+		Action:           "REGISTRY_BACKUP",
+		DurationMS:       &durMS,
+		Success:          true,
+		BytesTransferred: &size,
+		Detail:           mustJSON(map[string]any{"backup_path": destPath, "sha256": info.SHA256, "schema_version": info.SchemaVersion}),
+	}); err != nil {
+		res["backup_created"] = true
+		return errorResponseWithResult(
+			"gateway_backup",
+			"AUDIT_UNAVAILABLE",
+			"Backup was created and verified, but final audit evidence could not be persisted",
+			res, requestID, "", "", started,
+		)
 	}
 	return successResponse("gateway_backup", res, requestID, "", "", started)
 }

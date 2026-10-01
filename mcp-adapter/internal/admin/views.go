@@ -1880,6 +1880,71 @@ func grantScopeCapabilities(grants []registry.Grant, anchor registry.Grant) []st
 	return capabilities
 }
 
+func grantScopeRows(grants []registry.Grant) []map[string]interface{} {
+	type scopeKey struct {
+		targetID  string
+		projectID string
+	}
+	type scopeState struct {
+		anchorID     int64
+		targetID     string
+		projectID    string
+		capabilities []string
+		enabledCount int
+		highImpact   bool
+	}
+
+	order := make([]scopeKey, 0)
+	grouped := make(map[scopeKey]*scopeState)
+	for _, grant := range grants {
+		key := scopeKey{targetID: grant.TargetID, projectID: grant.ProjectID}
+		scope, ok := grouped[key]
+		if !ok {
+			scope = &scopeState{
+				anchorID:  grant.ID,
+				targetID:  grant.TargetID,
+				projectID: grant.ProjectID,
+			}
+			grouped[key] = scope
+			order = append(order, key)
+		}
+		capability := strings.TrimSpace(grant.Capability)
+		scope.capabilities = append(scope.capabilities, capability)
+		if grant.Enabled {
+			scope.enabledCount++
+		}
+		if capability == "*" || capability == policy.TargetPrivilegeCapability {
+			scope.highImpact = true
+		}
+	}
+
+	rows := make([]map[string]interface{}, 0, len(order))
+	for _, key := range order {
+		scope := grouped[key]
+		sort.Strings(scope.capabilities)
+		enabledState := "disabled"
+		desiredEnabled := "true"
+		if scope.enabledCount == len(scope.capabilities) {
+			enabledState = "enabled"
+			desiredEnabled = "false"
+		} else if scope.enabledCount > 0 {
+			enabledState = "mixed"
+		}
+		rows = append(rows, map[string]interface{}{
+			"anchor_id":          scope.anchorID,
+			"target_id":          scope.targetID,
+			"project_id":         scope.projectID,
+			"capabilities":       scope.capabilities,
+			"capabilities_label": strings.Join(scope.capabilities, ", "),
+			"enabled_state":      enabledState,
+			"desired_enabled":    desiredEnabled,
+			"high_impact":        scope.highImpact,
+			"grant_count":        len(scope.capabilities),
+		})
+	}
+	return rows
+}
+
 func validateGrantScopeEditForm(r *http.Request) ([]string, []string, error) {
 	if err := r.ParseForm(); err != nil {
 		return nil, nil, fmt.Errorf("parse grant scope form: %w", err)
@@ -1940,7 +2005,7 @@ func (s *Server) renderClientGrantsStatus(
 
 	s.renderStatus(w, r, "client_grants.html", pongo2.Context{
 		"client":                client,
-		"grants":                grants,
+		"grant_scopes":          grantScopeRows(grants),
 		"targets":               targets,
 		"projects":              projects,
 		"tool_names":            core.CatalogTools(),
@@ -2121,18 +2186,59 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 			return
 		}
 
-		if action == "toggle" {
+		if action == "status" {
 			if r.Method != http.MethodPost {
 				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 				return
 			}
-			grant.Enabled = !grant.Enabled
-			s.RecordAudit(r, "toggle_grant_attempt", grant.TargetID, grant.ProjectID, true, "", fmt.Sprintf("Grant %d enabled -> %v", grantID, grant.Enabled), true)
-			activity := s.auditEntry(r, "toggle_grant", grant.TargetID, grant.ProjectID, true, "", fmt.Sprintf("Grant %d enabled=%v", grantID, grant.Enabled))
-			if s.failStoreMutation(w, r, "toggle_grant", grant.TargetID, grant.ProjectID, s.cfg.Store.UpdateGrantForClientAudited(r.Context(), client.ID, grant, activity)) {
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "Invalid form data.", http.StatusBadRequest)
 				return
 			}
-			sess.Flash("Grant status updated.", "success")
+			expected, err := normalizeGrantCapabilities(r.PostForm["expected_capability"])
+			if err != nil {
+				sess.Flash(fmt.Sprintf("Invalid access scope: %v", err), "danger")
+				s.renderClientGrantsStatus(w, r, client, nil, nil, nil, http.StatusUnprocessableEntity)
+				return
+			}
+			desiredRaw := strings.TrimSpace(r.PostForm.Get("enabled"))
+			var desiredEnabled bool
+			switch desiredRaw {
+			case "true":
+				desiredEnabled = true
+			case "false":
+				desiredEnabled = false
+			default:
+				sess.Flash("Invalid access scope state.", "danger")
+				s.renderClientGrantsStatus(w, r, client, nil, nil, nil, http.StatusUnprocessableEntity)
+				return
+			}
+			s.RecordAudit(
+				r, "set_grant_scope_enabled_attempt", grant.TargetID, grant.ProjectID, true, "",
+				fmt.Sprintf("Set access scope enabled=%v for client '%s': expected=[%s]", desiredEnabled, client.ID, strings.Join(expected, ", ")),
+				true,
+			)
+			activity := s.auditEntry(
+				r, "set_grant_scope_enabled", grant.TargetID, grant.ProjectID, true, "",
+				fmt.Sprintf("Set access scope enabled=%v for client '%s'", desiredEnabled, client.ID),
+			)
+			changed, err := s.cfg.Store.SetGrantScopeEnabledAudited(
+				r.Context(), client.ID, grant.TargetID, grant.ProjectID, expected, desiredEnabled, activity,
+			)
+			if registry.ErrorCode(err) == "GRANT_SCOPE_CONFLICT" {
+				s.RecordAudit(r, "set_grant_scope_enabled", grant.TargetID, grant.ProjectID, false, "GRANT_SCOPE_CONFLICT", err.Error(), false)
+				sess.Flash("This access scope changed before its status could be updated. Reload and review the current Grants.", "danger")
+				s.renderClientGrantsStatus(w, r, client, nil, nil, nil, http.StatusConflict)
+				return
+			}
+			if s.failStoreMutation(w, r, "set_grant_scope_enabled", grant.TargetID, grant.ProjectID, err) {
+				return
+			}
+			if changed == 0 {
+				sess.Flash("Access scope status is already up to date.", "info")
+			} else {
+				sess.Flash(fmt.Sprintf("Access scope status updated for %d grant(s).", changed), "success")
+			}
 			http.Redirect(w, r, fmt.Sprintf("/clients/%s/grants", client.ID), http.StatusFound)
 			return
 		}
@@ -2142,12 +2248,38 @@ func (s *Server) handleClientGrants(w http.ResponseWriter, r *http.Request, clie
 				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 				return
 			}
-			s.RecordAudit(r, "delete_grant_attempt", grant.TargetID, grant.ProjectID, true, "", fmt.Sprintf("Delete grant %d for client '%s'", grantID, client.ID), true)
-			activity := s.auditEntry(r, "delete_grant", grant.TargetID, grant.ProjectID, true, "", fmt.Sprintf("Deleted grant %d for client %s", grantID, client.ID))
-			if s.failStoreMutation(w, r, "delete_grant", grant.TargetID, grant.ProjectID, s.cfg.Store.DeleteGrantForClientAudited(r.Context(), client.ID, grantID, activity)) {
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "Invalid form data.", http.StatusBadRequest)
 				return
 			}
-			sess.Flash("Grant deleted.", "info")
+			expected, err := normalizeGrantCapabilities(r.PostForm["expected_capability"])
+			if err != nil {
+				sess.Flash(fmt.Sprintf("Invalid access scope: %v", err), "danger")
+				s.renderClientGrantsStatus(w, r, client, nil, nil, nil, http.StatusUnprocessableEntity)
+				return
+			}
+			s.RecordAudit(
+				r, "delete_grant_scope_attempt", grant.TargetID, grant.ProjectID, true, "",
+				fmt.Sprintf("Delete access scope for client '%s': expected=[%s]", client.ID, strings.Join(expected, ", ")),
+				true,
+			)
+			activity := s.auditEntry(
+				r, "delete_grant_scope", grant.TargetID, grant.ProjectID, true, "",
+				fmt.Sprintf("Deleted access scope for client '%s'", client.ID),
+			)
+			_, removed, err := s.cfg.Store.SyncGrantScopeAudited(
+				r.Context(), client.ID, grant.TargetID, grant.ProjectID, expected, nil, activity,
+			)
+			if registry.ErrorCode(err) == "GRANT_SCOPE_CONFLICT" {
+				s.RecordAudit(r, "delete_grant_scope", grant.TargetID, grant.ProjectID, false, "GRANT_SCOPE_CONFLICT", err.Error(), false)
+				sess.Flash("This access scope changed before it could be deleted. Reload and review the current Grants.", "danger")
+				s.renderClientGrantsStatus(w, r, client, nil, nil, nil, http.StatusConflict)
+				return
+			}
+			if s.failStoreMutation(w, r, "delete_grant_scope", grant.TargetID, grant.ProjectID, err) {
+				return
+			}
+			sess.Flash(fmt.Sprintf("%d grant(s) deleted from the access scope.", len(removed)), "info")
 			http.Redirect(w, r, fmt.Sprintf("/clients/%s/grants", client.ID), http.StatusFound)
 			return
 		}

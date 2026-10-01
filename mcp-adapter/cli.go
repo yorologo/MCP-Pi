@@ -426,8 +426,8 @@ func cmdRestore(args []string) int {
 		fmt.Fprintf(os.Stderr, "[ERROR] Backup integrity is not ok: %s\n", sourceInfo.Integrity)
 		return 1
 	}
-	if sourceInfo.SchemaVersion != 4 && sourceInfo.SchemaVersion != 5 && sourceInfo.SchemaVersion != registry.SchemaVersion {
-		fmt.Fprintf(os.Stderr, "[ERROR] Unsupported backup schema %d; Go-only restore supports schemas 4, 5 or %d\n", sourceInfo.SchemaVersion, registry.SchemaVersion)
+	if !registry.CanUpgradeFrom(sourceInfo.SchemaVersion) {
+		fmt.Fprintf(os.Stderr, "[ERROR] Unsupported backup schema %d; supported schemas are %v\n", sourceInfo.SchemaVersion, registry.UpgradeFromSchemaVersions())
 		return 1
 	}
 	if active := activeGatewayServices(); len(active) > 0 {
@@ -541,6 +541,17 @@ func cmdSetup(args []string) int {
 					return 1
 				}
 				password = strings.TrimSpace(string(raw))
+				fmt.Printf("Confirm new password for '%s': ", *adminUser)
+				confirmationRaw, err := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Println()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[ERROR] Failed to read password confirmation: %v\n", err)
+					return 1
+				}
+				if password != strings.TrimSpace(string(confirmationRaw)) {
+					fmt.Fprintln(os.Stderr, "[ERROR] Password confirmation does not match.")
+					return 2
+				}
 			} else {
 				fmt.Fprintln(os.Stderr, "[ERROR] Interactive password setup requires a terminal; use --password-stdin for automation.")
 				return 2
@@ -609,6 +620,10 @@ func cmdBenchmark(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if *iterations < 1 {
+		fmt.Fprintln(os.Stderr, "[ERROR] benchmark iterations must be at least 1")
+		return 2
+	}
 
 	dbPath := resolveDBPath(*dbFlag)
 	_, c, err := initStoreAndCore(dbPath)
@@ -661,6 +676,25 @@ func cmdBenchmark(args []string) int {
 	return 0
 }
 
+func resolveAdminPort(flagPort int) (int, error) {
+	if flagPort != 0 {
+		if flagPort < 1 || flagPort > 65535 {
+			return 0, fmt.Errorf("admin port must be between 1 and 65535")
+		}
+		return flagPort, nil
+	}
+
+	raw := strings.TrimSpace(os.Getenv("MCP_ADMIN_PORT"))
+	if raw == "" {
+		return 80, nil
+	}
+	port, err := strconv.Atoi(raw)
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("MCP_ADMIN_PORT must be an integer between 1 and 65535")
+	}
+	return port, nil
+}
+
 func cmdServeAdmin(args []string) int {
 	fs := flag.NewFlagSet("serve-admin", flag.ContinueOnError)
 	hostFlag := fs.String("host", "", "Host address to bind")
@@ -680,14 +714,10 @@ func cmdServeAdmin(args []string) int {
 		host = "127.0.0.1"
 	}
 
-	port := *portFlag
-	if port <= 0 {
-		if pEnv := os.Getenv("MCP_ADMIN_PORT"); pEnv != "" {
-			port, _ = strconv.Atoi(pEnv)
-		}
-	}
-	if port <= 0 {
-		port = 80
+	port, err := resolveAdminPort(*portFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Invalid Admin port: %v\n", err)
+		return 2
 	}
 
 	allowedHostsStr := *allowedHostsFlag

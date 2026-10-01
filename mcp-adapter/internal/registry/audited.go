@@ -269,6 +269,30 @@ ORDER BY id
 	return grants, nil
 }
 
+func requireExpectedGrantScopeTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	clientID, targetID, projectID string,
+	expectedCapabilities []string,
+) ([]Grant, []string, error) {
+	current, err := listGrantScopeTx(ctx, tx, clientID, targetID, projectID)
+	if err != nil {
+		return nil, nil, err
+	}
+	currentCapabilities := make([]string, 0, len(current))
+	for _, grant := range current {
+		currentCapabilities = append(currentCapabilities, strings.TrimSpace(grant.Capability))
+	}
+	sort.Strings(currentCapabilities)
+	if !sameGrantCapabilitySet(currentCapabilities, expectedCapabilities) {
+		return nil, nil, &LookupError{
+			Code:    "GRANT_SCOPE_CONFLICT",
+			Message: "grant scope changed while it was being modified; reload before retrying",
+		}
+	}
+	return current, currentCapabilities, nil
+}
+
 // SyncGrantScopeAudited synchronizes the capabilities stored for one exact
 // client/Target/Project scope. Existing Grants that remain selected are left
 // untouched so their IDs and Enabled state are preserved. The expected set is
@@ -304,23 +328,13 @@ func (s *Store) SyncGrantScopeAudited(
 	added := []string{}
 	removed := []string{}
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
-		current, err := listGrantScopeTx(ctx, tx, clientID, targetID, projectID)
+		current, currentCapabilities, err := requireExpectedGrantScopeTx(ctx, tx, clientID, targetID, projectID, expected)
 		if err != nil {
 			return err
 		}
 		currentByCapability := make(map[string]Grant, len(current))
-		currentCapabilities := make([]string, 0, len(current))
 		for _, grant := range current {
-			capability := strings.TrimSpace(grant.Capability)
-			currentByCapability[capability] = grant
-			currentCapabilities = append(currentCapabilities, capability)
-		}
-		sort.Strings(currentCapabilities)
-		if !sameGrantCapabilitySet(currentCapabilities, expected) {
-			return &LookupError{
-				Code:    "GRANT_SCOPE_CONFLICT",
-				Message: "grant scope changed while it was being edited; reload before saving",
-			}
+			currentByCapability[strings.TrimSpace(grant.Capability)] = grant
 		}
 
 		desiredSet := make(map[string]struct{}, len(desired))
@@ -339,7 +353,7 @@ func (s *Store) SyncGrantScopeAudited(
 			activity := baseActivity
 			activity.Action = "delete_grant"
 			activity.Success = true
-			activity.Detail = fmt.Sprintf("Deleted grant '%s' for client '%s' via access scope edit", capability, clientID)
+			activity.Detail = fmt.Sprintf("Deleted grant '%s' for client '%s' via access scope synchronization", capability, clientID)
 			if err := recordActivityExec(ctx, tx, activity); err != nil {
 				return err
 			}
@@ -359,7 +373,7 @@ func (s *Store) SyncGrantScopeAudited(
 			activity := baseActivity
 			activity.Action = "add_grant"
 			activity.Success = true
-			activity.Detail = fmt.Sprintf("Added grant '%s' for client '%s' via access scope edit", capability, clientID)
+			activity.Detail = fmt.Sprintf("Added grant '%s' for client '%s' via access scope synchronization", capability, clientID)
 			if err := recordActivityExec(ctx, tx, activity); err != nil {
 				return err
 			}
@@ -373,26 +387,64 @@ func (s *Store) SyncGrantScopeAudited(
 	return added, removed, nil
 }
 
-// UpdateGrantForClientAudited updates only a Grant that belongs to clientID
-// and records the successful authorization change atomically.
-func (s *Store) UpdateGrantForClientAudited(ctx context.Context, clientID string, grant Grant, activity Activity) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		if err := updateGrantExec(ctx, tx, clientID, grant); err != nil {
-			return err
-		}
-		return recordActivityExec(ctx, tx, activity)
-	})
-}
+// SetGrantScopeEnabledAudited sets Enabled consistently for one exact
+// client/Target/Project scope. The expected capability set is checked inside
+// the same transaction so a stale grouped action cannot affect unseen Grants.
+func (s *Store) SetGrantScopeEnabledAudited(
+	ctx context.Context,
+	clientID, targetID, projectID string,
+	expectedCapabilities []string,
+	enabled bool,
+	baseActivity Activity,
+) (int, error) {
+	clientID = strings.TrimSpace(clientID)
+	targetID = strings.TrimSpace(targetID)
+	projectID = strings.TrimSpace(projectID)
+	if clientID == "" {
+		return 0, fmt.Errorf("client id cannot be empty")
+	}
+	if targetID == "" {
+		return 0, fmt.Errorf("target id cannot be empty")
+	}
+	if projectID == "" {
+		projectID = "*"
+	}
 
-// DeleteGrantForClientAudited deletes only a Grant that belongs to clientID
-// and records the successful authorization change atomically.
-func (s *Store) DeleteGrantForClientAudited(ctx context.Context, clientID string, grantID int64, activity Activity) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		if err := deleteGrantExec(ctx, tx, clientID, grantID); err != nil {
+	expected, err := normalizeGrantScopeCapabilities(expectedCapabilities, true)
+	if err != nil {
+		return 0, fmt.Errorf("normalize expected grant scope: %w", err)
+	}
+
+	changed := 0
+	err = s.withTx(ctx, func(tx *sql.Tx) error {
+		current, _, err := requireExpectedGrantScopeTx(ctx, tx, clientID, targetID, projectID, expected)
+		if err != nil {
 			return err
 		}
-		return recordActivityExec(ctx, tx, activity)
+
+		for _, grant := range current {
+			if grant.Enabled == enabled {
+				continue
+			}
+			grant.Enabled = enabled
+			if err := updateGrantExec(ctx, tx, clientID, grant); err != nil {
+				return err
+			}
+			activity := baseActivity
+			activity.Action = "set_grant_enabled"
+			activity.Success = true
+			activity.Detail = fmt.Sprintf("Set grant '%s' enabled=%v for client '%s' via access scope", grant.Capability, enabled, clientID)
+			if err := recordActivityExec(ctx, tx, activity); err != nil {
+				return err
+			}
+			changed++
+		}
+		return nil
 	})
+	if err != nil {
+		return 0, err
+	}
+	return changed, nil
 }
 
 func (s *Store) SetPrivilegeApprovalAudited(ctx context.Context, targetID, policy, clientID, projectID, bootID string, activity Activity) error {

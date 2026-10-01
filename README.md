@@ -45,9 +45,11 @@ A successful candidate-only check emits `CANDIDATE_CHECK=PASS`; it is not proof 
 
 A fresh interactive install can configure Admin directly. A fresh non-interactive install creates a private, 15-minute one-time token for `/setup` and prints only the local token-file path.
 
-Local recovery/automation path:
+Local first-time setup:
 
     sudo -u mcp-gateway mcp-gateway setup
+
+Interactive first-time setup asks for the password twice. If an Admin already exists, this command is idempotent and leaves its password unchanged; automation or deliberate credential recovery can provide a replacement through the existing `--password-stdin` path from a protected stdin source.
 
 Admin binds to loopback by default. From another machine, use an SSH port forward instead of exposing Admin unnecessarily:
 

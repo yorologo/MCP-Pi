@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -14,6 +15,8 @@ import (
 
 	msqlite "modernc.org/sqlite"
 )
+
+var ErrBackupIntegrity = errors.New("backup integrity check failed")
 
 type backuper interface {
 	NewBackup(string) (*msqlite.Backup, error)
@@ -109,9 +112,19 @@ func Backup(ctx context.Context, db *sql.DB, destination string) (FileInfo, erro
 		return FileInfo{}, err
 	}
 	if err := os.Chmod(destination, 0o600); err != nil {
+		_ = os.Remove(destination)
 		return FileInfo{}, err
 	}
-	return Inspect(ctx, destination)
+	info, err := Inspect(ctx, destination)
+	if err != nil {
+		_ = os.Remove(destination)
+		return FileInfo{}, err
+	}
+	if info.Integrity != "ok" {
+		_ = os.Remove(destination)
+		return FileInfo{}, fmt.Errorf("%w: %s", ErrBackupIntegrity, info.Integrity)
+	}
+	return info, nil
 }
 
 func Restore(ctx context.Context, db *sql.DB, source string) error {

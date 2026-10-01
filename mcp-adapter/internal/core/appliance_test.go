@@ -13,6 +13,7 @@ import (
 
 	"mcp-gateway-adapter/internal/buildinfo"
 	"mcp-gateway-adapter/internal/registry"
+	"mcp-gateway-adapter/internal/sqliteutil"
 )
 
 func seededApplianceCore(t *testing.T) (*Core, context.Context, string, string) {
@@ -92,6 +93,21 @@ func TestGatewayStatus(t *testing.T) {
 	dbInfo, ok := resMap["database"].(map[string]any)
 	if !ok || dbInfo["path"] != dbPath {
 		t.Fatalf("unexpected database info: %+v", dbInfo)
+	}
+}
+
+func TestGatewayStatusFailsClosedWhenTargetCountIsUnavailable(t *testing.T) {
+	core, ctx, _, _ := seededApplianceCore(t)
+	if _, err := core.store.DB().ExecContext(ctx, "ALTER TABLE targets RENAME TO targets_unavailable"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := core.GatewayStatus(ctx, "req-status-fail")
+	if resp.OK || resp.Error == nil || resp.Error.Code != "INTERNAL_ERROR" {
+		t.Fatalf("GatewayStatus with unavailable targets returned %+v", resp)
+	}
+	if !strings.Contains(resp.Error.Message, "count configured targets") {
+		t.Fatalf("GatewayStatus failure did not identify target count: %+v", resp.Error)
 	}
 }
 
@@ -180,6 +196,37 @@ func TestGatewayBackup(t *testing.T) {
 	sha, ok := resMap["sha256"].(string)
 	if !ok || len(sha) != 64 {
 		t.Fatalf("invalid sha256 in backup result: %v", sha)
+	}
+}
+
+func TestGatewayBackupDoesNotPassWithoutFinalAuditEvidence(t *testing.T) {
+	core, ctx, _, backupDir := seededApplianceCore(t)
+	if _, err := core.store.DB().ExecContext(ctx, `
+		CREATE TRIGGER block_backup_success
+		BEFORE INSERT ON activity
+		WHEN NEW.action = 'REGISTRY_BACKUP'
+		BEGIN
+			SELECT RAISE(ABORT, 'blocked backup success audit');
+		END;
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := filepath.Join(backupDir, "audit-failure.db")
+	resp := core.GatewayBackup(ctx, "req-backup-audit", "test-admin", dest)
+	if resp.OK || resp.Error == nil || resp.Error.Code != "AUDIT_UNAVAILABLE" {
+		t.Fatalf("GatewayBackup without final audit evidence returned %+v", resp)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok || result["backup_created"] != true || result["backup_path"] != dest {
+		t.Fatalf("backup audit failure did not preserve artifact evidence: %#v", resp.Result)
+	}
+	info, err := sqliteutil.Inspect(ctx, dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Integrity != "ok" {
+		t.Fatalf("backup artifact after audit failure integrity=%s", info.Integrity)
 	}
 }
 

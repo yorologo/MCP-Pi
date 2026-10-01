@@ -136,6 +136,195 @@ func TestGrantAddRequiresExplicitCapability(t *testing.T) {
 	}
 }
 
+func TestGrantListGroupsScopeAndShowsTriState(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	ctx := context.Background()
+	grants, err := store.ListGrants(ctx, "test-client")
+	if err != nil || len(grants) == 0 {
+		t.Fatalf("seed grants: %v %+v", err, grants)
+	}
+	anchorID := grants[0].ID
+	for _, grant := range []registry.Grant{
+		{ClientID: "test-client", TargetID: "test-target", ProjectID: "test-proj", Capability: "write", Enabled: false},
+		{ClientID: "test-client", TargetID: "test-target", ProjectID: "test-proj", Capability: "target_admin", Enabled: true},
+	} {
+		if _, err := store.AddGrant(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	srv.handleClientSubroutes(rec, adminTestRequest(http.MethodGet, "/clients/test-client/grants"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("grants GET returned %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if got := strings.Count(body, `data-grant-scope="test-target/test-proj"`); got != 1 {
+		t.Fatalf("scope rendered %d rows want 1: %s", got, body)
+	}
+	for _, want := range []string{
+		"Capabilities",
+		"aria-checked=\"mixed\"",
+		"◐ Mixed",
+		"target_admin",
+		"ADMIN",
+		`data-high-impact="true"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("grouped grants table missing %q: %s", want, body)
+		}
+	}
+	editURL := fmt.Sprintf("/clients/test-client/grants/%d/edit", anchorID)
+	if got := strings.Count(body, editURL); got != 1 {
+		t.Fatalf("scope rendered %d Edit actions want 1", got)
+	}
+}
+
+func TestGrantScopeStatusAndDeleteActionsAreAtomicAndStaleSafe(t *testing.T) {
+	srv, store := setupTestAdminServer(t)
+	ctx := context.Background()
+	grants, err := store.ListGrants(ctx, "test-client")
+	if err != nil || len(grants) == 0 {
+		t.Fatalf("seed grants: %v %+v", err, grants)
+	}
+	anchorID := grants[0].ID
+	if _, err := store.AddGrant(ctx, registry.Grant{
+		ClientID: "test-client", TargetID: "test-target", ProjectID: "test-proj",
+		Capability: "write", Enabled: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	postStatus := func(enabled string, expected ...string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		srv.handleClientSubroutes(rec, adminFormRequest(
+			http.MethodPost,
+			fmt.Sprintf("/clients/test-client/grants/%d/status", anchorID),
+			url.Values{"expected_capability": expected, "enabled": {enabled}},
+		))
+		return rec
+	}
+
+	rec := postStatus("invalid", "read", "write")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid scope status returned %d want 422: %s", rec.Code, rec.Body.String())
+	}
+	grants, err = store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range grants {
+		if grant.Capability == "write" && grant.Enabled {
+			t.Fatalf("invalid scope status mutated write grant: %+v", grant)
+		}
+	}
+
+	rec = postStatus("true", "read", "write")
+	if rec.Code != http.StatusFound {
+		t.Fatalf("enable scope returned %d: %s", rec.Code, rec.Body.String())
+	}
+	grants, err = store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range grants {
+		if grant.TargetID == "test-target" && grant.ProjectID == "test-proj" && !grant.Enabled {
+			t.Fatalf("enable scope left disabled grant: %+v", grant)
+		}
+	}
+
+	rec = postStatus("false", "read", "write")
+	if rec.Code != http.StatusFound {
+		t.Fatalf("disable scope returned %d: %s", rec.Code, rec.Body.String())
+	}
+	grants, err = store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range grants {
+		if grant.TargetID == "test-target" && grant.ProjectID == "test-proj" && grant.Enabled {
+			t.Fatalf("disable scope left enabled grant: %+v", grant)
+		}
+	}
+
+	if _, err := store.AddGrant(ctx, registry.Grant{
+		ClientID: "test-client", TargetID: "test-target", ProjectID: "test-proj",
+		Capability: "tasks", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec = postStatus("true", "read", "write")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale status update returned %d want 409: %s", rec.Code, rec.Body.String())
+	}
+	grants, err = store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := map[string]bool{}
+	for _, grant := range grants {
+		if grant.TargetID == "test-target" && grant.ProjectID == "test-proj" {
+			state[grant.Capability] = grant.Enabled
+		}
+	}
+	if state["read"] || state["write"] || !state["tasks"] {
+		t.Fatalf("stale status update mutated scope: %+v", state)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.handleClientSubroutes(rec, adminFormRequest(
+		http.MethodPost,
+		fmt.Sprintf("/clients/test-client/grants/%d/delete", anchorID),
+		url.Values{"expected_capability": {"read", "write"}},
+	))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale delete returned %d want 409: %s", rec.Code, rec.Body.String())
+	}
+	grants, err = store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grants) != 3 {
+		t.Fatalf("stale delete changed scope size: %+v", grants)
+	}
+
+	if err := store.AddProject(ctx, registry.Project{
+		ID: "other-proj", TargetID: "test-target", DisplayName: "Other Project",
+		Root: "/srv/other", Read: true, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := store.AddGrant(ctx, registry.Grant{
+		ClientID: "test-client", TargetID: "test-target", ProjectID: "other-proj",
+		Capability: "read", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.handleClientSubroutes(rec, adminFormRequest(
+		http.MethodPost,
+		fmt.Sprintf("/clients/test-client/grants/%d/delete", anchorID),
+		url.Values{"expected_capability": {"read", "tasks", "write"}},
+	))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("delete scope returned %d: %s", rec.Code, rec.Body.String())
+	}
+	grants, err = store.ListGrants(ctx, "test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range grants {
+		if grant.TargetID == "test-target" && grant.ProjectID == "test-proj" {
+			t.Fatalf("delete scope left grant: %+v", grant)
+		}
+	}
+	if _, err := store.GetGrantForClient(ctx, "test-client", otherID); err != nil {
+		t.Fatalf("delete scope affected another scope: %v", err)
+	}
+}
+
 func TestGrantEditRoundTripAndClientScope(t *testing.T) {
 	srv, store := setupTestAdminServer(t)
 	ctx := context.Background()
@@ -218,7 +407,7 @@ func TestGrantEditRoundTripAndClientScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, fmt.Sprintf("/clients/test-client/grants/%d/toggle", otherID), nil))
+	srv.handleClientSubroutes(rec, adminFormRequest(http.MethodPost, fmt.Sprintf("/clients/test-client/grants/%d/status", otherID), nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-client toggle returned %d want 404", rec.Code)
 	}
@@ -429,15 +618,46 @@ func TestSettingsTimezonePersistsAndRendersEndToEnd(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	srv.handleSettings(rec, adminTestRequest(http.MethodGet, "/settings"))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Effective display time zone") ||
-		!strings.Contains(rec.Body.String(), "America/Mexico_City") {
-		t.Fatal("settings page does not expose effective time zone")
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Admin Display Time Zone",
+		`list="admin-timezones"`,
+		`<datalist id="admin-timezones">`,
+		`<option value="America/Mexico_City">`,
+		`value="America/Mexico_City"`,
+		"enter any valid IANA time zone",
+	} {
+		if rec.Code != http.StatusOK || !strings.Contains(body, want) {
+			t.Fatalf("settings page missing time zone UI %q: status=%d body=%s", want, rec.Code, body)
+		}
+	}
+	if strings.Contains(body, `<select id="admin-timezone"`) {
+		t.Fatal("time zone suggestions must not restrict valid IANA values to a closed select")
 	}
 
 	rec = httptest.NewRecorder()
 	srv.handleActivity(rec, adminTestRequest(http.MethodGet, "/activity"))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Timestamp (America/Mexico_City)") {
 		t.Fatal("activity page did not use persisted time zone")
+	}
+
+	form.Set("admin_timezone", "Pacific/Auckland")
+	rec = httptest.NewRecorder()
+	srv.handleSettings(rec, adminFormRequest(http.MethodPost, "/settings", form))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("settings POST for non-suggested IANA zone returned %d: %s", rec.Code, rec.Body.String())
+	}
+	tz, err = store.GetSetting(context.Background(), "admin_timezone", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tz != "Pacific/Auckland" {
+		t.Fatalf("stored non-suggested timezone=%q", tz)
+	}
+	rec = httptest.NewRecorder()
+	srv.handleSettings(rec, adminTestRequest(http.MethodGet, "/settings"))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `value="Pacific/Auckland"`) {
+		t.Fatalf("settings page did not preserve non-suggested IANA zone: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

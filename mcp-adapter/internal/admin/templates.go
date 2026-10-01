@@ -159,9 +159,9 @@ func URLFor(endpoint string, args ...interface{}) string {
 			return fmt.Sprintf("/clients/%v/grants/%v/edit", args[0], args[1])
 		}
 		return "/clients"
-	case "admin.client_grant_toggle":
+	case "admin.client_grant_status":
 		if len(args) >= 2 {
-			return fmt.Sprintf("/clients/%v/grants/%v/toggle", args[0], args[1])
+			return fmt.Sprintf("/clients/%v/grants/%v/status", args[0], args[1])
 		}
 		return "/clients"
 	case "admin.client_grant_delete":

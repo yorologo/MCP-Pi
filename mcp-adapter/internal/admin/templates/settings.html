@@ -124,9 +124,23 @@
     </div>
 
     <div>
-      <label for="admin-timezone" class="field-label">Admin Time Zone</label>
-      <input id="admin-timezone" type="text" name="admin_timezone" value="{{ settings.admin_timezone }}" required class="field font-mono" placeholder="America/Mexico_City" autocomplete="off">
-      <p class="text-[11px] text-slate-500 mt-1">Effective display time zone: <code class="text-indigo-300">{{ settings.admin_timezone }}</code>. Used only for Admin Console display and date filters; audit storage remains UTC. Examples: UTC, America/Mexico_City.</p>
+      <label for="admin-timezone" class="field-label">Admin Display Time Zone</label>
+      <input id="admin-timezone" type="text" name="admin_timezone" value="{{ settings.admin_timezone }}" list="admin-timezones" required class="field font-mono" placeholder="America/Mexico_City" autocomplete="off">
+      <datalist id="admin-timezones">
+        <option value="UTC"></option>
+        <option value="America/Mexico_City"></option>
+        <option value="America/Cancun"></option>
+        <option value="America/Tijuana"></option>
+        <option value="America/New_York"></option>
+        <option value="America/Chicago"></option>
+        <option value="America/Denver"></option>
+        <option value="America/Los_Angeles"></option>
+        <option value="Europe/London"></option>
+        <option value="Europe/Madrid"></option>
+        <option value="Europe/Paris"></option>
+        <option value="Asia/Tokyo"></option>
+      </datalist>
+      <p class="text-[11px] text-slate-500 mt-1">Controls how dates and date filters appear in the Admin Console; audit timestamps remain stored in UTC. Select a suggestion or enter any valid IANA time zone. Effective: <code class="text-indigo-300">{{ settings.admin_timezone }}</code>.</p>
     </div>
 
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">

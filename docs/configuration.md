@@ -22,9 +22,11 @@ Then open `http://127.0.0.1:8080/`.
 
 A fresh non-interactive install exposes `/setup` only while no enabled Admin exists and a valid one-time bootstrap token is present. Successful Web or CLI setup removes the token.
 
-Local setup/recovery:
+Local first-time setup:
 
     sudo -u mcp-gateway mcp-gateway setup
+
+Interactive first-time setup requires matching password entry and confirmation. Re-running `setup` with an existing Admin is intentionally idempotent and leaves its password unchanged. Automation or deliberate local credential recovery may use `--password-stdin` with a protected stdin source to replace the configured password explicitly.
 
 Common Admin environment overrides are:
 
@@ -35,7 +37,7 @@ Common Admin environment overrides are:
 
 Regenerating the signing secret invalidates existing Admin sessions.
 
-`admin_timezone` is a Registry setting using an IANA timezone name. It changes presentation/date filters only; audit timestamps remain UTC.
+`admin_timezone` is the Admin Console display time zone and uses an IANA time zone name. Settings offers common zones as suggestions while still accepting any valid IANA name; server-side validation remains authoritative. It changes presentation and date filters only; audit timestamps remain stored in UTC.
 
 ## Initial model
 
@@ -72,7 +74,7 @@ Admin **Add Grants** can create several capabilities for one common Target/Proje
 
 Presets are not roles and are never stored or consulted by Policy. **Advanced / Customize capabilities** exposes the real current Policy capability catalog as ordinary form checkboxes. Whether chosen through a preset or manually, each resulting capability remains a separate Grant and a separately auditable authorization record.
 
-**Edit** on any Grant edits the complete capability set for that client's exact Target/Project scope using the same builder and presets as **Add Grants**. The scope itself is fixed during Edit; use **Add Grants** for another Target/Project. Existing Grants that remain selected keep their ID and enabled/disabled state, while newly selected capabilities are created enabled. **Enable / Disable** remains an individual Grant operation. Saving an empty capability set requires explicit remove-all confirmation, and a stale editor is rejected rather than overwriting a concurrently changed scope.
+The Grants table presents one access scope per exact Client/Target/Project combination while each capability remains a separate persisted and auditable Grant. **Edit** changes the complete capability set for that scope using the same builder and presets as **Add Grants**; the Target/Project scope itself stays fixed. Existing Grants that remain selected keep their ID and enabled/disabled state, while newly selected capabilities are created enabled. **Enabled** is a scope-level tri-state control: enabled when all Grants are enabled, disabled when all are disabled, and mixed when their persisted states differ. A grouped status change sets every Grant in that scope atomically. **Delete** removes the complete scope. Edit, status changes and Delete reject a stale capability set instead of affecting Grants that changed concurrently. Saving an empty Edit still requires explicit remove-all confirmation.
 
 Selections containing `*` or `target_admin` require explicit **High-impact access** confirmation even for a specific Target and Project. The server repeats this check; JavaScript is only progressive enhancement. `*` covers compatible ordinary capabilities but never grants `target_admin`, and `target_admin` does not grant `target_shell`.
 

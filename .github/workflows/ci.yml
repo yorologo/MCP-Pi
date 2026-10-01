@@ -66,6 +66,19 @@ jobs:
           bash -n scripts/run-resumable.sh
           bash -n scripts/verify-go-only.sh
 
+      - name: systemd unit verification
+        run: |
+          if ! id -u mcp-gateway >/dev/null 2>&1; then sudo useradd --system --user-group --home /home/mcp-gateway --shell /usr/sbin/nologin mcp-gateway; fi
+          sudo install -d -m 0755 /home/mcp-gateway/mcp-gateway/bin /home/mcp-gateway/mcp-gateway/config/systemd
+          sudo install -d -m 0700 /home/mcp-gateway/.config/mcp-gateway
+          sudo install -m 0755 /bin/true /home/mcp-gateway/mcp-gateway/bin/mcp-gateway
+          sudo install -m 0755 config/systemd/mcp-gateway-network-recovery /home/mcp-gateway/mcp-gateway/config/systemd/mcp-gateway-network-recovery
+          sudo install -m 0755 config/systemd/mcp-gateway-tunnel-check /usr/local/bin/mcp-gateway-tunnel-check
+          sudo install -m 0755 /bin/true /usr/local/bin/openai-tunnel-client
+          sudo install -m 0755 /bin/true /usr/local/bin/cloudflared
+          sudo touch /home/mcp-gateway/.config/mcp-gateway/tunnel.env /home/mcp-gateway/.config/mcp-gateway/cloudflared.token
+          sudo systemd-analyze verify config/systemd/*.service config/systemd/*.timer config/systemd/*.target
+
 
       - uses: actions/setup-node@v4
         with:

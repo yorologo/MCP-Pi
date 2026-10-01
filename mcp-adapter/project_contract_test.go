@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,6 +47,28 @@ func TestProjectMetadataMatchesGoContract(t *testing.T) {
 	}
 	if got := manifest["runtime"]; got != "go" {
 		t.Fatalf("manifest runtime=%v want=go", got)
+	}
+	jsonInts := func(value any) []int {
+		items, ok := value.([]any)
+		if !ok {
+			t.Fatalf("expected JSON number array, got %T", value)
+		}
+		out := make([]int, 0, len(items))
+		for _, item := range items {
+			n, ok := item.(float64)
+			if !ok {
+				t.Fatalf("expected JSON number, got %T", item)
+			}
+			out = append(out, int(n))
+		}
+		return out
+	}
+	wantUpgradeFrom := registry.UpgradeFromSchemaVersions()
+	if got := jsonInts(compat["registry_upgrade_from"]); !slices.Equal(got, wantUpgradeFrom) {
+		t.Fatalf("compatibility registry_upgrade_from=%v want=%v", got, wantUpgradeFrom)
+	}
+	if got := jsonInts(manifest["registry_upgrade_from"]); !slices.Equal(got, wantUpgradeFrom) {
+		t.Fatalf("manifest registry_upgrade_from=%v want=%v", got, wantUpgradeFrom)
 	}
 	if _, exists := manifest["minimum_python"]; exists {
 		t.Fatal("manifest must not declare minimum_python")
@@ -210,6 +233,11 @@ func TestReadmeOwnsNewUserOnboarding(t *testing.T) {
 
 func TestOperationalContractsRemainExplicit(t *testing.T) {
 	checks := map[string][]string{
+		"mcp-adapter/cli.go": {
+			"Confirm new password for",
+			"MCP_ADMIN_PORT must be an integer between 1 and 65535",
+			"benchmark iterations must be at least 1",
+		},
 		"install.sh": {
 			"--check",
 			"--rollback",
@@ -294,6 +322,22 @@ func TestTaggedReleaseWaitsForValidationAndReusesCanonicalBundle(t *testing.T) {
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("tag release workflow missing %q", required)
+		}
+	}
+}
+
+func TestCIVerifiesSystemdUnitsWithUpstreamAnalyzer(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+	for _, required := range []string{
+		"systemd unit verification",
+		"systemd-analyze verify config/systemd/*.service config/systemd/*.timer config/systemd/*.target",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("CI systemd verification missing %q", required)
 		}
 	}
 }
@@ -481,12 +525,13 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 		t.Fatal("installer activation/migration boundary is missing")
 	}
 	stopRel := strings.Index(installer[activation:], "stop_runtime")
+	quiescentRel := strings.Index(installer[activation:], "require_runtime_quiescent")
 	promoteRel := strings.Index(installer[activation:], "promote_rollback_set \"$ROLLBACK_STAGE\"")
 	detachRel := strings.Index(installer[activation:], "detach_component_boot_links")
 	migrateRel := strings.Index(installer[activation:], "migrate -db \"$DB_PATH\"")
-	if stopRel < 0 || promoteRel < 0 || detachRel < 0 || migrateRel < 0 ||
-		stopRel >= promoteRel || promoteRel >= detachRel || detachRel >= migrateRel {
-		t.Fatal("installer must quiesce, preserve rollback evidence and detach legacy boot links before explicit Registry migration")
+	if stopRel < 0 || quiescentRel < 0 || promoteRel < 0 || detachRel < 0 || migrateRel < 0 ||
+		stopRel >= quiescentRel || quiescentRel >= promoteRel || promoteRel >= detachRel || detachRel >= migrateRel {
+		t.Fatal("installer must stop and prove runtime quiescence before preserving rollback evidence, detaching boot links and migrating")
 	}
 	if strings.Contains(installer[:activation], "migrate -db \"$DB_PATH\"") {
 		t.Fatal("installer must not migrate the live Registry before the activation stop boundary")
@@ -516,6 +561,31 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	}
 	if strings.Contains(installer, "schema: (4|5)") {
 		t.Fatal("installer backup schema validation must not freeze a historical schema allowlist")
+	}
+	if !strings.Contains(installer, "Could not determine runtime unit state for $unit") {
+		t.Fatal("installer quiescence check must fail closed when systemd cannot determine a unit state")
+	}
+	if strings.Contains(installer, `inactive|failed|unknown|"")`) {
+		t.Fatal("installer quiescence check must not treat an empty systemd state as inactive")
+	}
+
+	rollbackStart := strings.Index(installer, "rollback_runtime() {")
+	if rollbackStart < 0 {
+		t.Fatal("rollback_runtime function is missing")
+	}
+	rollbackTail := installer[rollbackStart:]
+	rollbackEnd := strings.Index(rollbackTail, "\n}\n\nif [ \"$MODE\" = check ]")
+	if rollbackEnd < 0 {
+		t.Fatal("rollback_runtime function boundary is missing")
+	}
+	rollbackBody := rollbackTail[:rollbackEnd]
+	preflightRel := strings.Index(rollbackBody, "validate_rollback_preconditions")
+	rollbackStopRel := strings.Index(rollbackBody, "stop_runtime")
+	rollbackQuiescentRel := strings.Index(rollbackBody, "require_runtime_quiescent")
+	moveCurrentRel := strings.Index(rollbackBody, `mv "$INSTALL_DIR" "$failed"`)
+	if preflightRel < 0 || rollbackStopRel < 0 || rollbackQuiescentRel < 0 || moveCurrentRel < 0 ||
+		preflightRel >= rollbackStopRel || rollbackStopRel >= rollbackQuiescentRel || rollbackQuiescentRel >= moveCurrentRel {
+		t.Fatal("rollback must validate prerequisites, stop, prove quiescence and only then move the current runtime")
 	}
 
 	deployer := readText("scripts/deploy-pi.sh")

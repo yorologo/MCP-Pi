@@ -147,38 +147,53 @@
     </div>
   </form>
 
-  <div class="table-region" role="region" aria-label="Client grants" tabindex="0">
+  <div class="table-region" role="region" aria-label="Client grant scopes" tabindex="0">
     <table id="grants-table" class="data-table w-full" data-admin-table data-search-label="Filter grants..." data-high-impact-toggle="true">
       <thead class="text-slate-400 bg-slate-900/60 border-b border-slate-800 uppercase tracking-wider">
         <tr>
           <th class="py-3 px-4" data-sort-key="target">Target</th>
           <th class="py-3 px-4" data-sort-key="project">Project</th>
-          <th class="py-3 px-4" data-sort-key="capability">Capability</th>
-          <th class="py-3 px-4" data-sort-key="status">Status</th>
+          <th class="py-3 px-4" data-sort-key="capability">Capabilities</th>
+          <th class="py-3 px-4" data-sort-key="status">Enabled</th>
           <th class="py-3 px-4 text-right">Actions</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-800 text-slate-300">
-        {% for grant in grants %}
-        {% set high_impact = '*' in grant.capability or 'target_admin' in grant.capability %}
-        <tr data-high-impact="{% if high_impact %}true{% else %}false{% endif %}" class="hover:bg-slate-900/40 {% if high_impact %}bg-amber-950/10{% endif %}">
-          <td class="py-3 px-4 font-mono">{{ grant.target_id }}</td>
-          <td class="py-3 px-4 font-mono">{% if grant.project_id %}{{ grant.project_id }}{% else %}*{% endif %}</td>
-          <td class="py-3 px-4 font-mono text-indigo-300">
-            {{ grant.capability }}
-            {% if '*' in grant.capability %}<span class="ml-1 rounded border border-amber-800 px-1.5 py-0.5 text-[10px] text-amber-300">WILDCARD</span>{% endif %}
-            {% if 'target_admin' in grant.capability %}<span class="ml-1 rounded border border-rose-800 px-1.5 py-0.5 text-[10px] text-rose-300">ADMIN</span>{% endif %}
+        {% for scope in grant_scopes %}
+        <tr data-grant-scope="{{ scope.target_id }}/{{ scope.project_id }}" data-high-impact="{% if scope.high_impact %}true{% else %}false{% endif %}" class="hover:bg-slate-900/40 {% if scope.high_impact %}bg-amber-950/10{% endif %}">
+          <td class="py-3 px-4 font-mono">{{ scope.target_id }}</td>
+          <td class="py-3 px-4 font-mono">{{ scope.project_id }}</td>
+          <td class="py-3 px-4" data-sort-value="{{ scope.capabilities_label }}">
+            <div class="flex flex-wrap gap-2">
+              {% for capability in scope.capabilities %}
+              <span class="inline-flex items-center gap-1 rounded border border-indigo-900 bg-indigo-950/40 px-2 py-1 font-mono text-xs text-indigo-300">
+                {{ capability }}
+                {% if capability == '*' %}<span class="rounded border border-amber-800 px-1 py-0.5 text-[9px] text-amber-300">WILDCARD</span>{% endif %}
+                {% if capability == 'target_admin' %}<span class="rounded border border-rose-800 px-1 py-0.5 text-[9px] text-rose-300">ADMIN</span>{% endif %}
+              </span>
+              {% endfor %}
+            </div>
           </td>
-          <td class="py-3 px-4">{% if grant.enabled %}<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">ENABLED</span>{% else %}<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950 text-rose-300 border border-rose-800">DISABLED</span>{% endif %}</td>
-          <td class="py-3 px-4 text-right space-x-2">
-            <form method="POST" action="{{ url_for('admin.client_grant_toggle', client.id, grant.id) }}" class="inline">
+          <td class="py-3 px-4" data-sort-value="{{ scope.enabled_state }}">
+            <form method="POST" action="{{ url_for('admin.client_grant_status', client.id, scope.anchor_id) }}" class="inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn-secondary">{% if grant.enabled %}Disable{% else %}Enable{% endif %}</button>
+              {% for capability in scope.capabilities %}
+              <input type="hidden" name="expected_capability" value="{{ capability }}">
+              {% endfor %}
+              <input type="hidden" name="enabled" value="{{ scope.desired_enabled }}">
+              <button type="submit" role="checkbox" aria-checked="{% if scope.enabled_state == 'enabled' %}true{% elif scope.enabled_state == 'mixed' %}mixed{% else %}false{% endif %}" aria-label="{% if scope.enabled_state == 'enabled' %}Disable{% else %}Enable{% endif %} all grants for {{ scope.target_id }} / {{ scope.project_id }}" class="inline-flex min-h-9 items-center gap-2 rounded border px-3 py-1.5 text-xs font-semibold {% if scope.enabled_state == 'enabled' %}border-emerald-800 bg-emerald-950 text-emerald-300{% elif scope.enabled_state == 'mixed' %}border-amber-800 bg-amber-950/60 text-amber-300{% else %}border-slate-700 bg-slate-900 text-slate-400{% endif %}">
+                {% if scope.enabled_state == 'enabled' %}✓ Enabled{% elif scope.enabled_state == 'mixed' %}◐ Mixed{% else %}Disabled{% endif %}
+              </button>
             </form>
-            <a href="{{ url_for('admin.client_grant_edit', client.id, grant.id) }}#grant-form" class="btn-secondary">Edit</a>
-            <form method="POST" action="{{ url_for('admin.client_grant_delete', client.id, grant.id) }}" class="inline">
+          </td>
+          <td class="py-3 px-4 text-right space-x-2">
+            <a href="{{ url_for('admin.client_grant_edit', client.id, scope.anchor_id) }}#grant-form" class="btn-secondary">Edit</a>
+            <form method="POST" action="{{ url_for('admin.client_grant_delete', client.id, scope.anchor_id) }}" class="inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="px-3 py-2 rounded border border-rose-800 bg-rose-950/60 text-rose-300" data-confirm="Delete {{ grant.capability }} grant for {{ client.id }}?">Delete</button>
+              {% for capability in scope.capabilities %}
+              <input type="hidden" name="expected_capability" value="{{ capability }}">
+              {% endfor %}
+              <button type="submit" class="px-3 py-2 rounded border border-rose-800 bg-rose-950/60 text-rose-300" data-confirm="Delete all {{ scope.grant_count }} grant(s) for {{ client.id }} at {{ scope.target_id }} / {{ scope.project_id }}? Capabilities: {{ scope.capabilities_label }}">Delete</button>
             </form>
           </td>
         </tr>

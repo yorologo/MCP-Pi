@@ -101,6 +101,40 @@ func TestCLIBenchmark(t *testing.T) {
 	}
 }
 
+func TestCLIBenchmarkRejectsNonPositiveIterations(t *testing.T) {
+	dbPath := createSeededCLIDatabase(t)
+	for _, value := range []string{"0", "-1"} {
+		if rc := cmdBenchmark([]string{"-db", dbPath, "-n", value}); rc != 2 {
+			t.Fatalf("benchmark -n %s returned %d want 2", value, rc)
+		}
+	}
+}
+
+func TestResolveAdminPortFailsClosedOnInvalidConfiguration(t *testing.T) {
+	t.Setenv("MCP_ADMIN_PORT", "")
+	if got, err := resolveAdminPort(0); err != nil || got != 80 {
+		t.Fatalf("default admin port=(%d,%v) want (80,nil)", got, err)
+	}
+	if got, err := resolveAdminPort(8080); err != nil || got != 8080 {
+		t.Fatalf("flag admin port=(%d,%v) want (8080,nil)", got, err)
+	}
+
+	for _, value := range []string{"abc", "0", "70000"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("MCP_ADMIN_PORT", value)
+			if _, err := resolveAdminPort(0); err == nil {
+				t.Fatalf("MCP_ADMIN_PORT=%q unexpectedly accepted", value)
+			}
+		})
+	}
+	if _, err := resolveAdminPort(-1); err == nil {
+		t.Fatal("negative -port unexpectedly accepted")
+	}
+	if _, err := resolveAdminPort(70000); err == nil {
+		t.Fatal("out-of-range -port unexpectedly accepted")
+	}
+}
+
 func TestCLISetupExistingAdminIsIdempotent(t *testing.T) {
 	dbPath := createSeededCLIDatabase(t)
 	ctx := context.Background()
@@ -132,6 +166,58 @@ func TestCLISetupExistingAdminIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestCLISetupPasswordStdinResetsExistingAdmin(t *testing.T) {
+	dbPath := createSeededCLIDatabase(t)
+	ctx := context.Background()
+	store, err := registry.OpenStore(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldHash, err := admin.GeneratePasswordHash("old-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAdminPassword(ctx, "admin", oldHash); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	t.Setenv("MCP_GATEWAY_HOME", home)
+	stdin, err := os.CreateTemp(t.TempDir(), "password-stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	if _, err := stdin.WriteString("new-password\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	originalStdin := os.Stdin
+	os.Stdin = stdin
+	defer func() { os.Stdin = originalStdin }()
+
+	if rc := cmdSetup([]string{"-db", dbPath, "--admin-user", "admin", "--password-stdin"}); rc != 0 {
+		t.Fatalf("setup --password-stdin returned %d want 0", rc)
+	}
+	store, err = registry.OpenStore(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	user, err := store.GetAdminUser(ctx, "admin")
+	if err != nil || user == nil {
+		t.Fatalf("get admin after reset: user=%+v err=%v", user, err)
+	}
+	if !admin.CheckPasswordHash(user.PasswordHash, "new-password") {
+		t.Fatal("setup --password-stdin did not replace the existing Admin password")
+	}
+}
+
 func TestCLIStatusDoesNotMigrateOutdatedRegistry(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "v4.db")
@@ -160,7 +246,7 @@ func TestCLIStatusDoesNotMigrateOutdatedRegistry(t *testing.T) {
 
 func TestCLIRestorePreservesSupportedLegacySourceSchema(t *testing.T) {
 	ctx := context.Background()
-	for _, version := range []int{4, 5} {
+	for _, version := range registry.UpgradeFromSchemaVersions() {
 		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), fmt.Sprintf("backup-v%d.db", version))
 			db, err := sqliteutil.OpenRaw(ctx, source, true)
@@ -189,6 +275,29 @@ func TestCLIRestorePreservesSupportedLegacySourceSchema(t *testing.T) {
 				t.Fatalf("restore migrated schema to %d want %d", info.SchemaVersion, version)
 			}
 		})
+	}
+}
+
+func TestCLIRestoreRejectsUnsupportedSchemaBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	source := filepath.Join(t.TempDir(), "backup-unsupported.db")
+	db, err := sqliteutil.OpenRaw(ctx, source, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 99; CREATE TABLE marker(v TEXT);"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(t.TempDir(), "restored.db")
+	if rc := cmdRestore([]string{"-db", target, source}); rc == 0 {
+		t.Fatal("restore unexpectedly accepted unsupported schema")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("unsupported restore mutated destination: %v", err)
 	}
 }
 

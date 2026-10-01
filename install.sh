@@ -335,12 +335,36 @@ detach_component_boot_links() {
 }
 
 stop_runtime() {
+    # Stop is best-effort for compatibility with absent/older units; callers
+    # must prove quiescence before any Registry/runtime mutation.
     if systemctl cat mcp-gateway.target >/dev/null 2>&1; then
         systemctl stop mcp-gateway.target 2>/dev/null || true
         systemctl stop mcp-gateway-maintenance.service mcp-gateway-network-recovery.timer mcp-gateway-network-recovery.service 2>/dev/null || true
     else
         systemctl stop mcp-gateway-maintenance.timer mcp-gateway-maintenance.service mcp-gateway-network-recovery.timer mcp-gateway-network-recovery.service mcp-gateway-tunnel mcp-gateway-cloudflared mcp-gateway-gemini mcp-gateway-postboot mcp-gateway-mcp mcp-gateway-admin 2>/dev/null || true
     fi
+}
+
+require_runtime_quiescent() {
+    active=""
+    for unit in $RUNTIME_UNITS; do
+        state=""
+        if state=$(systemctl is-active "$unit" 2>/dev/null); then
+            active="${active}${active:+ }${unit}=${state}"
+            continue
+        fi
+        case "$state" in
+            inactive|failed|unknown) ;;
+            *)
+                echo "Could not determine runtime unit state for $unit" >&2
+                return 1
+                ;;
+        esac
+    done
+    [ -z "$active" ] || {
+        echo "Runtime is not quiescent: $active" >&2
+        return 1
+    }
 }
 
 restart_runtime() {
@@ -389,6 +413,24 @@ restart_runtime() {
     systemctl is-active --quiet mcp-gateway-postboot.service || fail "postboot verification is not active"
 }
 
+validate_rollback_preconditions() {
+    [ -d "$PREVIOUS_DIR" ] || fail "previous installer-managed runtime is missing: $PREVIOUS_DIR"
+    [ -x "$PREVIOUS_DIR/bin/mcp-gateway" ] || fail "previous runtime CLI is missing or not executable: $PREVIOUS_DIR/bin/mcp-gateway"
+    [ -x "$PREVIOUS_DIR/bin/mcp-gateway-adapter" ] || fail "previous runtime adapter is missing or not executable: $PREVIOUS_DIR/bin/mcp-gateway-adapter"
+    [ -d "$UNIT_BACKUP" ] || fail "installer rollback metadata is missing: $UNIT_BACKUP"
+
+    if [ -f "$UNIT_BACKUP/registry.absent" ]; then
+        [ ! -f "$UNIT_BACKUP/registry-backup.path" ] || fail "rollback metadata contains conflicting Registry state"
+        return 0
+    fi
+
+    [ -f "$UNIT_BACKUP/registry-backup.path" ] || fail "rollback Registry metadata is missing"
+    registry_backup=$(cat "$UNIT_BACKUP/registry-backup.path")
+    [ -n "$registry_backup" ] || fail "rollback Registry backup path is empty"
+    [ -s "$registry_backup" ] || fail "rollback Registry backup is missing: $registry_backup"
+    [ -x "$INSTALL_DIR/bin/mcp-gateway-adapter" ] || fail "current Go binary is required to restore Registry"
+}
+
 restore_registry_for_rollback() {
     [ -d "$UNIT_BACKUP" ] || return 0
     if [ -f "$UNIT_BACKUP/registry.absent" ]; then
@@ -404,11 +446,16 @@ restore_registry_for_rollback() {
 
 rollback_runtime() {
     echo "ROLLBACK: restoring previous installer-managed runtime..." >&2
+    validate_rollback_preconditions
     stop_runtime
+    if ! require_runtime_quiescent; then
+        warn "rollback aborted before mutation because runtime services did not stop cleanly; restoring current lifecycle"
+        restart_runtime
+        fail "rollback aborted because runtime services did not stop cleanly"
+    fi
     restore_registry_for_rollback
     failed="${SERVICE_HOME}/mcp-gateway.failed-install.$(date -u +%Y%m%dT%H%M%SZ)"
     [ ! -d "$INSTALL_DIR" ] || mv "$INSTALL_DIR" "$failed"
-    [ -d "$PREVIOUS_DIR" ] || fail "previous installer-managed runtime is missing: $PREVIOUS_DIR"
     mv "$PREVIOUS_DIR" "$INSTALL_DIR"
     restore_system_files
     restart_runtime
@@ -556,6 +603,7 @@ fi
 echo "[5/9] Activating root-owned runtime and migrating Registry with services stopped..."
 stop_runtime
 CONTROL_PLANE_STOPPED=1
+require_runtime_quiescent || fail "runtime services did not stop cleanly; refusing activation"
 rm -rf "$PREVIOUS_DIR"
 [ ! -d "$INSTALL_DIR" ] || mv "$INSTALL_DIR" "$PREVIOUS_DIR"
 promote_rollback_set "$ROLLBACK_STAGE"

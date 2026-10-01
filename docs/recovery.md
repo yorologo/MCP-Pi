@@ -97,7 +97,7 @@ Check ordinary shell/task authorization first, then `target_admin`, Target privi
 
 ### Backup or restore fails
 
-Do not copy a live SQLite database as an ordinary file. Use the Go backup/restore commands and inspect their explicit ownership/free-space/integrity/quiescence errors.
+Do not copy a live SQLite database as an ordinary file. Use the Go backup/restore commands and inspect their explicit filesystem/write, integrity and quiescence errors.
 
 ### Reboot fails
 
@@ -113,7 +113,7 @@ For an installer-managed update:
 
     sudo /home/mcp-gateway/mcp-gateway/install.sh --rollback
 
-Rollback restores the matching pre-install Registry snapshot without migration, previous runtime/system assets and service state, then requires Doctor before reporting `ROLLBACK_VERIFIED`.
+Rollback first validates that the previous runtime, installer rollback metadata and required Registry snapshot are present. It then stops the control plane, proves runtime quiescence before mutation, restores the matching pre-install Registry snapshot without migration, restores previous runtime/system assets and service state, and requires Doctor before reporting `ROLLBACK_VERIFIED`.
 
 If an update was interrupted while rollback metadata was being promoted, invoke the canonical installer again rather than reconstructing state manually; it recovers the last complete rollback set before proceeding.
 

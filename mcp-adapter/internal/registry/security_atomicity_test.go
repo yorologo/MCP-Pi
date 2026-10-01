@@ -488,3 +488,127 @@ func TestSyncGrantScopeAuditedNoopDoesNotRewriteOrAudit(t *testing.T) {
 		t.Fatalf("no-op sync wrote %d grant activities", activities)
 	}
 }
+
+func TestSetGrantScopeEnabledAuditedUpdatesOnlyChangedGrants(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	for _, grant := range []Grant{
+		{ClientID: "c", TargetID: "t", ProjectID: "p", Capability: "read", Enabled: false},
+		{ClientID: "c", TargetID: "t", ProjectID: "p", Capability: "write", Enabled: true},
+	} {
+		if _, err := store.AddGrant(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	changed, err := store.SetGrantScopeEnabledAudited(
+		ctx, "c", "t", "p", []string{"read", "write"}, false,
+		Activity{Actor: "admin", Action: "set_grant_scope_enabled", Success: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed != 1 {
+		t.Fatalf("changed=%d want 1", changed)
+	}
+	grants, err := store.ListGrants(ctx, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range grants {
+		if grant.TargetID == "t" && grant.ProjectID == "p" && grant.Enabled {
+			t.Fatalf("scope still has enabled grant: %+v", grant)
+		}
+	}
+	var activities int
+	if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM activity WHERE action = 'set_grant_enabled'").Scan(&activities); err != nil {
+		t.Fatal(err)
+	}
+	if activities != 1 {
+		t.Fatalf("set status activities=%d want 1", activities)
+	}
+
+	changed, err = store.SetGrantScopeEnabledAudited(
+		ctx, "c", "t", "p", []string{"read", "write"}, false,
+		Activity{Actor: "admin", Action: "set_grant_scope_enabled", Success: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed != 0 {
+		t.Fatalf("no-op changed=%d want 0", changed)
+	}
+	var afterNoop int
+	if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM activity WHERE action = 'set_grant_enabled'").Scan(&afterNoop); err != nil {
+		t.Fatal(err)
+	}
+	if afterNoop != activities {
+		t.Fatalf("no-op wrote activity: before=%d after=%d", activities, afterNoop)
+	}
+}
+
+func TestSetGrantScopeEnabledAuditedRejectsStaleExpectedSet(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	for _, capability := range []string{"read", "write"} {
+		if _, err := store.AddGrant(ctx, Grant{
+			ClientID: "c", TargetID: "t", ProjectID: "p", Capability: capability, Enabled: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	changed, err := store.SetGrantScopeEnabledAudited(
+		ctx, "c", "t", "p", []string{"read"}, false,
+		Activity{Actor: "admin", Action: "set_grant_scope_enabled", Success: true},
+	)
+	if ErrorCode(err) != "GRANT_SCOPE_CONFLICT" {
+		t.Fatalf("changed=%d err=%v code=%q want GRANT_SCOPE_CONFLICT", changed, err, ErrorCode(err))
+	}
+	grants, err := store.ListGrants(ctx, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range grants {
+		if !grant.Enabled {
+			t.Fatalf("stale status mutation changed grant: %+v", grant)
+		}
+	}
+}
+
+func TestSetGrantScopeEnabledAuditedRollsBackWhenAuditFails(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	for _, capability := range []string{"read", "write"} {
+		if _, err := store.AddGrant(ctx, Grant{
+			ClientID: "c", TargetID: "t", ProjectID: "p", Capability: capability, Enabled: false,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		"CREATE TRIGGER block_grant_status_audit BEFORE INSERT ON activity WHEN NEW.action = 'set_grant_enabled' BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := store.SetGrantScopeEnabledAudited(
+		ctx, "c", "t", "p", []string{"read", "write"}, true,
+		Activity{Actor: "admin", Action: "set_grant_scope_enabled", Success: true},
+	)
+	if err == nil {
+		t.Fatal("scope status update succeeded despite failed success audit")
+	}
+	if changed != 0 {
+		t.Fatalf("failed status update reported changed=%d want 0", changed)
+	}
+	grants, err := store.ListGrants(ctx, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range grants {
+		if grant.Enabled {
+			t.Fatalf("failed status update survived rollback: %+v", grant)
+		}
+	}
+}
