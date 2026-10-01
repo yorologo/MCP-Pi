@@ -244,3 +244,94 @@ func TestAddGrantsAuditedCreatesAllGrantsAndActivities(t *testing.T) {
 		t.Fatalf("activity rows=%d want 2", activities)
 	}
 }
+
+func TestTargetEndpointAuditedCASPreservesPrivilegeApproval(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	if err := store.SetPrivilegeApproval(ctx, "t", "ask_always", "c", "p", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	targetID := "t"
+	activity := Activity{
+		Actor:    "system",
+		Action:   "target_endpoint_recovered",
+		TargetID: &targetID,
+		Success:  true,
+		Detail:   "host-a:22 -> host-b:2222",
+	}
+	if err := store.UpdateTargetEndpointAudited(ctx, "t", "host-a", 22, "host-b", 2222, activity); err != nil {
+		t.Fatal(err)
+	}
+
+	target, err := store.GetTarget(ctx, "t", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Host != "host-b" || target.Port != 2222 {
+		t.Fatalf("endpoint=%s:%d want host-b:2222", target.Host, target.Port)
+	}
+	approval, err := store.GetPrivilegeApproval(ctx, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approval == nil {
+		t.Fatal("endpoint-only recovery unexpectedly revoked privilege approval")
+	}
+	var activities int
+	if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM activity WHERE action = 'target_endpoint_recovered'").Scan(&activities); err != nil {
+		t.Fatal(err)
+	}
+	if activities != 1 {
+		t.Fatalf("activity rows=%d want=1", activities)
+	}
+}
+
+func TestTargetEndpointAuditedFailsClosedOnConflict(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	targetID := "t"
+	err := store.UpdateTargetEndpointAudited(ctx, "t", "stale-host", 22, "host-b", 22, Activity{
+		Actor:    "system",
+		Action:   "target_endpoint_recovered",
+		TargetID: &targetID,
+		Success:  true,
+	})
+	if ErrorCode(err) != "TARGET_ENDPOINT_CONFLICT" {
+		t.Fatalf("err=%v code=%q want TARGET_ENDPOINT_CONFLICT", err, ErrorCode(err))
+	}
+	target, err := store.GetTarget(ctx, "t", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Host != "host-a" || target.Port != 22 {
+		t.Fatalf("conflicting CAS mutated endpoint to %s:%d", target.Host, target.Port)
+	}
+}
+
+func TestTargetEndpointAuditedRollsBackWhenAuditFails(t *testing.T) {
+	store := newSecurityTestStore(t)
+	ctx := context.Background()
+	if _, err := store.DB().ExecContext(ctx,
+		"CREATE TRIGGER block_endpoint_audit BEFORE INSERT ON activity WHEN NEW.action = 'target_endpoint_recovered' BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+	); err != nil {
+		t.Fatal(err)
+	}
+	targetID := "t"
+	err := store.UpdateTargetEndpointAudited(ctx, "t", "host-a", 22, "host-b", 22, Activity{
+		Actor:    "system",
+		Action:   "target_endpoint_recovered",
+		TargetID: &targetID,
+		Success:  true,
+	})
+	if err == nil {
+		t.Fatal("endpoint mutation succeeded despite failed success audit")
+	}
+	target, err := store.GetTarget(ctx, "t", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Host != "host-a" || target.Port != 22 {
+		t.Fatalf("endpoint mutation survived failed audit: %s:%d", target.Host, target.Port)
+	}
+}

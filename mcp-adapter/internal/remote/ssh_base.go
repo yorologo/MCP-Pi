@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"mcp-gateway-adapter/internal/discovery"
 	"mcp-gateway-adapter/internal/registry"
 )
 
@@ -23,11 +25,17 @@ const (
 	defaultIdentityRel = ".ssh/mcp_gateway_ed25519"
 )
 
+type targetDiscoverer interface {
+	FindMovedTarget(target discovery.TargetConfig) (*discovery.DiscoveryResult, error)
+}
+
 type SSHTransport struct {
 	SSHBinary      string
 	IdentityFile   string
 	MaxOutputBytes int
 	DefaultTimeout time.Duration
+	Store          *registry.Store
+	Discovery      targetDiscoverer
 }
 
 func NewSSHTransport() *SSHTransport {
@@ -47,11 +55,64 @@ func NewSSHTransport() *SSHTransport {
 	}
 }
 
+func NewSSHTransportWithRecovery(store *registry.Store, targetDiscovery *discovery.TargetDiscovery) *SSHTransport {
+	transport := NewSSHTransport()
+	transport.Store = store
+	transport.Discovery = targetDiscovery
+	return transport
+}
+
+func classifySSHFailure(stderr string) (bool, string) {
+	message := strings.ToLower(stderr)
+	for _, pattern := range []string{
+		"permission denied",
+		"authentication failed",
+		"too many authentication failures",
+	} {
+		if strings.Contains(message, pattern) {
+			return false, "AUTH_FAILURE"
+		}
+	}
+	for _, pattern := range []string{
+		"host key verification failed",
+		"remote host identification has changed",
+		"offending ",
+	} {
+		if strings.Contains(message, pattern) {
+			return true, "ENDPOINT_IDENTITY_MISMATCH"
+		}
+	}
+	for _, pattern := range []string{
+		"connection refused",
+		"connection timed out",
+		"no route to host",
+		"network is unreachable",
+		"host is down",
+		"operation timed out",
+		"could not resolve hostname",
+	} {
+		if strings.Contains(message, pattern) {
+			return true, "NETWORK_CONNECTIVITY_ERROR"
+		}
+	}
+	return false, "OTHER_ERROR"
+}
+
 func (s *SSHTransport) RunCommand(
 	ctx context.Context,
 	target registry.Target,
 	command string,
 	options CommandOptions,
+) (CommandResult, error) {
+	return s.runCommand(ctx, target, command, options, true)
+}
+
+func (s *SSHTransport) runCommand(
+	ctx context.Context,
+	target registry.Target,
+	command string,
+	options CommandOptions,
+	allowRecovery bool,
 ) (CommandResult, error) {
 	timeout := options.Timeout
 	if timeout <= 0 {
@@ -158,6 +219,15 @@ func (s *SSHTransport) RunCommand(
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
+		if allowRecovery && result.ExitCode == 255 {
+			if shouldRecover, reason := classifySSHFailure(result.Stderr); shouldRecover {
+				if recovered, recoveryErr, handled := s.attemptRecovery(
+					ctx, target, command, options, reason,
+				); handled {
+					return recovered, recoveryErr
+				}
+			}
+		}
 		return result, nil
 	}
 	return CommandResult{}, NewError(
@@ -165,6 +235,80 @@ func (s *SSHTransport) RunCommand(
 		fmt.Sprintf("Failed to invoke ssh binary '%s': %v", sshBinary, err),
 		-1,
 	)
+}
+
+func (s *SSHTransport) attemptRecovery(
+	ctx context.Context,
+	target registry.Target,
+	command string,
+	options CommandOptions,
+	triggerReason string,
+) (CommandResult, error, bool) {
+	if s.Store == nil || s.Discovery == nil || strings.TrimSpace(target.ID) == "" {
+		return CommandResult{}, nil, false
+	}
+
+	found, err := s.Discovery.FindMovedTarget(discovery.TargetConfig{
+		ID:       target.ID,
+		Host:     target.Host,
+		Port:     target.Port,
+		SSHAlias: target.SSHAlias,
+		User:     target.User,
+		Platform: target.Platform,
+		Enabled:  target.Enabled,
+	})
+	if err != nil || found == nil || found.Status != "IDENTITY_MATCH" || strings.TrimSpace(found.NewHost) == "" {
+		return CommandResult{}, nil, false
+	}
+	newPort := found.NewPort
+	if newPort <= 0 {
+		newPort = target.Port
+	}
+	if found.NewHost == target.Host && newPort == target.Port {
+		return CommandResult{}, nil, false
+	}
+
+	targetID := target.ID
+	duration := int64(found.DurationMs)
+	detailBytes, _ := json.Marshal(map[string]any{
+		"old_endpoint":      fmt.Sprintf("%s:%d", target.Host, target.Port),
+		"new_endpoint":      fmt.Sprintf("%s:%d", found.NewHost, newPort),
+		"discovery_method":  found.Method,
+		"trigger_reason":    triggerReason,
+		"identity_verified": true,
+		"host_fingerprint":  found.Fingerprint,
+	})
+	activity := registry.Activity{
+		Actor:      "system",
+		Action:     "target_endpoint_recovered",
+		TargetID:   &targetID,
+		DurationMS: &duration,
+		Success:    true,
+		Detail:     string(detailBytes),
+	}
+	if err := s.Store.UpdateTargetEndpointAudited(
+		ctx,
+		target.ID,
+		target.Host,
+		target.Port,
+		found.NewHost,
+		newPort,
+		activity,
+	); err != nil {
+		current, getErr := s.Store.GetTarget(ctx, target.ID, false)
+		if getErr != nil || current.Host != found.NewHost || current.Port != newPort {
+			return CommandResult{}, NewError(
+				"SSH_RECOVERY_FAILED",
+				fmt.Sprintf("verified Target endpoint could not be persisted safely: %v", err),
+				-1,
+			), true
+		}
+	}
+
+	target.Host = found.NewHost
+	target.Port = newPort
+	result, retryErr := s.runCommand(ctx, target, command, options, false)
+	return result, retryErr, true
 }
 
 func (s *SSHTransport) buildSSHArgs(target registry.Target, timeout time.Duration) ([]string, error) {
@@ -182,12 +326,19 @@ func (s *SSHTransport) buildSSHArgs(target registry.Target, timeout time.Duratio
 		return nil, NewError("SSH_FAILED", "Target has no SSH user configured", -1)
 	}
 
-	connectSeconds := int(timeout / time.Second)
+	totalSeconds := int(timeout / time.Second)
+	connectSeconds := totalSeconds
 	if connectSeconds < 1 {
 		connectSeconds = 1
 	}
 	if connectSeconds > 10 {
 		connectSeconds = 10
+	}
+	// Leave a small process-level margin on normal Target probes so OpenSSH can
+	// report a connection timeout (exit 255) before the whole remote command
+	// deadline fires. Short sub-5s operations retain their existing budget.
+	if totalSeconds >= 5 && connectSeconds >= totalSeconds {
+		connectSeconds = totalSeconds - 1
 	}
 
 	identity := strings.TrimSpace(s.IdentityFile)

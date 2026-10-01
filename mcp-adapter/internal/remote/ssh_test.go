@@ -71,6 +71,16 @@ func TestBuildSSHArgsFallsBackToHostAndFailsClosed(t *testing.T) {
 		t.Fatalf("connect timeout not bounded to request: %v", args)
 	}
 
+	args, err = transport.buildSSHArgs(registry.Target{
+		ID: "t", Host: "192.0.2.10", Port: 22, User: "user",
+	}, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(args, "\n"), "ConnectTimeout=9") {
+		t.Fatalf("normal probe must leave process timeout margin: %v", args)
+	}
+
 	if _, err := transport.buildSSHArgs(registry.Target{Host: "192.0.2.10"}, 10*time.Second); ErrorCode(err) != "SSH_FAILED" {
 		t.Fatalf("missing user err=%v code=%q", err, ErrorCode(err))
 	}

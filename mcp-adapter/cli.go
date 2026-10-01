@@ -53,11 +53,18 @@ func resolveDBPath(flagVal string) string {
 }
 
 func initStoreAndCore(dbPath string) (*registry.Store, *core.Core, error) {
+	return initStoreAndCoreWithDiscovery(dbPath, nil)
+}
+
+func initStoreAndCoreWithDiscovery(dbPath string, targetDiscovery *discovery.TargetDiscovery) (*registry.Store, *core.Core, error) {
 	store, err := registry.OpenStore(context.Background(), dbPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open registry store: %w", err)
 	}
-	transport := remote.NewSSHTransport()
+	if targetDiscovery == nil {
+		targetDiscovery = discovery.NewTargetDiscovery("")
+	}
+	transport := remote.NewSSHTransportWithRecovery(store, targetDiscovery)
 	backupDir := filepath.Join(filepath.Dir(dbPath), "backups")
 	c := core.NewWithRemote(store, core.Config{
 		GatewayVersion:     buildinfo.GatewayVersion,
@@ -712,12 +719,11 @@ func cmdServeAdmin(args []string) int {
 	}
 
 	dbPath := resolveDBPath(*dbFlag)
-	store, c, err := initStoreAndCore(dbPath)
+	targetDisc := discovery.NewTargetDiscovery("")
+	store, c, err := initStoreAndCoreWithDiscovery(dbPath, targetDisc)
 	if err != nil {
 		log.Fatalf("Failed to initialize gateway core: %v", err)
 	}
-
-	targetDisc := discovery.NewTargetDiscovery("")
 
 	adminServer, err := admin.NewServer(admin.ServerConfig{
 		Host:         host,

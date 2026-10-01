@@ -17,6 +17,7 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 - Recovery documentation distinguishes appliance Wi-Fi loss from tunnel failure and records the Android/Termux Bionic tracing failure mode that can corrupt SSH transport bytes.
 
 ### Fixed
+- Restores fail-closed dynamic Target endpoint recovery in the Go SSH transport: recognized connection/host-identity failures reuse the pinned-key discovery path, atomically update only the mutable endpoint with audit evidence, and retry exactly once; authentication failures and command timeouts do not trigger discovery.
 - Termux/Shizuku readiness probing now retries transient empty `rish` responses within the existing bounded probe window, reducing false `backend_ready=false` results without weakening fail-closed privilege checks.
 - Doctor now validates the maintenance timer by active lifecycle state under `mcp-gateway.target` instead of requiring a redundant independent enablement symlink.
 - Local HTTP readiness probes remain bounded but allow five seconds, preventing false postboot failure on the constrained ARMv6 appliance under startup load.

@@ -47,7 +47,7 @@ The normal configuration order is:
 
 Target identity is the configured Target plus its pinned SSH host key. Host/IP/port are mutable endpoint data.
 
-After creation, verify the presented SSH host identity and **Check Connection** before considering the Target ready. **Find moved Target** can locate a changed endpoint among known neighbors only when the pinned key matches; it reports a candidate and never silently rewrites trust.
+After creation, verify the presented SSH host identity and **Check Connection** before considering the Target ready. Normal SSH operations can recover a moved endpoint after a recognized connection/host-identity failure only when exactly one candidate presents the already pinned key; discovery checks known neighbors first and then an eligible bounded local private IPv4 subnet. The endpoint update is audited and retried once; trust is never rewritten automatically. **Find moved Target** uses the same discovery mechanism but remains a non-mutating administrative check that only reports the candidate.
 
 ### Project
 

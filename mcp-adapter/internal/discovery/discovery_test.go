@@ -185,3 +185,82 @@ func TestInspectTargetIdentityOffline(t *testing.T) {
 		t.Errorf("expected 1 trusted key, got %d", len(res.TrustedKeys))
 	}
 }
+
+func TestFindMovedTargetSubnetFallbackUsesPinnedIdentity(t *testing.T) {
+	disc := NewTargetDiscovery(filepath.Join(t.TempDir(), "known_hosts"))
+	keyB64, _, fingerprint := generateTestHostKey(t)
+	if err := disc.RewriteKnownHosts("pc", "", "pc ssh-ed25519 "+keyB64); err != nil {
+		t.Fatal(err)
+	}
+	target := TargetConfig{ID: "pc", Host: "192.168.68.85", Port: 22}
+	scan := func(scope string, port int, timeout time.Duration) ([]*HostKeyEntry, error) {
+		if scope != "192.168.68.0/22" {
+			t.Fatalf("scope=%q want 192.168.68.0/22", scope)
+		}
+		return []*HostKeyEntry{
+			ParseKnownHostsLine("[192.168.68.123]:22 ssh-ed25519 " + keyB64),
+		}, nil
+	}
+	got, err := disc.findMovedTargetSubnets(target, []string{"192.168.68.0/22"}, scan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "IDENTITY_MATCH" || got.NewHost != "192.168.68.123" || got.Fingerprint != fingerprint {
+		t.Fatalf("unexpected subnet rediscovery result: %+v", got)
+	}
+	if got.Method != "local-subnet+ssh-keyscan" {
+		t.Fatalf("method=%q", got.Method)
+	}
+}
+
+func TestFindMovedTargetSubnetFallbackFailsClosedOnAmbiguousIdentity(t *testing.T) {
+	disc := NewTargetDiscovery(filepath.Join(t.TempDir(), "known_hosts"))
+	keyB64, _, _ := generateTestHostKey(t)
+	if err := disc.RewriteKnownHosts("pc", "", "pc ssh-ed25519 "+keyB64); err != nil {
+		t.Fatal(err)
+	}
+	target := TargetConfig{ID: "pc", Host: "192.168.68.85", Port: 22}
+	scan := func(string, int, time.Duration) ([]*HostKeyEntry, error) {
+		return []*HostKeyEntry{
+			ParseKnownHostsLine("192.168.68.123 ssh-ed25519 " + keyB64),
+			ParseKnownHostsLine("192.168.68.124 ssh-ed25519 " + keyB64),
+		}, nil
+	}
+	got, err := disc.findMovedTargetSubnets(target, []string{"192.168.68.0/22"}, scan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "AMBIGUOUS_TARGET_IDENTITY" || got.NewHost != "" {
+		t.Fatalf("ambiguous subnet identity must not choose a host: %+v", got)
+	}
+}
+
+func TestHostFromKnownHostsPatternHandlesNonDefaultPort(t *testing.T) {
+	if got := hostFromKnownHostsPattern("[192.168.68.123]:8022"); got != "192.168.68.123" {
+		t.Fatalf("host=%q want 192.168.68.123", got)
+	}
+	if got := hostFromKnownHostsPattern("192.168.68.123"); got != "192.168.68.123" {
+		t.Fatalf("host=%q want unchanged address", got)
+	}
+}
+
+func TestDiscoveryCacheKeyIncludesEndpoint(t *testing.T) {
+	first, err := discoveryCacheKey(TargetConfig{ID: "pc", Host: "192.168.68.85", Port: 22})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := discoveryCacheKey(TargetConfig{ID: "pc", Host: "192.168.68.123", Port: 22})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("cache key must change with endpoint: %q", first)
+	}
+	defaultPort, err := discoveryCacheKey(TargetConfig{ID: "pc", Host: "192.168.68.85"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultPort != first {
+		t.Fatalf("default port cache key=%q want %q", defaultPort, first)
+	}
+}

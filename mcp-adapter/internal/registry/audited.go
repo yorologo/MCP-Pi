@@ -81,6 +81,54 @@ func (s *Store) UpdateTargetAudited(ctx context.Context, target Target, activity
 	})
 }
 
+// UpdateTargetEndpointAudited atomically moves only a Target's mutable SSH
+// endpoint when the caller still observes the expected old endpoint. It does
+// not revoke privilege approvals because Target identity/security context is
+// unchanged; the successful mutation and its Activity record commit together.
+func (s *Store) UpdateTargetEndpointAudited(
+	ctx context.Context,
+	targetID, expectedHost string,
+	expectedPort int,
+	newHost string,
+	newPort int,
+	activity Activity,
+) error {
+	targetID = strings.TrimSpace(targetID)
+	expectedHost = strings.TrimSpace(expectedHost)
+	newHost = strings.TrimSpace(newHost)
+	if _, err := ValidateStableID(targetID); err != nil {
+		return fmt.Errorf("invalid target id: %w", err)
+	}
+	if expectedHost == "" || newHost == "" {
+		return fmt.Errorf("target endpoint host cannot be empty")
+	}
+	if expectedPort <= 0 || expectedPort > 65535 || newPort <= 0 || newPort > 65535 {
+		return fmt.Errorf("target endpoint port must be between 1 and 65535")
+	}
+
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `
+UPDATE targets
+SET host = ?, port = ?
+WHERE id = ? AND host = ? AND port = ?
+`, newHost, newPort, targetID, expectedHost, expectedPort)
+		if err != nil {
+			return fmt.Errorf("update target endpoint: %w", err)
+		}
+		rows, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("inspect target endpoint update: %w", err)
+		}
+		if rows != 1 {
+			return &LookupError{
+				Code:    "TARGET_ENDPOINT_CONFLICT",
+				Message: fmt.Sprintf("target '%s' endpoint changed concurrently or no longer exists", targetID),
+			}
+		}
+		return recordActivityExec(ctx, tx, activity)
+	})
+}
+
 // UpdateProjectAudited updates Project permissions/state, revokes approvals
 // scoped to that Project and records the successful mutation atomically.
 func (s *Store) UpdateProjectAudited(ctx context.Context, project Project, activity Activity) error {

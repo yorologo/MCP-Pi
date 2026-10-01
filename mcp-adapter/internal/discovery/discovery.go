@@ -119,10 +119,18 @@ func ParseKnownHostsLine(line string) *HostKeyEntry {
 }
 
 // TargetDiscovery manages host-key pinning and target discovery.
+const (
+	defaultDiscoveryCooldown = 10 * time.Second
+	maxDiscoveryIPv4Hosts    = 2048
+)
+
 type TargetDiscovery struct {
 	KnownHostsPath string
+	Cooldown       time.Duration
 	mu             sync.Mutex
 	khMu           sync.Mutex
+	lastAttempt    map[string]time.Time
+	lastResult     map[string]DiscoveryResult
 }
 
 // NewTargetDiscovery initializes a TargetDiscovery with the specified known_hosts path.
@@ -138,6 +146,9 @@ func NewTargetDiscovery(knownHostsPath string) *TargetDiscovery {
 	}
 	return &TargetDiscovery{
 		KnownHostsPath: knownHostsPath,
+		Cooldown:       defaultDiscoveryCooldown,
+		lastAttempt:    make(map[string]time.Time),
+		lastResult:     make(map[string]DiscoveryResult),
 	}
 }
 
@@ -490,8 +501,54 @@ func (d *TargetDiscovery) RemoveTrustedKey(target TargetConfig) (*TargetIdentity
 	return d.InspectTargetIdentity(target)
 }
 
+func discoveryCacheKey(target TargetConfig) (string, error) {
+	targetID, err := validateKnownHostsName(target.ID)
+	if err != nil {
+		return "", err
+	}
+	port := target.Port
+	if port <= 0 {
+		port = 22
+	}
+	return fmt.Sprintf("%s|%s:%d", targetID, strings.TrimSpace(target.Host), port), nil
+}
+
 func (d *TargetDiscovery) FindMovedTarget(target TargetConfig) (*DiscoveryResult, error) {
-	return d.findMovedTarget(target, GetKernelNeighbors(), ProbePort, d.GetRemoteHostKeys)
+	cacheKey, err := discoveryCacheKey(target)
+	if err != nil {
+		return nil, err
+	}
+
+	started := time.Now()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	cooldown := d.Cooldown
+	if cooldown <= 0 {
+		cooldown = defaultDiscoveryCooldown
+	}
+	if previousAt, ok := d.lastAttempt[cacheKey]; ok && time.Since(previousAt) < cooldown {
+		if previous, ok := d.lastResult[cacheKey]; ok {
+			cached := previous
+			cached.Method = "cached:" + previous.Method
+			cached.DurationMs = int(time.Since(started).Milliseconds())
+			return &cached, nil
+		}
+	}
+
+	d.lastAttempt[cacheKey] = time.Now()
+	result, err := d.findMovedTarget(target, GetKernelNeighbors(), ProbePort, d.GetRemoteHostKeys)
+	if err != nil {
+		return nil, err
+	}
+	if result.Status == "TARGET_NOT_FOUND" {
+		result, err = d.findMovedTargetSubnets(target, GetActivePrivateIPv4Subnets(target.Host), d.GetRemoteHostKeys)
+		if err != nil {
+			return nil, err
+		}
+	}
+	d.lastResult[cacheKey] = *result
+	return result, nil
 }
 
 func (d *TargetDiscovery) findMovedTarget(
@@ -585,6 +642,158 @@ func (d *TargetDiscovery) findMovedTarget(
 	}
 }
 
+func (d *TargetDiscovery) findMovedTargetSubnets(
+	target TargetConfig,
+	subnets []string,
+	scan func(string, int, time.Duration) ([]*HostKeyEntry, error),
+) (*DiscoveryResult, error) {
+	started := time.Now()
+	targetID, err := validateKnownHostsName(target.ID)
+	if err != nil {
+		return nil, err
+	}
+	alias := strings.TrimSpace(target.SSHAlias)
+	if alias != "" {
+		if _, err := validateKnownHostsName(alias); err != nil {
+			return nil, err
+		}
+	}
+	trusted, err := d.GetCanonicalKeys(targetID, alias)
+	if err != nil {
+		return nil, err
+	}
+	if len(trusted) == 0 {
+		return nil, errors.New("Target has no pinned SSH identity; safe rediscovery is unavailable")
+	}
+
+	port := target.Port
+	if port <= 0 {
+		port = 22
+	}
+	if port > 65535 {
+		return nil, errors.New("target SSH port is invalid")
+	}
+
+	trustedFP := make(map[string]struct{}, len(trusted))
+	for _, key := range trusted {
+		trustedFP[key.Fingerprint] = struct{}{}
+	}
+
+	matches := make(map[string]string)
+	for _, subnet := range subnets {
+		keys, err := scan(subnet, port, 2*time.Second)
+		if err != nil && len(keys) == 0 {
+			continue
+		}
+		for _, key := range keys {
+			if _, ok := trustedFP[key.Fingerprint]; !ok {
+				continue
+			}
+			for _, pattern := range key.Patterns {
+				host := hostFromKnownHostsPattern(pattern)
+				ip := net.ParseIP(host)
+				if ip == nil || ip.To4() == nil || host == strings.TrimSpace(target.Host) {
+					continue
+				}
+				matches[host] = key.Fingerprint
+			}
+		}
+	}
+
+	result := &DiscoveryResult{
+		NewPort:    port,
+		Method:     "local-subnet+ssh-keyscan",
+		DurationMs: int(time.Since(started).Milliseconds()),
+	}
+	if len(matches) == 0 {
+		result.Status = "TARGET_NOT_FOUND"
+		return result, nil
+	}
+	if len(matches) > 1 {
+		result.Status = "AMBIGUOUS_TARGET_IDENTITY"
+		result.Error = "multiple local endpoints present the pinned SSH identity"
+		return result, nil
+	}
+	for host, fingerprint := range matches {
+		result.Status = "IDENTITY_MATCH"
+		result.NewHost = host
+		result.Fingerprint = fingerprint
+	}
+	return result, nil
+}
+
+func hostFromKnownHostsPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if strings.HasPrefix(pattern, "[") {
+		if host, _, err := net.SplitHostPort(pattern); err == nil {
+			return strings.Trim(host, "[]")
+		}
+	}
+	return pattern
+}
+
+// GetActivePrivateIPv4Subnets returns directly attached RFC1918 IPv4 networks
+// small enough for bounded on-demand discovery. If the stale endpoint belongs
+// to one of the local networks, only that network is searched.
+func GetActivePrivateIPv4Subnets(currentHost string) []string {
+	currentIP := net.ParseIP(strings.TrimSpace(currentHost))
+	if currentIP != nil {
+		currentIP = currentIP.To4()
+	}
+
+	all := make(map[string]struct{})
+	preferred := make(map[string]struct{})
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ip, network, err := net.ParseCIDR(addr.String())
+			if err != nil {
+				continue
+			}
+			ip4 := ip.To4()
+			if ip4 == nil || !ip4.IsPrivate() {
+				continue
+			}
+			ones, bits := network.Mask.Size()
+			if bits != 32 || ones < 21 || ones > 32 {
+				continue
+			}
+			hostBits := bits - ones
+			hostCount := 1 << hostBits
+			if hostCount > maxDiscoveryIPv4Hosts {
+				continue
+			}
+			network.IP = ip4.Mask(network.Mask)
+			cidr := network.String()
+			all[cidr] = struct{}{}
+			if currentIP != nil && network.Contains(currentIP) {
+				preferred[cidr] = struct{}{}
+			}
+		}
+	}
+
+	selected := all
+	if len(preferred) > 0 {
+		selected = preferred
+	}
+	result := make([]string, 0, len(selected))
+	for subnet := range selected {
+		result = append(result, subnet)
+	}
+	sort.Strings(result)
+	return result
+}
+
 // ProbePort checks if an IP:port is reachable via TCP with a timeout.
 func ProbePort(ip string, port int, timeout time.Duration) bool {
 	if timeout <= 0 {
@@ -599,7 +808,7 @@ func ProbePort(ip string, port int, timeout time.Duration) bool {
 	return true
 }
 
-// GetKernelNeighbors reads kernel ARP table /proc/net/arp or parses ip neigh.
+// GetKernelNeighbors reads the Linux kernel ARP cache for fast-path candidates.
 func GetKernelNeighbors() []string {
 	var ips []string
 	f, err := os.Open("/proc/net/arp")

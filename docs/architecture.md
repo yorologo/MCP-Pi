@@ -54,6 +54,8 @@ Missing Core/Registry state never falls back to another implementation.
 
 Unix-like Targets use native POSIX utilities over pinned SSH; Windows Targets use PowerShell. Target ID plus pinned SSH host key is identity. Address/port are endpoint data.
 
+When OpenSSH reports a recognized connection failure or host-identity mismatch, the transport may rediscover the same pinned identity among kernel neighbors and then a bounded directly attached private IPv4 subnet. Exactly one fingerprint match permits an audited compare-and-swap endpoint update followed by one retry. Authentication failures, command execution timeouts, missing pins, ambiguous matches and replacement host keys fail closed without changing trust.
+
 Structured filesystem mutation validates Project root, canonical path, symlink/reparse state, bounds/conflicts and audit availability. It never silently degrades into trusted shell.
 
 Privilege is a second authorization gate over an otherwise authorized execution; its security semantics are documented in [security.md](security.md).

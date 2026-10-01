@@ -963,8 +963,8 @@ func (s *Server) handleTargetRediscover(w http.ResponseWriter, r *http.Request, 
 		s.RecordAudit(r, "rediscover_target", targetID, "", false, "AMBIGUOUS_TARGET_IDENTITY", result.Error, false)
 		sess.Flash("Rediscovery found more than one endpoint presenting the pinned SSH identity. No Target change was made.", "danger")
 	default:
-		s.RecordAudit(r, "rediscover_target", targetID, "", false, "TARGET_NOT_FOUND", "Pinned SSH identity not found among current kernel neighbors", false)
-		sess.Flash("Pinned SSH identity was not found among currently known network neighbors. No Target change was made.", "warning")
+		s.RecordAudit(r, "rediscover_target", targetID, "", false, "TARGET_NOT_FOUND", "Pinned SSH identity not found among known neighbors or eligible bounded local subnets", false)
+		sess.Flash("Pinned SSH identity was not found among known neighbors or eligible bounded local subnets. No Target change was made.", "warning")
 	}
 
 	http.Redirect(w, r, fmt.Sprintf("/targets/%s/edit", targetID), http.StatusFound)
