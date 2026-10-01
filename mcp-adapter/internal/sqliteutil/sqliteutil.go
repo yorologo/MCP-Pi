@@ -133,7 +133,11 @@ func Inspect(ctx context.Context, path string) (FileInfo, error) {
 	if path == "." || path == "" {
 		return FileInfo{}, fmt.Errorf("database path is required")
 	}
-	f, err := os.Open(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("resolve database path: %w", err)
+	}
+	f, err := os.Open(abs)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -147,10 +151,17 @@ func Inspect(ctx context.Context, path string) (FileInfo, error) {
 		return FileInfo{}, closeErr
 	}
 
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
+	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
+	q := u.Query()
+	q.Set("mode", "ro")
+	q.Set("_busy_timeout", "5000")
+	u.RawQuery = q.Encode()
+	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return FileInfo{}, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	defer db.Close()
 	var integrity string
 	if err := db.QueryRowContext(ctx, "PRAGMA integrity_check;").Scan(&integrity); err != nil {
