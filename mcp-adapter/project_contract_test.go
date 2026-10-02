@@ -562,10 +562,17 @@ func TestLifecyclePreservesRollbackRegistryBeforeMigration(t *testing.T) {
 	if strings.Contains(installer, "schema: (4|5)") {
 		t.Fatal("installer backup schema validation must not freeze a historical schema allowlist")
 	}
-	if !strings.Contains(installer, "Could not determine runtime unit state for $unit") {
-		t.Fatal("installer quiescence check must fail closed when systemd cannot determine a unit state")
+	for _, required := range []string{
+		`systemctl show "$unit" -p LoadState --value`,
+		`systemctl show "$unit" -p ActiveState --value`,
+		"Runtime did not quiesce within 30s",
+		"Could not determine runtime unit state for $unit",
+	} {
+		if !strings.Contains(installer, required) {
+			t.Fatalf("installer bounded quiescence check missing %q", required)
+		}
 	}
-	if strings.Contains(installer, `inactive|failed|unknown|"")`) {
+	if strings.Contains(installer, `inactive|failed|unknown|""`) {
 		t.Fatal("installer quiescence check must not treat an empty systemd state as inactive")
 	}
 

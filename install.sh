@@ -346,25 +346,39 @@ stop_runtime() {
 }
 
 require_runtime_quiescent() {
-    active=""
-    for unit in $RUNTIME_UNITS; do
-        state=""
-        if state=$(systemctl is-active "$unit" 2>/dev/null); then
-            active="${active}${active:+ }${unit}=${state}"
-            continue
-        fi
-        case "$state" in
-            inactive|failed|unknown) ;;
-            *)
-                echo "Could not determine runtime unit state for $unit" >&2
+    attempts=0
+    while [ "$attempts" -lt 30 ]; do
+        active=""
+        for unit in $RUNTIME_UNITS; do
+            load_state=$(systemctl show "$unit" -p LoadState --value 2>/dev/null) || {
+                echo "Could not query systemd load state for $unit" >&2
                 return 1
-                ;;
-        esac
+            }
+            [ "$load_state" = not-found ] && continue
+
+            state=$(systemctl show "$unit" -p ActiveState --value 2>/dev/null) || {
+                echo "Could not query systemd active state for $unit" >&2
+                return 1
+            }
+            case "$state" in
+                inactive|failed) ;;
+                active|activating|deactivating|reloading|maintenance|refreshing)
+                    active="${active}${active:+ }${unit}=${state}"
+                    ;;
+                *)
+                    echo "Could not determine runtime unit state for $unit: load=$load_state active=${state:-empty}" >&2
+                    return 1
+                    ;;
+            esac
+        done
+
+        [ -z "$active" ] && return 0
+        attempts=$((attempts + 1))
+        [ "$attempts" -lt 30 ] && sleep 1
     done
-    [ -z "$active" ] || {
-        echo "Runtime is not quiescent: $active" >&2
-        return 1
-    }
+
+    echo "Runtime did not quiesce within 30s: $active" >&2
+    return 1
 }
 
 restart_runtime() {
