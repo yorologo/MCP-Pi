@@ -4,6 +4,8 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 
 ## Unreleased
 
+## 1.6.9
+
 ### Admin / Grants
 - Client Grants now present one row per exact Client/Target/Project access scope, with grouped capability badges, a tri-state scope Enabled control, and single Edit/Delete actions while preserving one persisted Grant per capability.
 - Scope status changes and Delete are transactional, reject stale capability sets, preserve granular audit evidence, and do not introduce a Registry migration or new authorization path.
@@ -13,7 +15,7 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 - Admin timestamps and date filters continue to use the configured display zone; audit storage remains UTC.
 
 ### Reliability / lifecycle
-- Installer rollback now validates its previous runtime/metadata/Registry prerequisites before stopping the appliance, and install/update/rollback prove systemd runtime quiescence before Registry or runtime mutation.
+- Installer rollback now validates its previous runtime/metadata/Registry prerequisites before stopping the appliance, and install/update/rollback wait up to 30 seconds for transient systemd deactivation states before requiring proven runtime quiescence ahead of Registry or runtime mutation.
 - Verified backup integrity is enforced by the shared SQLite backup primitive; gateway backup no longer reports success when final audit evidence cannot be persisted.
 - Registry restore now reuses the Registry migration compatibility authority instead of maintaining a separate historical schema allowlist.
 - Interactive first-time CLI setup requires matching password confirmation; invalid Admin port configuration and non-positive benchmark iterations now fail explicitly instead of silently falling back or panicking.
