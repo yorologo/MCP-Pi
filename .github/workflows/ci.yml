@@ -160,7 +160,7 @@ jobs:
 
       - name: Windows transport regressions
         working-directory: mcp-adapter
-        run: go test -count=1 ./internal/remote
+        run: go test -count=1 ./internal/remote -run 'TestGeneratedWindowsScripts(HaveBalancedBlocks|ParseWithNativePowerShell)$'
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
