@@ -56,9 +56,9 @@ Unix-like Targets use native POSIX utilities over pinned SSH; Windows Targets us
 
 When OpenSSH reports a recognized connection failure or host-identity mismatch, the transport may rediscover the same pinned identity among kernel neighbors and then a bounded directly attached private IPv4 subnet. Exactly one fingerprint match permits an audited compare-and-swap endpoint update followed by one retry. Authentication failures, command execution timeouts, missing pins, ambiguous matches and replacement host keys fail closed without changing trust.
 
-Structured filesystem mutation validates Project root, canonical path, symlink/reparse state, bounds/conflicts and audit availability. It never silently degrades into trusted shell.
+Structured filesystem mutation validates Project root, canonical path, symlink/reparse state, bounds/conflicts and audit availability. It never silently degrades into trusted shell. Windows path probes use native PowerShell literal-path access and preserve the distinction between a missing path and an inaccessible path; generated PowerShell continues to use the existing UTF-16LE -EncodedCommand transport rather than a second execution mechanism.
 
-Privilege is a second authorization gate over an otherwise authorized execution; its security semantics are documented in [security.md](security.md).
+Privilege is a second authorization gate over an otherwise authorized execution; its security semantics are documented in [security.md](security.md). Trusted shell authorization uses a focused effective-privilege probe (UID/EUID on Unix-like Targets and the effective Windows token on Windows) before policy evaluation. Full Target inventory remains a status/diagnostic concern and is not a prerequisite for ordinary privilege=standard execution. Backend verification is performed only when elevated execution is requested or the transport is already elevated and must be guarded.
 
 ## Runtime and Registry
 

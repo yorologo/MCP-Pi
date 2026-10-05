@@ -35,6 +35,21 @@ func (f *fakeRemote) ProbeFacts(_ context.Context, _ registry.Target, _ bool, _ 
 	return map[string]any{"probe_status": "ok", "arch": "armv6l"}, nil
 }
 
+func (f *fakeRemote) ProbePrivilege(_ context.Context, _ registry.Target, _ bool, _ bool, _ time.Duration) (map[string]any, error) {
+	return map[string]any{
+		"probe_status": "ok",
+		"privilege": map[string]any{
+			"current_level":              "standard",
+			"maximum_level":              "standard",
+			"backend":                    nil,
+			"backend_ready":              false,
+			"transport_already_elevated": false,
+			"shell_can_elevate":          false,
+			"independent_elevator":       nil,
+		},
+	}, nil
+}
+
 func (f *fakeRemote) ResolveCanonicalPath(_ context.Context, _ registry.Target, candidatePath string, _ time.Duration) (string, error) {
 	f.lastCanonicalCandidate = candidatePath
 	if strings.Contains(candidatePath, "escape") {

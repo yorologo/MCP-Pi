@@ -53,8 +53,8 @@ func (c *Core) authorizeExecutionPrivilege(
 		state.PolicyName = "never"
 	}
 
-	includeBootID := state.PolicyName == "ask_once_per_boot"
-	facts, err := transport.ProbeFacts(ctx, target, includeBootID, privilegeRequest == "required", 10*time.Second)
+	includeBootID := state.PolicyName == "ask_once_per_boot" && privilegeRequest == "required"
+	facts, err := transport.ProbePrivilege(ctx, target, includeBootID, privilegeRequest == "required", 10*time.Second)
 	if err != nil || facts == nil || facts["probe_status"] != "ok" {
 		reason := "Target privilege probe failed"
 		if facts != nil {
@@ -90,9 +90,27 @@ func (c *Core) authorizeExecutionPrivilege(
 	state.ShellCanElevate, _ = privilegeInfo["shell_can_elevate"].(bool)
 	state.IndependentElevator, _ = privilegeInfo["independent_elevator"].(string)
 	state.TransportAlreadyElevated = state.CurrentLevel == "root" || state.CurrentLevel == "administrator"
+	bootID, _ := facts["boot_id"].(string)
 
 	if privilegeRequest != "required" && !state.TransportAlreadyElevated {
 		return state, nil
+	}
+
+	if state.PolicyName == "ask_once_per_boot" && strings.TrimSpace(bootID) == "" {
+		bootFacts, bootErr := transport.ProbePrivilege(ctx, target, true, false, 10*time.Second)
+		if bootErr != nil || bootFacts == nil || bootFacts["probe_status"] != "ok" {
+			reason := "Target boot identity probe failed"
+			if bootFacts != nil {
+				if r, ok := bootFacts["reason"].(string); ok && r != "" {
+					reason = r
+				}
+			}
+			if bootErr != nil {
+				reason = fmt.Sprintf("Target boot identity probe failed: %v", bootErr)
+			}
+			return state, &executionPrivilegeError{Code: "PRIVILEGE_STATUS_UNAVAILABLE", Message: reason}
+		}
+		bootID, _ = bootFacts["boot_id"].(string)
 	}
 
 	state.Guarded = true
@@ -122,7 +140,6 @@ func (c *Core) authorizeExecutionPrivilege(
 	}
 
 	if state.PolicyName != "always_allow" {
-		bootID, _ := facts["boot_id"].(string)
 		if state.PolicyName == "ask_once_per_boot" && strings.TrimSpace(bootID) == "" {
 			return state, &executionPrivilegeError{
 				Code:    "PRIVILEGE_BOOT_ID_UNAVAILABLE",

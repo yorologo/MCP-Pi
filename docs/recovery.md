@@ -91,6 +91,15 @@ Check client enablement, scoped Grants and **Check Effective Access**. `tools/li
 
 Confirm the relevant Project/Grant and global switch instead of bypassing the denial; see [configuration.md](configuration.md) and [security.md](security.md).
 
+### Windows Project path missing or inaccessible
+
+Treat NOT_FOUND and PERMISSION_DENIED as different failures. NOT_FOUND means the path probe could not resolve an item; PERMISSION_DENIED means the SSH identity reached the Target but Windows denied access to the requested path or its parent. Fix NTFS access at the narrowest scope required by the Project instead of broadening the SSH account or making it Administrator.
+When available, target_status facts expose the effective Windows identity together with the observed HOME and USERPROFILE paths; use those values as diagnostic evidence rather than rewriting the host automatically.
+
+For a dedicated standard SSH account whose Project lives under another user's profile, grant only directory traversal on required parent directories and the Project's intended read/write rights on the Project root. Do not grant access to the whole profile.
+
+If Win32-OpenSSH accepts the account but its server log shows a relative AuthorizedKeysFile being resolved under the wrong home (for example C:\WINDOWS\.ssh\authorized_keys), first verify the offered public-key fingerprint and the host log. A host-side Match User <account> with an absolute AuthorizedKeysFile C:/Users/<account>/.ssh/authorized_keys is a recovery workaround for that proven condition, not a default MCP-Pi configuration. Validate sshd_config before restarting sshd.
+
 ### Privileged Target command denied
 
 Check ordinary shell/task authorization first, then `target_admin`, Target privilege policy, approval/boot identity and the verified privilege backend.

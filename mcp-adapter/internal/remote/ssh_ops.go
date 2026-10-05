@@ -15,6 +15,17 @@ import (
 	"mcp-gateway-adapter/internal/registry"
 )
 
+func windowsResolveCanonicalPathScript(candidatePath string) string {
+	return "$ErrorActionPreference='Stop';$p=" + powerShellQuote(candidatePath) + ";" +
+		"try{$item=Get-Item -LiteralPath $p -Force -ErrorAction Stop}" +
+		"catch [System.Management.Automation.ItemNotFoundException]{Write-Output 'MCPERR|NOT_FOUND|Path does not exist';exit 2}" +
+		"catch [System.UnauthorizedAccessException]{Write-Output 'MCPERR|PERMISSION_DENIED|Access denied to path';exit 25}" +
+		"catch{if($_.Exception -is [System.UnauthorizedAccessException] -or $_.Exception.InnerException -is [System.UnauthorizedAccessException]){Write-Output 'MCPERR|PERMISSION_DENIED|Access denied to path';exit 25};" +
+		"Write-Output ('MCPERR|SSH_FAILED|Canonical path probe failed: '+$_.Exception.Message);exit 26};" +
+		"if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){Write-Output 'MCPERR|SYMLINK_WRITE_DENIED|Reparse-point paths are not accepted as canonical roots on Windows';exit 6};" +
+		"[IO.Path]::GetFullPath($item.FullName)"
+}
+
 func (s *SSHTransport) ResolveCanonicalPath(
 	ctx context.Context,
 	target registry.Target,
@@ -23,33 +34,28 @@ func (s *SSHTransport) ResolveCanonicalPath(
 ) (string, error) {
 	var command string
 	if isWindowsTarget(target) {
-		script := "$p=" + powerShellQuote(candidatePath) + ";" +
-			"if(-not (Test-Path -LiteralPath $p)){exit 2};" +
-			"$item=Get-Item -LiteralPath $p -Force;" +
-			"if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){exit 6};" +
-			"[IO.Path]::GetFullPath($item.FullName)"
-		command = buildPowerShellCommand(script)
+		command = buildPowerShellCommand(windowsResolveCanonicalPathScript(candidatePath))
 	} else {
-		command = "p=" + shellQuote(candidatePath) + `; if [ ! -e "$p" ] && [ ! -L "$p" ]; then exit 2; fi; realpath -e -- "$p"`
+		command = "p=" + shellQuote(candidatePath) + "; if [ ! -e \"$p\" ] && [ ! -L \"$p\" ]; then exit 2; fi; realpath -e -- \"$p\""
 	}
 	result, err := s.RunCommand(ctx, target, command, CommandOptions{Timeout: timeout})
 	if err != nil {
 		return "", err
 	}
-	switch result.ExitCode {
-	case 0:
-		canonical := lastNonEmptyLine(result.Stdout)
-		if canonical == "" {
-			return "", NewError("SSH_FAILED", "Canonical path probe returned no path", 0)
+	if !result.OK() {
+		if isWindowsTarget(target) {
+			return "", structuredRemoteError(result, "Unable to resolve canonical path on target")
 		}
-		return canonical, nil
-	case 2:
-		return "", NewError("NOT_FOUND", "Path does not exist: "+candidatePath, result.ExitCode)
-	case 6:
-		return "", NewError("SYMLINK_WRITE_DENIED", "Reparse-point paths are not accepted as canonical roots on Windows: "+candidatePath, result.ExitCode)
-	default:
+		if result.ExitCode == 2 {
+			return "", NewError("NOT_FOUND", "Path does not exist: "+candidatePath, result.ExitCode)
+		}
 		return "", NewError("SSH_FAILED", nonEmptyRemote(result.Stderr, "Unable to resolve canonical path on target"), result.ExitCode)
 	}
+	canonical := lastNonEmptyLine(result.Stdout)
+	if canonical == "" {
+		return "", NewError("SSH_FAILED", "Canonical path probe returned no path", 0)
+	}
+	return canonical, nil
 }
 
 func (s *SSHTransport) ListDirectory(

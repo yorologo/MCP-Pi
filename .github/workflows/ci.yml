@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   validate:
+    needs: windows-transport
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -145,6 +146,21 @@ jobs:
 
           (cd "$root" && sha256sum -c SHA256SUMS)
           sha256sum "$pkg"
+
+
+  windows-transport:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: mcp-adapter/go.mod
+          cache-dependency-path: mcp-adapter/go.sum
+
+      - name: Windows transport regressions
+        working-directory: mcp-adapter
+        run: go test -count=1 ./internal/remote
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

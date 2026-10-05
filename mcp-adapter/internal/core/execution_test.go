@@ -18,6 +18,8 @@ type executionFakeRemote struct {
 	lastEnv                map[string]string
 	facts                  map[string]any
 	factsErr               error
+	factsCalls             int
+	privilegeCalls         int
 	verifyPrivilegeBackend bool
 	runErr                 error
 	runResult              remote.CommandResult
@@ -34,6 +36,31 @@ func (f *executionFakeRemote) RunCommand(_ context.Context, _ registry.Target, c
 }
 
 func (f *executionFakeRemote) ProbeFacts(_ context.Context, _ registry.Target, _ bool, verifyPrivilegeBackend bool, _ time.Duration) (map[string]any, error) {
+	f.factsCalls++
+	f.verifyPrivilegeBackend = verifyPrivilegeBackend
+	if f.factsErr != nil {
+		return nil, f.factsErr
+	}
+	if f.facts != nil {
+		return f.facts, nil
+	}
+	return map[string]any{
+		"probe_status": "ok",
+		"boot_id":      "boot-test-1",
+		"privilege": map[string]any{
+			"current_level":              "standard",
+			"maximum_level":              "root",
+			"backend":                    "shizuku",
+			"backend_ready":              true,
+			"transport_already_elevated": false,
+			"shell_can_elevate":          false,
+			"independent_elevator":       nil,
+		},
+	}, nil
+}
+
+func (f *executionFakeRemote) ProbePrivilege(_ context.Context, _ registry.Target, _ bool, verifyPrivilegeBackend bool, _ time.Duration) (map[string]any, error) {
+	f.privilegeCalls++
 	f.verifyPrivilegeBackend = verifyPrivilegeBackend
 	if f.factsErr != nil {
 		return nil, f.factsErr
@@ -175,6 +202,12 @@ func TestStandardRunCommandDoesNotDependOnPrivilegeBackendReadiness(t *testing.T
 	}
 	if fake.verifyPrivilegeBackend {
 		t.Fatal("standard execution requested active privilege-backend verification")
+	}
+	if fake.factsCalls != 0 {
+		t.Fatalf("standard execution used full facts probe %d time(s)", fake.factsCalls)
+	}
+	if fake.privilegeCalls == 0 {
+		t.Fatal("standard execution did not use focused privilege probe")
 	}
 }
 

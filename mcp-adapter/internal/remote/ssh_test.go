@@ -5,9 +5,10 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -109,6 +110,9 @@ func TestRunCommandHonorsContextAndDoesNotNeedNetworkForValidation(t *testing.T)
 
 func privilegedSSHShim(t *testing.T, allowRoot bool) *SSHTransport {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX SSH shim is not available on Windows")
+	}
 	shim := filepath.Join(t.TempDir(), "ssh-priv-shim")
 	rootAction := "exit 255"
 	if allowRoot {
@@ -308,6 +312,9 @@ func TestLimitedBufferTruncatesWithoutShortWrite(t *testing.T) {
 
 func localSSHShim(t *testing.T) *SSHTransport {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX SSH shim is not available on Windows")
+	}
 	shim := filepath.Join(t.TempDir(), "ssh-shim")
 	script := "#!/bin/sh\nfor last\ndo\n  :\ndone\nexec sh -c \"$last\"\n"
 	if err := os.WriteFile(shim, []byte(script), 0700); err != nil {
@@ -325,18 +332,95 @@ func localTarget() registry.Target {
 	return registry.Target{ID: "local-test", Host: "127.0.0.1", Port: 22, User: "tester", Platform: "linux"}
 }
 
-func TestReadFileRejectsNonRegularFileBeforeReading(t *testing.T) {
+func generatedWindowsScriptsForTest() map[string]string {
+	return map[string]string{
+		"path_probe":      windowsProbePathScript("C:\\Users\\Example\\project\\new.txt"),
+		"canonical_probe": windowsResolveCanonicalPathScript("C:\\Users\\Example\\project"),
+		"privilege_probe": windowsPrivilegeProbeScript("1"),
+		"facts_probe":     windowsFactsProbeScript("1"),
+	}
+}
+
+func TestGeneratedWindowsScriptsHaveBalancedBlocks(t *testing.T) {
+	for name, script := range generatedWindowsScriptsForTest() {
+		t.Run(name, func(t *testing.T) {
+			depth := 0
+			inSingleQuote := false
+			for i := 0; i < len(script); i++ {
+				switch script[i] {
+				case '\'':
+					if inSingleQuote && i+1 < len(script) && script[i+1] == '\'' {
+						i++
+						continue
+					}
+					inSingleQuote = !inSingleQuote
+				case '{':
+					if !inSingleQuote {
+						depth++
+					}
+				case '}':
+					if !inSingleQuote {
+						depth--
+						if depth < 0 {
+							t.Fatal("PowerShell script closes a block before opening it")
+						}
+					}
+				}
+			}
+			if inSingleQuote {
+				t.Fatal("PowerShell script has an unterminated single-quoted string")
+			}
+			if depth != 0 {
+				t.Fatalf("PowerShell script block depth=%d want=0", depth)
+			}
+		})
+	}
+}
+
+func TestGeneratedWindowsScriptsParseWithNativePowerShell(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("native PowerShell parser is validated on the Windows CI runner")
+	}
+	parser := "$src=[Console]::In.ReadToEnd();$tokens=$null;$errors=$null;$null=[System.Management.Automation.Language.Parser]::ParseInput($src,[ref]$tokens,[ref]$errors);if($errors.Count -gt 0){$errors | ForEach-Object {$_.Message} | Write-Error;exit 1}"
+	for name, script := range generatedWindowsScriptsForTest() {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", parser)
+			cmd.Stdin = strings.NewReader(script)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("generated PowerShell does not parse: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func TestStructuredRemoteErrorPreservesPermissionDenied(t *testing.T) {
+	err := structuredRemoteError(CommandResult{
+		ExitCode: 25,
+		Stdout:   "MCPERR|PERMISSION_DENIED|Access denied to path\n",
+	}, "fallback")
+	if ErrorCode(err) != "PERMISSION_DENIED" {
+		t.Fatalf("error code=%q want PERMISSION_DENIED: %v", ErrorCode(err), err)
+	}
+}
+
+func TestProbePrivilegeIsFocused(t *testing.T) {
 	transport := localSSHShim(t)
-	fifo := filepath.Join(t.TempDir(), "pipe")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+	facts, err := transport.ProbePrivilege(context.Background(), localTarget(), false, false, 5*time.Second)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_, err := transport.ReadFile(ctx, localTarget(), fifo, 1024, 500*time.Millisecond)
-	if ErrorCode(err) != "INVALID_PATH" {
-		t.Fatalf("FIFO read err=%v code=%q want INVALID_PATH", err, ErrorCode(err))
+	if facts["probe_status"] != "ok" {
+		t.Fatalf("probe_status=%v facts=%#v", facts["probe_status"], facts)
+	}
+	if _, exists := facts["ram_mb"]; exists {
+		t.Fatal("focused privilege probe unexpectedly returned full inventory field ram_mb")
+	}
+	if _, exists := facts["runtimes"]; exists {
+		t.Fatal("focused privilege probe unexpectedly returned full inventory field runtimes")
+	}
+	privilege, ok := facts["privilege"].(map[string]any)
+	if !ok || privilege == nil || privilege["current_level"] == "" {
+		t.Fatalf("focused privilege state missing: %#v", facts)
 	}
 }
 

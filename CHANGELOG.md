@@ -4,6 +4,13 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 
 ## Unreleased
 
+## 1.6.10
+
+### Fixed
+- Windows structured path probing now emits syntactically valid PowerShell, distinguishes inaccessible paths from genuinely missing paths, keeps the existing literal-path/canonical-root/reparse-point guards, and exposes observed HOME/USERPROFILE paths in Target facts for diagnosis.
+- Trusted shell authorization now uses a focused effective-privilege probe instead of requiring full Target inventory for ordinary privilege=standard execution; elevated transports still fail closed behind target_admin, Target policy and approval requirements.
+- CI adds a focused Windows runner for the remote transport, including native PowerShell parsing of generated Windows path and privilege-probe scripts; Core privilege regressions remain covered by the existing Go suite.
+
 ## 1.6.9
 
 ### Admin / Grants

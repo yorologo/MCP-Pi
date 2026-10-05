@@ -98,6 +98,7 @@ type AtomicWriteResult struct {
 type Transport interface {
 	RunCommand(ctx context.Context, target registry.Target, command string, options CommandOptions) (CommandResult, error)
 	ProbeFacts(ctx context.Context, target registry.Target, includeBootID, verifyPrivilegeBackend bool, timeout time.Duration) (map[string]any, error)
+	ProbePrivilege(ctx context.Context, target registry.Target, includeBootID, verifyPrivilegeBackend bool, timeout time.Duration) (map[string]any, error)
 	ResolveCanonicalPath(ctx context.Context, target registry.Target, candidatePath string, timeout time.Duration) (string, error)
 	ListDirectory(ctx context.Context, target registry.Target, canonicalPath string, limit int, timeout time.Duration) ([]DirectoryEntry, error)
 	FileStat(ctx context.Context, target registry.Target, canonicalPath string, timeout time.Duration) (FileStat, error)

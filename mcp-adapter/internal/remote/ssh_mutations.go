@@ -109,6 +109,33 @@ func remoteJoin(base, elem string, windows bool) string {
 	return base + `\` + elem
 }
 
+func windowsProbePathScript(candidatePath string) string {
+	return "$ErrorActionPreference='Stop';" +
+		"$p=" + powerShellQuote(candidatePath) + ";" +
+		"$exists=$false;$islink=$false;$isfile=$false;$isdir=$false;$canon='';$sha='';$size=0;$content='';" +
+		"try{$i=Get-Item -LiteralPath $p -Force -ErrorAction Stop;$exists=$true;" +
+		"$islink=(($i.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0);" +
+		"$isdir=$i.PSIsContainer -and -not $islink;$isfile=(-not $i.PSIsContainer) -and -not $islink;" +
+		"$canon=[IO.Path]::GetFullPath($i.FullName);" +
+		"if($isfile){$size=$i.Length;$sha=(Get-FileHash -LiteralPath $p -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()}" +
+		"}catch [System.Management.Automation.ItemNotFoundException]{$exists=$false}" +
+		"catch [System.UnauthorizedAccessException]{Write-Output 'MCPERR|PERMISSION_DENIED|Access denied to path';exit 25}" +
+		"catch{if($_.Exception -is [System.UnauthorizedAccessException] -or $_.Exception.InnerException -is [System.UnauthorizedAccessException]){Write-Output 'MCPERR|PERMISSION_DENIED|Access denied to path';exit 25};" +
+		"Write-Output ('MCPERR|SSH_FAILED|Path probe failed: '+$_.Exception.Message);exit 26};" +
+		"$parent=Split-Path -Parent $p;if([string]::IsNullOrWhiteSpace($parent)){$parent='.'};" +
+		"$parentExists=$false;$parentLink=$false;$parentCanon='';" +
+		"try{$pi=Get-Item -LiteralPath $parent -Force -ErrorAction Stop;$parentExists=$true;" +
+		"$parentLink=(($pi.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0);$parentCanon=[IO.Path]::GetFullPath($pi.FullName)}" +
+		"catch [System.Management.Automation.ItemNotFoundException]{$parentExists=$false}" +
+		"catch [System.UnauthorizedAccessException]{Write-Output 'MCPERR|PERMISSION_DENIED|Access denied to parent path';exit 27}" +
+		"catch{if($_.Exception -is [System.UnauthorizedAccessException] -or $_.Exception.InnerException -is [System.UnauthorizedAccessException]){Write-Output 'MCPERR|PERMISSION_DENIED|Access denied to parent path';exit 27};" +
+		"Write-Output ('MCPERR|SSH_FAILED|Parent path probe failed: '+$_.Exception.Message);exit 28};" +
+		"function B64([string]$v){if([string]::IsNullOrEmpty($v)){return ''};return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($v))};" +
+		"Write-Output ('exists='+([int]$exists));Write-Output ('is_symlink='+([int]$islink));Write-Output ('is_file='+([int]$isfile));Write-Output ('is_dir='+([int]$isdir));" +
+		"Write-Output ('canonical_b64='+(B64 $canon));Write-Output ('parent_exists='+([int]$parentExists));Write-Output ('parent_is_symlink='+([int]$parentLink));" +
+		"Write-Output ('parent_canonical_b64='+(B64 $parentCanon));Write-Output ('sha256='+$sha);Write-Output ('size='+$size);Write-Output ('content_b64='+$content)"
+}
+
 func (s *SSHTransport) ProbePath(
 	ctx context.Context,
 	target registry.Target,
@@ -117,24 +144,7 @@ func (s *SSHTransport) ProbePath(
 ) (PathProbe, error) {
 	var command string
 	if isWindowsTarget(target) {
-		script := "$ErrorActionPreference='Stop';" +
-			"$p=" + powerShellQuote(candidatePath) + ";" +
-			"$exists=Test-Path -LiteralPath $p;" +
-			"$lexists=$exists;" +
-			"$islink=$false;$isfile=$false;$isdir=$false;$canon='';$sha='';$size=0;$content='';" +
-			"if($exists){$i=Get-Item -LiteralPath $p -Force;$islink=(($i.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0);" +
-			"$isdir=$i.PSIsContainer -and -not $islink;$isfile=(-not $i.PSIsContainer) -and -not $islink;" +
-			"$canon=[IO.Path]::GetFullPath($i.FullName);" +
-			"if($isfile){$size=$i.Length;$sha=(Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant()};" +
-			"$parent=Split-Path -Parent $p;if([string]::IsNullOrWhiteSpace($parent)){$parent='.'};" +
-			"$parentExists=Test-Path -LiteralPath $parent;$parentLink=$false;$parentCanon='';" +
-			"if($parentExists){$pi=Get-Item -LiteralPath $parent -Force;$parentLink=(($pi.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0);" +
-			"$parentCanon=[IO.Path]::GetFullPath($pi.FullName)};" +
-			"function B64([string]$v){if([string]::IsNullOrEmpty($v)){return ''};return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($v))};" +
-			"Write-Output ('exists='+([int]$lexists));Write-Output ('is_symlink='+([int]$islink));Write-Output ('is_file='+([int]$isfile));Write-Output ('is_dir='+([int]$isdir));" +
-			"Write-Output ('canonical_b64='+(B64 $canon));Write-Output ('parent_exists='+([int]$parentExists));Write-Output ('parent_is_symlink='+([int]$parentLink));" +
-			"Write-Output ('parent_canonical_b64='+(B64 $parentCanon));Write-Output ('sha256='+$sha);Write-Output ('size='+$size);Write-Output ('content_b64='+$content)"
-		command = buildPowerShellCommand(script)
+		command = buildPowerShellCommand(windowsProbePathScript(candidatePath))
 	} else {
 		command = "p=" + shellQuote(candidatePath) + `; ` +
 			`b64(){ if [ -z "$1" ]; then printf ''; else printf '%s' "$1" | base64 | tr -d '\n'; fi; }; ` +
