@@ -123,7 +123,7 @@ func cmdStatus(args []string) int {
 	}
 
 	dbPath := resolveDBPath(*dbFlag)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	info, err := sqliteutil.Inspect(ctx, dbPath)

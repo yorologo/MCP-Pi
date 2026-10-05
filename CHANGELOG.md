@@ -4,6 +4,14 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 
 ## Unreleased
 
+## 1.6.11
+
+### Reliability / production acceptance
+- `mcp-gateway status` now allows up to 30 seconds for its bounded read-only Registry inspection on the constrained ARMv6 appliance. This preserves fail-closed behavior while avoiding false deployment rejection when integrity/status inspection transiently exceeds the previous 10-second budget.
+
+### Validation
+- `v1.6.10` passed source/tag/release CI but its first production deployment was rejected during immediate post-activation `status` inspection with `context deadline exceeded`; the canonical deployer rolled back and verified the previous `v1.6.9` runtime. Live measurements then reproduced variable status latency, including a >10-second timeout, on the healthy appliance.
+
 ## 1.6.10
 
 ### Fixed
