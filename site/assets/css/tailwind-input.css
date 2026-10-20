@@ -21,6 +21,17 @@ body {
   color: #f8fafc;
 }
 
+/* Keep code scroll local to its card and anchors below the sticky header. */
+main, section, .grid > *, pre { min-width: 0; }
+section { scroll-margin-top: 5rem; }
+button, select { min-height: 44px; }
+button { min-width: 44px; }
+select { max-width: 100%; }
+pre { max-width: 100%; white-space: pre; }
+@media (max-width: 767px) {
+  .flow-arrow { transform: rotate(90deg); text-align: center; }
+}
+
 /* Accessible focus visible indicators */
 a:focus-visible,
 button:focus-visible,
@@ -80,7 +91,7 @@ pre code {
 /* Interactive lab decision pulse */
 .status-pill-allow {
   background-color: rgba(16, 185, 129, 0.12);
-  color: #059669;
+  color: #047857;
   border: 1px solid rgba(16, 185, 129, 0.3);
 }
 

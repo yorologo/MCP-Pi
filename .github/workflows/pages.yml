@@ -27,10 +27,22 @@ jobs:
           node-version: 22
 
       - name: Validate HTML structure
-        run: npx --yes --package=vnu-jar@26.8.30 vnu --errors-only site/index.html
+        run: npx --yes --package=vnu-jar@26.8.30 vnu --errors-only site/index.html site/demo/index.html site/guide/index.html site/404.html
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: mcp-adapter/go.mod
+          cache-dependency-path: mcp-adapter/go.sum
+
+      - name: Verify demo against the Go Policy Engine
+        working-directory: mcp-adapter
+        run: go test -count=1 ./internal/policy -run 'Test(Authorization|PrivilegeAuthorization)MatchesFrozenPythonPolicy'
+
+      - name: Verify generated demo evidence
+        run: node site/scripts/build-demo.mjs --check
 
       - name: Run site test suite (i18n, theme, demo, contracts, accessibility)
-        run: node --test site/tests/site.test.mjs
+        run: node --test site/tests/*.test.mjs
 
       - name: Rebuild Tailwind CSS
         run: npx --yes tailwindcss@3.4.17 -c site/tailwind.config.js -i ./site/assets/css/tailwind-input.css -o ./site/assets/css/site.generated.css --minify
@@ -39,6 +51,29 @@ jobs:
         run: |
           cmp site/assets/css/site.css site/assets/css/site.generated.css
           rm site/assets/css/site.generated.css
+
+      - name: Check real browser behavior using the runner's Chrome
+        run: |
+          google-chrome --headless --no-sandbox --disable-gpu \
+            --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+            --user-data-dir="$RUNNER_TEMP/mcp-site-browser" about:blank \
+            > "$RUNNER_TEMP/mcp-site-browser.log" 2>&1 &
+          browser_pid=$!
+          trap 'kill "$browser_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if curl --fail --silent http://127.0.0.1:9222/json/version >/dev/null; then break; fi
+            sleep 0.1
+          done
+          node site/scripts/browser-smoke.mjs http://127.0.0.1:9222
+
+      - name: Prepare public files only
+        run: node site/scripts/stage-site.mjs "$RUNNER_TEMP/mcp-pages"
+
+      - name: Upload validated Pages artifact
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/mcp-pages
 
   deploy:
     needs: validate
@@ -51,16 +86,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Setup Pages
         uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
 
       - name: Deploy to GitHub Pages
         id: deployment

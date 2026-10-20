@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const siteDir = path.resolve(__dirname, "..");
-const html = fs.readFileSync(path.join(siteDir, "index.html"), "utf8");
+const pages = ["index.html", "demo/index.html", "guide/index.html"].map(file => ({file, html: fs.readFileSync(path.join(siteDir, file), "utf8")}));
+const html = pages.map(page => page.html).join("\n");
 const siteJs = fs.readFileSync(path.join(siteDir, "assets", "js", "site.js"), "utf8");
 const demoJs = fs.readFileSync(path.join(siteDir, "assets", "js", "demo-scenarios.js"), "utf8");
 
@@ -104,6 +105,7 @@ function loadSite(browserLanguage = "es", initialPreferences = {}) {
   const rootClasses = new Set();
   const root = {
     lang: "es",
+    getAttribute: () => null,
     classList: {
       contains: (name) => rootClasses.has(name),
       add: (name) => rootClasses.add(name),
@@ -183,14 +185,12 @@ function loadSite(browserLanguage = "es", initialPreferences = {}) {
 }
 
 test("all internal anchors resolve to unique existing element IDs", () => {
-  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
-  const uniqueIds = new Set(ids);
-  assert.equal(ids.length, uniqueIds.size, "Found duplicate HTML IDs");
-
-  const anchors = [...html.matchAll(/href="#([^"]+)"/g)].map((m) => m[1]);
-  assert.ok(anchors.length > 0, "No anchor links found in HTML");
-  for (const anchor of anchors) {
-    assert.ok(uniqueIds.has(anchor), `Anchor href="#${anchor}" does not have matching id="${anchor}"`);
+  for (const page of pages) {
+    const ids = [...page.html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+    assert.equal(ids.length, new Set(ids).size, page.file + " has duplicate IDs");
+    for (const [, anchor] of page.html.matchAll(/href="#([^"]+)"/g)) {
+      assert.ok(ids.includes(anchor), page.file + " missing #" + anchor);
+    }
   }
 });
 
@@ -226,6 +226,8 @@ test("every translation key is defined and non-empty in both Spanish and English
 
   assert.equal(esEnv.document.documentElement.lang, "es");
   assert.equal(enEnv.document.documentElement.lang, "en");
+  assert.match(esEnv.document.title, /Permisos claros/);
+  assert.match(enEnv.document.title, /Clear permissions/);
 
   // Verify all data-i18n keys
   for (const el of esEnv.textElements) {
@@ -250,6 +252,17 @@ test("every translation key is defined and non-empty in both Spanish and English
     const key = el.getAttribute("data-i18n-aria");
     const aria = el.getAttribute("aria-label");
     assert.ok(aria && aria.trim().length > 0, `Missing or empty EN aria-label for key: ${key}`);
+  }
+});
+
+test("Spanish HTML fallback matches translated content even when JavaScript is disabled", () => {
+  const source = siteJs.split("  const messages = {")[1].split("\n  };")[0];
+  const messages = vm.runInNewContext("({" + source + "})");
+  const decode = text => text.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").trim();
+  for (const {file, html} of pages) {
+    for (const match of html.matchAll(/<([a-z][a-z0-9]*)\b[^>]*data-i18n="([^"]+)"[^>]*>([^<]*)<\/\1>/g)) {
+      assert.equal(decode(match[3]), messages[match[2]].es, `${file}: ${match[2]}`);
+    }
   }
 });
 
@@ -279,13 +292,13 @@ test("theme switcher toggles Light/Dark and persists with mcp_pi_theme key", () 
   env.controls.themeToggle.click();
   assert.equal(env.root.classList.contains("dark"), true);
   assert.equal(env.storage.get("mcp_pi_theme"), "dark");
-  assert.equal(env.controls.themeToggle.getAttribute("aria-label"), "Cambiar a modo claro");
+  assert.equal(env.controls.themeToggle.getAttribute("aria-label"), "Tema: oscuro. Cambiar a sistema");
 
   // Click theme toggle again -> light mode
   env.controls.themeToggle.click();
   assert.equal(env.root.classList.contains("dark"), false);
-  assert.equal(env.storage.get("mcp_pi_theme"), "light");
-  assert.equal(env.controls.themeToggle.getAttribute("aria-label"), "Cambiar a modo oscuro");
+  assert.equal(env.storage.get("mcp_pi_theme"), "system");
+  assert.equal(env.controls.themeToggle.getAttribute("aria-label"), "Tema: sistema. Cambiar a claro");
 });
 
 test("system theme change applies when no explicit mcp_pi_theme is set", () => {
@@ -343,7 +356,7 @@ test("scenario selector updates UI and audit display correctly", () => {
   selector.dispatchEvent({ type: "change" });
 
   assert.equal(env.controls.demoDecisionCode.textContent, "ANONYMOUS_CLIENT_DENIED");
-  assert.match(env.controls.demoVerdictBadge.textContent, /DENEGADO/);
+  assert.match(env.controls.demoVerdictBadge.textContent, /COMPROBACIÓN DENEGADA/);
   assert.match(env.controls.demoAuditJson.textContent, /ANONYMOUS_CLIENT_DENIED/);
 });
 
@@ -374,4 +387,47 @@ test("accessibility: skip link, landmarks and aria attributes are properly struc
   assert.match(html, /<header\b/, "Header landmark is present");
   assert.match(html, /<footer\b/, "Footer landmark is present");
   assert.match(html, /<details\b/, "Details accordion is used for FAQ");
+});
+
+test("demo decisions and inputs are derived from the actual Go policy contract fixture", () => {
+  const contracts = JSON.parse(fs.readFileSync(path.join(siteDir, "../mcp-adapter/testdata/contracts/policy_cases.json"), "utf8"));
+  assert.equal(DEMO_SCENARIOS.length, 9);
+  for (const scenario of DEMO_SCENARIOS) {
+    const cases = contracts[scenario.contract_group];
+    assert.ok(cases, `Missing contract group: ${scenario.id}`);
+    const source = cases.find(c => c.name === scenario.contract_case);
+    assert.ok(source, `Missing contract: ${scenario.id}`);
+    assert.equal(scenario.decision.allowed, source.allowed, scenario.id);
+    assert.equal(scenario.decision.code, source.error_code, scenario.id);
+    assert.equal(JSON.stringify(scenario.request), JSON.stringify(source), scenario.id);
+    assert.equal(scenario.audit_record.simulated, true);
+    assert.equal(scenario.audit_record.persisted, false);
+    assert.equal(scenario.audit_record.sha256, undefined);
+  }
+});
+
+test("public copy does not invent immutable audits, a license, or SSE transport", () => {
+  for (const source of [html, siteJs]) {
+    assert.doesNotMatch(source, /inmutable|immutable|incontrovertible|incorruptible|licencia MIT|MIT License|HTTP SSE|Stdio\/SSE/i);
+  }
+  assert.match(html, /Content-Security-Policy/);
+  assert.match(html, /rel="canonical" href="https:\/\/yorologo.github.io\/MCP-Pi\/"/);
+});
+
+test("installation checks the published bundle and never invents a desktop client configuration", () => {
+  assert.doesNotMatch(html, /latest\/download\/MCP-Pi-linux-armv6|"args": \["--client"/);
+  assert.match(html, /MCP-Pi-1\.6\.11-linux-armv6-5172705639d8\.tar\.gz\.sha256/);
+  assert.match(html, /sha256sum -c MCP-Pi-1\.6\.11-linux-armv6-5172705639d8\.tar\.gz\.sha256/);
+  assert.match(html, /tar -xzf/);
+  assert.match(html, /README.md/);
+});
+
+test("theme control can return to system mode after a manual selection", () => {
+  const env = loadSite("es", { mcp_pi_theme: "dark" });
+  env.controls.themeToggle.click();
+  assert.equal(env.storage.get("mcp_pi_theme"), "system");
+  env.triggerSystemThemeChange(false);
+  assert.equal(env.root.classList.contains("dark"), false);
+  env.triggerSystemThemeChange(true);
+  assert.equal(env.root.classList.contains("dark"), true);
 });

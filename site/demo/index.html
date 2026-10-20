@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html data-page="demo" lang="es" >
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <link rel="canonical" href="https://yorologo.github.io/MCP-Pi/demo/">
+  <meta property="og:url" content="https://yorologo.github.io/MCP-Pi/demo/">
+  <meta property="og:image" content="https://yorologo.github.io/MCP-Pi/assets/brand/social.png">
+  <meta property="og:image:alt" content="MCP-Pi — Permisos claros. Acciones trazables.">
+  <meta name="twitter:image" content="https://yorologo.github.io/MCP-Pi/assets/brand/social.png">
+  <script src="../assets/js/site.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Gateway de seguridad Go-only para Model Context Protocol en Raspberry Pi y Linux. Delimita accesos, evalúa políticas deterministas y audita operaciones de agentes IA.">
+  <meta name="author" content="Yorologo">
+  <meta name="robots" content="index, follow">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Laboratorio de autorización | MCP-Pi">
+  <meta property="og:description" content="Conecta herramientas de IA con permisos delimitados y actividad en SQLite.">
+  <meta property="og:locale" content="es_ES">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Laboratorio de autorización | MCP-Pi">
+  <meta name="twitter:description" content="Gateway de seguridad Go-only para Model Context Protocol. Permisos claros. Acciones trazables.">
+
+  <title>Laboratorio de autorización | MCP-Pi</title>
+  <link rel="icon" type="image/svg+xml" href="../assets/brand/favicon.svg">
+  <link rel="stylesheet" href="../assets/css/site.css">
+</head>
+<body class="min-h-screen text-slate-800 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 antialiased selection:bg-indigo-500 selection:text-white transition-colors duration-200">
+
+  <!-- Skip link for keyboard accessibility -->
+  <a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-indigo-600 focus:text-white focus:rounded-md focus:shadow-lg focus:outline-none" data-i18n="nav-skip">Saltar al contenido principal</a>
+
+  <!-- Header / Navigation -->
+  <header class="sticky top-0 z-40 w-full border-b border-slate-200/80 dark:border-slate-800/80 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Brand Logo & Name -->
+      <a href="../#inicio" class="flex shrink-0 items-center space-x-2 group rounded-md p-1 focus-visible:ring-2 focus-visible:ring-indigo-500">
+        <img src="../assets/brand/isotipo.svg" alt="" class="w-9 h-9 flex-shrink-0 transition-transform group-hover:scale-105" width="36" height="36">
+        <div class="flex flex-col">
+          <span class="font-extrabold text-lg tracking-tight text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">MCP-Pi</span>
+          <span class="hidden sm:inline text-[10px] uppercase font-bold tracking-widest text-indigo-600 dark:text-indigo-400" data-i18n="brand-by">Por Yorologo</span>
+        </div>
+      </a>
+
+      <!-- Desktop Navigation Links -->
+      <nav class="hidden xl:flex items-center space-x-1 lg:space-x-2 text-sm font-medium" aria-label="Navegación principal" data-i18n-aria="nav-primary">
+        <a href="../#inicio" class="px-3 py-2 rounded-md hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="nav-home">Inicio</a>
+        <a href="../demo/" class="px-3 py-2 rounded-md text-indigo-600 dark:text-indigo-400 font-semibold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition-colors" data-i18n="nav-demo">Demo Interactiva</a>
+        <a href="../guide/" class="px-3 py-2 rounded-md hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="nav-guide">Guía Rápida</a>
+      </nav>
+
+      <!-- Action Controls: Language, Theme, GitHub -->
+      <div class="flex items-center space-x-2 sm:space-x-3">
+        <!-- Language Switcher -->
+        <button id="languageToggle" type="button" class="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="Cambiar a inglés" data-i18n-aria="nav-lang-toggle">
+          <span id="languageLabel">EN</span>
+        </button>
+
+        <!-- Theme Switcher -->
+        <button id="themeToggle" type="button" class="inline-flex items-center gap-1 p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="Cambiar tema de color" data-i18n-aria="nav-theme-toggle">
+          <svg id="themeIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+          </svg><span id="themeLabel" class="hidden sm:inline text-xs">Sistema</span>
+        </button>
+
+        <!-- GitHub External Link -->
+        <a href="https://github.com/yorologo/MCP-Pi" target="_blank" rel="noopener noreferrer" class="hidden sm:inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg text-white bg-slate-900 hover:bg-slate-800 dark:bg-indigo-600 dark:hover:bg-indigo-700 transition-colors" aria-label="Ver repositorio MCP-Pi en GitHub" data-i18n-aria="nav-repo">
+          <svg class="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+          </svg>
+          <span data-i18n="nav-github">GitHub</span>
+        </a>
+
+        <!-- Mobile Menu Toggle Button -->
+        <button id="mobileMenuBtn" type="button" class="xl:hidden p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300" aria-label="Abrir menú de navegación" aria-expanded="false" aria-controls="mobileMenu" data-i18n-aria="nav-menu-toggle">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile Dropdown Navigation -->
+    <nav id="mobileMenu" class="hidden xl:hidden border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 pt-2 pb-4 space-y-1" aria-label="Navegación móvil" data-i18n-aria="nav-mobile">
+      <a href="../#inicio" class="block px-3 py-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-home">Inicio</a>
+      <a href="../demo/" class="block px-3 py-2 rounded-md text-indigo-600 dark:text-indigo-400 font-semibold hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-demo">Demo Interactiva</a>
+      <a href="../guide/" class="block px-3 py-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-guide">Guía Rápida</a>
+      <a href="https://github.com/yorologo/MCP-Pi" target="_blank" rel="noopener noreferrer" class="block px-3 py-2 text-indigo-600 dark:text-indigo-400 font-medium" data-i18n="nav-github">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main-content" tabindex="-1">
+    <!-- 6. DEMO: INTERACTIVE AUTHORIZATION LAB -->
+    <section id="demo" class="py-16 md:py-24 border-t border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-900/50">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="text-center max-w-3xl mx-auto mb-10">
+          <div class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-2" data-i18n="demo-badge">Laboratorio Interactivo</div>
+          <h1 class="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mb-4" data-i18n="demo-title">Simulador de Decisiones de Autorización</h1>
+          <p class="text-base sm:text-lg text-slate-600 dark:text-slate-300" data-i18n="demo-subtitle">Nueve casos del contrato interno de autorización; resultados precomputados y comprobados con Go.</p>
+        </div>
+
+        <noscript><p data-i18n="demo-noscript">Activa JavaScript para seleccionar escenarios. Esta demo no ejecuta operaciones.</p></noscript>
+        <!-- Permanent Simulation Notice Badge -->
+        <div class="max-w-4xl mx-auto mb-10 p-4 rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 text-xs sm:text-sm flex items-start space-x-3">
+          <span class="text-base flex-shrink-0" aria-hidden="true">⚠️</span>
+          <p class="font-medium" data-i18n="demo-sim-notice">Laboratorio de Simulación Educativo: muestra decisiones internas de política, no respuestas MCP completas. No ejecuta comandos, no conecta con servidores y no escribe auditoría real. Aprobar una comprobación de privilegio no autoriza por sí solo una ejecución.</p>
+        </div>
+
+        <!-- Scenario Selector Box -->
+        <div class="max-w-4xl mx-auto mb-8 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <label for="scenarioSelector" class="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2" data-i18n="demo-select-label">Selecciona un escenario educativo:</label>
+          <select id="scenarioSelector" disabled aria-describedby="demoScenarioDesc" class="w-full px-4 py-3 text-sm font-medium rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"></select>
+          <p id="demoScenarioDesc" class="mt-3 text-xs sm:text-sm text-slate-600 dark:text-slate-400 leading-relaxed italic"></p>
+        </div>
+
+        <!-- 4-Grid Laboratory Display -->
+        <div class="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
+          
+          <!-- Panel 1: Request Payload -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col justify-between">
+            <div>
+              <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white" data-i18n="demo-req-heading">1. Entrada del contrato interno</h2>
+                <button type="button" data-copy-target="demoRequestJson" class="text-xs font-semibold px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100" data-i18n="demo-copy-btn">Copiar</button>
+              </div>
+              <pre class="p-4 rounded-xl bg-slate-900 text-slate-100 text-xs font-mono overflow-x-auto"><code id="demoRequestJson">{}</code></pre>
+            </div>
+            <div class="mt-4 text-[11px] text-slate-600 dark:text-slate-400" data-i18n="demo-input-note">Caso interno de política; no es una petición MCP completa.</div>
+          </div>
+
+          <!-- Panel 2: Decision & Reason -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col justify-between">
+            <div>
+              <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white" data-i18n="demo-decision-heading">2. Decisión interna de ejemplo</h2>
+                <div id="demoVerdictBadge" class="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold status-pill-allow">
+                  <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  <span>—</span>
+                </div>
+              </div>
+
+              <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 mb-4">
+                <div class="text-xs uppercase font-bold text-slate-600 dark:text-slate-400 mb-1" data-i18n="demo-code-label">Código interno:</div>
+                <div id="demoDecisionCode" class="font-mono text-sm font-bold text-indigo-600 dark:text-indigo-400 mb-2">—</div>
+                <div class="text-xs uppercase font-bold text-slate-600 dark:text-slate-400 mb-1" data-i18n="demo-reason-label">Explicación:</div>
+                <div id="demoDecisionReason" role="status" aria-live="polite" class="text-xs text-slate-700 dark:text-slate-300"></div>
+              </div>
+            </div>
+
+            <div class="text-[11px] text-slate-600 dark:text-slate-400" data-i18n="demo-boundary">La ejecución real añade comprobaciones del Core y del transporte.</div>
+          </div>
+
+          <!-- Panel 3: Verification Pipeline Trace -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col justify-between">
+            <div>
+              <h2 class="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white mb-4" data-i18n="demo-trace-heading">3. Alcance de la comprobación</h2>
+              <div id="demoTraceContainer" class="space-y-1">
+              </div>
+            </div>
+            <div class="mt-4 text-[11px] text-slate-600 dark:text-slate-400" data-i18n="demo-trace-note">Explicación resumida del caso; no es una traza de ejecución.</div>
+          </div>
+
+          <!-- Panel 4: SQLite Audit Trail Record -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col justify-between">
+            <div>
+              <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white" data-i18n="demo-audit-heading">4. Resumen simulado — no persistido</h2>
+                <button type="button" data-copy-target="demoAuditJson" class="text-xs font-semibold px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100" data-i18n="demo-copy-btn">Copiar</button>
+              </div>
+              <pre class="p-4 rounded-xl bg-slate-900 text-slate-100 text-xs font-mono overflow-x-auto"><code id="demoAuditJson">{}</code></pre>
+            </div>
+            <div class="mt-4 text-[11px] text-slate-600 dark:text-slate-400" data-i18n="demo-audit-note">Ejemplo educativo; no representa filas ni hashes de SQLite.</div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+  <!-- Footer -->
+  <footer class="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 py-12 text-sm text-slate-600 dark:text-slate-400">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+        
+        <!-- Brand Info -->
+        <div class="md:col-span-2 space-y-3">
+          <div class="flex items-center space-x-2">
+            <img src="../assets/brand/isotipo.svg" alt="" class="w-6 h-6" width="24" height="24">
+            <span class="font-extrabold text-base text-slate-900 dark:text-white">MCP-Pi</span>
+          </div>
+          <p class="text-xs text-slate-600 dark:text-slate-400 max-w-sm" data-i18n="footer-tagline">Gateway de seguridad Go-only para Model Context Protocol.</p>
+          <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400" data-i18n="hero-title">Permisos claros. Acciones trazables.</div>
+        </div>
+
+        <!-- Ecosystem Links -->
+        <div>
+          <h2 class="font-bold text-xs uppercase tracking-wider text-slate-900 dark:text-white mb-3" data-i18n="footer-ecosystem">Ecosistema Yorologo</h2>
+          <ul class="space-y-2 text-xs">
+            <li><a href="https://yorologo.com/" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="footer-portfolio">Portafolio Yorologo</a></li>
+            <li><a href="https://github.com/yorologo/DealHunter" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">DealHunter ↗</a></li>
+            <li><a href="https://github.com/yorologo/AdFilter" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">AdFilter ↗</a></li>
+          </ul>
+        </div>
+
+        <!-- Technical Resources -->
+        <div>
+          <h2 class="font-bold text-xs uppercase tracking-wider text-slate-900 dark:text-white mb-3" data-i18n="footer-resources">Recursos Técnicos</h2>
+          <ul class="space-y-2 text-xs">
+            <li><a href="https://github.com/yorologo/MCP-Pi" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="footer-repo">Repositorio MCP-Pi</a></li>
+            <li><a href="https://github.com/yorologo/MCP-Pi/releases" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="footer-releases">Versiones y Releases</a></li>
+            <li><a href="https://github.com/yorologo/MCP-Pi/issues" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="footer-issues">Reporte de Problemas</a></li>
+          </ul>
+        </div>
+
+      </div>
+
+      <div class="pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between text-xs space-y-4 sm:space-y-0">
+        <p data-i18n="footer-rights">Código y contribuciones en GitHub · Sin licencia de proyecto declarada</p>
+        <p class="font-mono text-slate-600">
+          © <span id="currentYear">2026</span> Yorologo
+        </p>
+      </div>
+
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="../assets/js/demo-scenarios.js"></script>
+</body>
+</html>
