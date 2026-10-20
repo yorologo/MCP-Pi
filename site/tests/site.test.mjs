@@ -431,3 +431,38 @@ test("theme control can return to system mode after a manual selection", () => {
   env.triggerSystemThemeChange(true);
   assert.equal(env.root.classList.contains("dark"), true);
 });
+
+test("brand slogan is present and consistent across all pages", () => {
+  assert.match(html, /data-i18n="hero-slogan"/);
+  const esEnv = loadSite("es");
+  const enEnv = loadSite("en");
+  assert.equal(siteJs.includes('"Tu IA. Tus sistemas. Tus reglas."'), true);
+  assert.equal(siteJs.includes('"Your AI. Your systems. Your rules."'), true);
+});
+
+test("navigation links highlight only the current active page", () => {
+  const getNavLinks = (file) => {
+    const fileHtml = pages.find(p => p.file === file).html;
+    const navs = [...fileHtml.matchAll(/<nav\b[^>]*>([\s\S]*?)<\/nav>/g)].map(m => m[1]).join("\n");
+    return navs;
+  };
+
+  const homeNav = getNavLinks("index.html");
+  const demoNav = getNavLinks("demo/index.html");
+  const guideNav = getNavLinks("guide/index.html");
+
+  // In home, nav-home is active
+  assert.match(homeNav, /<a\b[^>]*href="\.\/#inicio"[^>]*font-semibold[^>]*data-i18n="nav-home"/);
+  assert.doesNotMatch(homeNav, /<a\b[^>]*href="\.\/demo\/"[^>]*font-semibold/);
+  assert.doesNotMatch(homeNav, /<a\b[^>]*href="\.\/guide\/"[^>]*font-semibold/);
+
+  // In demo, nav-demo is active
+  assert.match(demoNav, /<a\b[^>]*href="\.\.\/demo\/"[^>]*font-semibold[^>]*data-i18n="nav-demo"/);
+  assert.doesNotMatch(demoNav, /<a\b[^>]*href="\.\.\/#inicio"[^>]*font-semibold/);
+  assert.doesNotMatch(demoNav, /<a\b[^>]*href="\.\.\/guide\/"[^>]*font-semibold/);
+
+  // In guide, nav-guide is active
+  assert.match(guideNav, /<a\b[^>]*href="\.\.\/guide\/"[^>]*font-semibold[^>]*data-i18n="nav-guide"/);
+  assert.doesNotMatch(guideNav, /<a\b[^>]*href="\.\.\/#inicio"[^>]*font-semibold/);
+  assert.doesNotMatch(guideNav, /<a\b[^>]*href="\.\.\/demo\/"[^>]*font-semibold/);
+});

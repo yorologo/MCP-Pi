@@ -67,6 +67,7 @@
 
     // Hero
     "hero-badge": {"es": "Acceso controlado para herramientas de IA", "en": "Controlled access for AI tools"},
+    "hero-slogan": {"es": "Tu IA. Tus sistemas. Tus reglas.", "en": "Your AI. Your systems. Your rules."},
     "hero-title": {"es": "Permisos claros. Acciones trazables.", "en": "Clear permissions. Traceable actions."},
     "hero-desc": {"es": "MCP-Pi conecta tu asistente de IA con tus equipos. Comprueba permisos antes de leer archivos o ejecutar tareas autorizadas y registra actividad en SQLite. Tú decides el acceso; MCP-Pi no ejecuta el modelo de IA.", "en": "MCP-Pi connects your AI assistant to your systems. It checks permissions before reading files or running authorized tasks and records activity in SQLite. You decide access; MCP-Pi does not run the AI model."},
     "hero-cta-demo": {"es": "Probar demo", "en": "Try the demo"},
