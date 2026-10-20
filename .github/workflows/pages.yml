@@ -1,0 +1,109 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate HTML structure
+        run: npx --yes --package=vnu-jar@26.8.30 vnu --errors-only site/index.html site/demo/index.html site/guide/index.html site/404.html
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: mcp-adapter/go.mod
+          cache-dependency-path: mcp-adapter/go.sum
+
+      - name: Verify demo against the Go Policy Engine
+        working-directory: mcp-adapter
+        run: go test -count=1 ./internal/policy -run 'Test(Authorization|PrivilegeAuthorization)MatchesFrozenPythonPolicy'
+
+      - name: Verify generated demo evidence
+        run: node site/scripts/build-demo.mjs --check
+
+      - name: Run site test suite (i18n, theme, demo, contracts, accessibility)
+        run: node --test site/tests/*.test.mjs
+
+      - name: Rebuild Tailwind CSS
+        run: npx --yes tailwindcss@3.4.17 -c site/tailwind.config.js -i ./site/assets/css/tailwind-input.css -o ./site/assets/css/site.generated.css --minify
+
+      - name: Verify committed CSS matches generated
+        run: |
+          cmp site/assets/css/site.css site/assets/css/site.generated.css
+          rm site/assets/css/site.generated.css
+
+      - name: Check real browser behavior using the runner's Chrome
+        run: |
+          google-chrome \
+            --headless=new \
+            --no-sandbox \
+            --disable-gpu \
+            --disable-dev-shm-usage \
+            --remote-debugging-port=9222 \
+            --user-data-dir="$RUNNER_TEMP/mcp-site-browser" about:blank \
+            > "$RUNNER_TEMP/mcp-site-browser.log" 2>&1 &
+          browser_pid=$!
+          trap 'kill "$browser_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:9222/json/version >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 0.2
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::Chrome failed to start or open port 9222 within 12 seconds."
+            echo "--- Chrome log ($RUNNER_TEMP/mcp-site-browser.log) ---"
+            cat "$RUNNER_TEMP/mcp-site-browser.log" || true
+            exit 1
+          fi
+          node site/scripts/browser-smoke.mjs http://127.0.0.1:9222
+
+      - name: Prepare public files only
+        run: node site/scripts/stage-site.mjs "$RUNNER_TEMP/mcp-pages"
+
+      - name: Upload validated Pages artifact
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/mcp-pages
+          include-hidden-files: true
+
+  deploy:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

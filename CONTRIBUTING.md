@@ -45,6 +45,45 @@ Tailwind writes directly to the embedded static directory. Do not create a secon
 
 ## Documentation
 
+### Public project website
+
+`site/` is a static presentation and educational demo, separate from Go Admin and
+the appliance release bundle. Its small vanilla-JavaScript preferences and local
+Tailwind 3.4.17 styles derive from `yorologo/Me` at commit
+`1d4b98c80e5ee150071db3ee8b099845ba228dbc`; product copy and scenarios are MCP-Pi-specific.
+No project license has been declared; do not advertise MIT licensing.
+
+Edit HTML and both languages in `site/assets/js/site.js`. Keep the HTML Spanish
+fallback consistent. The demo generator reads only the frozen policy fixture;
+Go policy tests validate that fixture. It displays internal policy decisions,
+not MCP responses, execution results or real Activity records. A passing
+`target_admin` grant check is only one gate of privileged execution.
+
+    node site/scripts/build-demo.mjs
+    node site/scripts/build-css.mjs
+    node --test site/tests/*.test.mjs
+    node site/scripts/build-demo.mjs --check
+    npx --yes --package=vnu-jar@26.8.30 vnu --errors-only site/index.html site/demo/index.html site/guide/index.html site/404.html
+
+The Pages workflow also runs the relevant Go policy tests and compares rebuilt
+CSS with committed CSS. It stages only the explicit public file allowlist;
+tests, source tooling, private files and symlinks are excluded. Only a push to
+`main` can deploy the validated artifact. Before enabling Pages, restrict the
+`github-pages` environment to `main`; repository settings are a separate operator
+step. Check real HTTPS pages after deployment, including `/MCP-Pi/demo/` and
+`/MCP-Pi/guide/`. Do not copy `Me/CNAME` or change operational ingress.
+
+Use a normal browser for visual acceptance in both languages/themes at mobile,
+tablet and desktop widths. DOM tests and terminal-browser screenshots do not
+certify visual quality or WCAG compliance.
+
+The guide pins a published ARMv6 package and checksum. When changing that example,
+verify actual release asset names and extraction directory, and update its
+regression check. Keep full installation and client instructions in README and
+`docs/configuration.md` rather than duplicating them in the website.
+
+### Canonical operator guides
+
 Current documentation has one onboarding entry point and responsibility-based guides:
 
 - `README.md` — obtain/install/bootstrap/first run and navigation;

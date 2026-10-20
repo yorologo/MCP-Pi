@@ -19,7 +19,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: mcp-adapter/go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache-dependency-path: mcp-adapter/go.sum
 
       - name: Go tests
@@ -155,7 +156,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: mcp-adapter/go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache-dependency-path: mcp-adapter/go.sum
 
       - name: Windows transport regressions
@@ -175,7 +177,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: mcp-adapter/go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache-dependency-path: mcp-adapter/go.sum
 
       - name: Verify immutable version tag
