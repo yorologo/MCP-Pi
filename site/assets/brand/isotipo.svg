@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="MCP-Pi Logo">
+  <defs>
+    <linearGradient id="mcpIndigo" x1="4" y1="4" x2="60" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#312e81" />
+    </linearGradient>
+    <linearGradient id="coreGlow" x1="20" y1="20" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
+    <linearGradient id="shieldAccent" x1="16" y1="12" x2="48" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Rounded Badge -->
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#mcpIndigo)" stroke="#6366f1" stroke-width="1.5" />
+
+  <!-- Left: AI Client Node -->
+  <circle cx="16" cy="32" r="5" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="2" />
+  <circle cx="16" cy="32" r="2" fill="#4f46e5" />
+
+  <!-- Right: Target System Node -->
+  <circle cx="48" cy="32" r="5" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="2" />
+  <circle cx="48" cy="32" r="2" fill="#4f46e5" />
+
+  <!-- Connecting Bus Lines -->
+  <path d="M21 32H26" stroke="#93c5fd" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="2 2" />
+  <path d="M38 32H43" stroke="#86efac" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="2 2" />
+
+  <!-- Central Controlled Gateway (Shield / Hexagon) -->
+  <path d="M32 17L42 22V33C42 39.5 37.8 45.2 32 47C26.2 45.2 22 39.5 22 33V22L32 17Z" 
+        fill="#0f172a" stroke="url(#shieldAccent)" stroke-width="2.5" stroke-linejoin="round" />
+
+  <!-- Core Gateway Lock / Keyhole Symbol -->
+  <circle cx="32" cy="29" r="3.2" fill="#38bdf8" />
+  <path d="M30.6 31.5H33.4L34 38H30L30.6 31.5Z" fill="#38bdf8" />
+
+  <!-- Controlled Flow Dots (Input & Verified Output) -->
+  <circle cx="23.5" cy="32" r="1.2" fill="#38bdf8" />
+  <circle cx="40.5" cy="32" r="1.2" fill="#10b981" />
+</svg>

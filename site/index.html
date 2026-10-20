@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="es" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Gateway de seguridad Go-only para Model Context Protocol en Raspberry Pi y Linux. Delimita accesos, evalúa políticas deterministas y audita operaciones de agentes IA.">
+  <meta name="author" content="Yorologo">
+  <meta name="robots" content="index, follow">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="MCP-Pi — Tu IA. Tus sistemas. Tus reglas.">
+  <meta property="og:description" content="Conecta agentes de inteligencia artificial a tus sistemas con políticas estrictas, privilegios acotados y auditoría inmutable desde un Raspberry Pi.">
+  <meta property="og:locale" content="es_ES">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="MCP-Pi — Tu IA. Tus sistemas. Tus reglas.">
+  <meta name="twitter:description" content="Gateway de seguridad Go-only para Model Context Protocol. Tu IA. Tus sistemas. Tus reglas.">
+
+  <title>MCP-Pi — Tu IA. Tus sistemas. Tus reglas.</title>
+  <link rel="icon" type="image/svg+xml" href="./assets/brand/favicon.svg">
+  <link rel="stylesheet" href="./assets/css/site.css">
+</head>
+<body class="min-h-screen text-slate-800 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 antialiased selection:bg-indigo-500 selection:text-white transition-colors duration-200">
+
+  <!-- Skip link for keyboard accessibility -->
+  <a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-indigo-600 focus:text-white focus:rounded-md focus:shadow-lg focus:outline-none" data-i18n="nav-skip">Saltar al contenido principal</a>
+
+  <!-- Header / Navigation -->
+  <header class="sticky top-0 z-40 w-full border-b border-slate-200/80 dark:border-slate-800/80 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Brand Logo & Name -->
+      <a href="#inicio" class="flex items-center space-x-3 group rounded-md p-1 focus-visible:ring-2 focus-visible:ring-indigo-500">
+        <img src="./assets/brand/isotipo.svg" alt="MCP-Pi Logo" class="w-9 h-9 flex-shrink-0 transition-transform group-hover:scale-105" width="36" height="36" data-i18n-alt="imageAlt">
+        <div class="flex flex-col">
+          <span class="font-extrabold text-lg tracking-tight text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">MCP-Pi</span>
+          <span class="text-[10px] uppercase font-bold tracking-widest text-indigo-600 dark:text-indigo-400">Security Gateway</span>
+        </div>
+      </a>
+
+      <!-- Desktop Navigation Links -->
+      <nav class="hidden md:flex items-center space-x-1 lg:space-x-2 text-sm font-medium" aria-label="Navegación principal">
+        <a href="#inicio" class="px-3 py-2 rounded-md hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="nav-home">Inicio</a>
+        <a href="#why" class="px-3 py-2 rounded-md hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="nav-why">¿Por qué MCP-Pi?</a>
+        <a href="#arquitectura" class="px-3 py-2 rounded-md hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="nav-arch">Arquitectura</a>
+        <a href="#capacidades" class="px-3 py-2 rounded-md hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="nav-capabilities">Capacidades</a>
+        <a href="#demo" class="px-3 py-2 rounded-md text-indigo-600 dark:text-indigo-400 font-semibold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition-colors" data-i18n="nav-demo">Demo Interactiva</a>
+        <a href="#guia" class="px-3 py-2 rounded-md hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="nav-guide">Guía Rápida</a>
+        <a href="#faq" class="px-3 py-2 rounded-md hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="nav-faq">Preguntas</a>
+      </nav>
+
+      <!-- Action Controls: Language, Theme, GitHub -->
+      <div class="flex items-center space-x-2 sm:space-x-3">
+        <!-- Language Switcher -->
+        <button id="languageToggle" type="button" class="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="Cambiar a inglés" data-i18n-aria="nav-lang-toggle">
+          <span id="languageLabel">EN</span>
+        </button>
+
+        <!-- Theme Switcher -->
+        <button id="themeToggle" type="button" class="p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="Cambiar tema de color" data-i18n-aria="nav-theme-toggle">
+          <svg id="themeIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+          </svg>
+        </button>
+
+        <!-- GitHub External Link -->
+        <a href="https://github.com/yorologo/MCP-Pi" target="_blank" rel="noopener noreferrer" class="hidden sm:inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg text-white bg-slate-900 hover:bg-slate-800 dark:bg-indigo-600 dark:hover:bg-indigo-500 transition-colors" aria-label="Ver repositorio MCP-Pi en GitHub">
+          <svg class="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+          </svg>
+          <span data-i18n="nav-github">GitHub</span>
+        </a>
+
+        <!-- Mobile Menu Toggle Button -->
+        <button id="mobileMenuBtn" type="button" class="md:hidden p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300" aria-label="Abrir menú de navegación" aria-expanded="false" data-i18n-aria="nav-menu-toggle">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile Dropdown Navigation -->
+    <nav id="mobileMenu" class="hidden md:hidden border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 pt-2 pb-4 space-y-1" aria-label="Navegación móvil">
+      <a href="#inicio" class="block px-3 py-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-home">Inicio</a>
+      <a href="#why" class="block px-3 py-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-why">¿Por qué MCP-Pi?</a>
+      <a href="#arquitectura" class="block px-3 py-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-arch">Arquitectura</a>
+      <a href="#capacidades" class="block px-3 py-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-capabilities">Capacidades</a>
+      <a href="#demo" class="block px-3 py-2 rounded-md text-indigo-600 dark:text-indigo-400 font-semibold hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-demo">Demo Interactiva</a>
+      <a href="#guia" class="block px-3 py-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-guide">Guía Rápida</a>
+      <a href="#faq" class="block px-3 py-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800" data-i18n="nav-faq">Preguntas</a>
+      <a href="https://github.com/yorologo/MCP-Pi" target="_blank" rel="noopener noreferrer" class="block px-3 py-2 text-indigo-600 dark:text-indigo-400 font-medium" data-i18n="nav-github">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <main id="main-content">
+
+    <!-- 1. HERO SECTION -->
+    <section id="inicio" class="relative pt-12 pb-20 md:pt-20 md:pb-28 overflow-hidden">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+        <div class="text-center max-w-3xl mx-auto">
+          
+          <!-- Badge -->
+          <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80 mb-6">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span data-i18n="hero-badge">Gateway de Seguridad Go-Only · Appliance ARMv6 / Linux</span>
+          </div>
+
+          <!-- Headline & Slogan -->
+          <h1 class="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight text-slate-900 dark:text-white mb-6" data-i18n="hero-title">
+            Tu IA. Tus sistemas. Tus reglas.
+          </h1>
+
+          <!-- Value Description -->
+          <p class="text-lg sm:text-xl text-slate-600 dark:text-slate-300 mb-8 leading-relaxed font-normal" data-i18n="hero-desc">
+            MCP-Pi es la barrera de seguridad física y lógica entre modelos de inteligencia artificial y tu infraestructura real. Ejecuta un único binario Go en Raspberry Pi que valida identidades, restringe herramientas y audita cada invocación sin comprometer claves SSH ni contraseñas privilegiadas.
+          </p>
+
+          <!-- Primary Actions -->
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 mb-12">
+            <a href="#demo" class="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3.5 text-base font-semibold rounded-xl text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 transition-all hover:-translate-y-0.5" data-i18n="hero-cta-demo">
+              Explorar Laboratorio Demo
+            </a>
+            <a href="#guia" class="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3.5 text-base font-semibold rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all" data-i18n="hero-cta-guide">
+              Guía de Instalación
+            </a>
+            <a href="https://github.com/yorologo/MCP-Pi" target="_blank" rel="noopener noreferrer" class="w-full sm:w-auto inline-flex items-center justify-center px-5 py-3.5 text-base font-semibold rounded-xl text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="hero-cta-github">
+              Ver en GitHub ↗
+            </a>
+          </div>
+
+          <!-- Feature Highlights / Pills -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 text-left">
+            <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm">
+              <div class="text-indigo-600 dark:text-indigo-400 font-bold text-sm mb-1" data-i18n="hero-pill-cloud">Cero Nube</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">100% autónomo y privado en tu LAN</div>
+            </div>
+            <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm">
+              <div class="text-indigo-600 dark:text-indigo-400 font-bold text-sm mb-1" data-i18n="hero-pill-deny">Denegación por Defecto</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">Rechazo estricto si falta un grant</div>
+            </div>
+            <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm">
+              <div class="text-indigo-600 dark:text-indigo-400 font-bold text-sm mb-1" data-i18n="hero-pill-arm">Binario ARMv6 / x64</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">Consumo mínimo en Raspberry Pi</div>
+            </div>
+            <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm">
+              <div class="text-indigo-600 dark:text-indigo-400 font-bold text-sm mb-1" data-i18n="hero-pill-audit">Auditoría SQLite</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">Trazabilidad inmutable de cada call</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. WHY MCP-PI (Problem vs Solution) -->
+    <section id="why" class="py-16 md:py-24 border-t border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/40">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-3xl mx-auto mb-16">
+          <div class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-2" data-i18n="why-badge">Control y Seguridad</div>
+          <h2 class="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mb-4" data-i18n="why-title">¿Por qué existe MCP-Pi?</h2>
+          <p class="text-base sm:text-lg text-slate-600 dark:text-slate-300" data-i18n="why-subtitle">
+            Cerrar la brecha de confianza entre agentes autónomos e infraestructura de producción.
+          </p>
+        </div>
+
+        <!-- Problem vs Solution Cards -->
+        <div class="grid md:grid-cols-2 gap-8 mb-12">
+          <!-- The Risk -->
+          <div class="p-6 sm:p-8 rounded-2xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/50 dark:bg-rose-950/20">
+            <div class="flex items-center space-x-3 mb-4">
+              <span class="p-2 rounded-lg bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 font-bold">✕</span>
+              <h3 class="text-xl font-bold text-slate-900 dark:text-white" data-i18n="why-problem-title">El riesgo: Dar acceso directo a la IA</h3>
+            </div>
+            <p class="text-slate-600 dark:text-slate-300 text-sm sm:text-base leading-relaxed" data-i18n="why-problem-desc">
+              Conectar un asistente de IA (Claude Desktop, Cursor, agentes autónomos) directamente a tus servidores mediante SSH o shell libre es peligroso: un desliz de prompt injection o una alucinación puede alterar bases de datos, ejecutar comandos destructivos o extraer secretos sin supervisión.
+            </p>
+          </div>
+
+          <!-- The Solution -->
+          <div class="p-6 sm:p-8 rounded-2xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/20">
+            <div class="flex items-center space-x-3 mb-4">
+              <span class="p-2 rounded-lg bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 font-bold">✔</span>
+              <h3 class="text-xl font-bold text-slate-900 dark:text-white" data-i18n="why-solution-title">La solución: Aislamiento físico y estricto</h3>
+            </div>
+            <p class="text-slate-600 dark:text-slate-300 text-sm sm:text-base leading-relaxed" data-i18n="why-solution-desc">
+              MCP-Pi se sitúa en medio como un appliance de hardware independiente (un Raspberry Pi de bajo consumo). La IA solo puede comunicarse con el gateway mediante el protocolo Model Context Protocol (MCP). Cada llamada es interceptada, verificada y auditada antes de tocar cualquier equipo de destino.
+            </p>
+          </div>
+        </div>
+
+        <!-- 3 Pillars Grid -->
+        <div class="grid sm:grid-cols-3 gap-6">
+          <div class="p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <h4 class="font-bold text-base text-slate-900 dark:text-white mb-2" data-i18n="why-card1-title">Menor Privilegio Real</h4>
+            <p class="text-sm text-slate-600 dark:text-slate-400" data-i18n="why-card1-desc">La IA solo ve y ejecuta las herramientas y proyectos autorizados para su ID específico.</p>
+          </div>
+          <div class="p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <h4 class="font-bold text-base text-slate-900 dark:text-white mb-2" data-i18n="why-card2-title">Transporte SSH Anclado</h4>
+            <p class="text-sm text-slate-600 dark:text-slate-400" data-i18n="why-card2-desc">Huellas criptográficas de host verificadas. Se rechazan suplantaciones de servidores remotos.</p>
+          </div>
+          <div class="p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <h4 class="font-bold text-base text-slate-900 dark:text-white mb-2" data-i18n="why-card3-title">Kill Switches Globales</h4>
+            <p class="text-sm text-slate-600 dark:text-slate-400" data-i18n="why-card3-desc">Desactiva escrituras o ejecución de comandos instantáneamente sin apagar los servicios de consulta.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 3. ARCHITECTURE SECTION -->
+    <section id="arquitectura" class="py-16 md:py-24 border-t border-slate-200 dark:border-slate-800">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="text-center max-w-3xl mx-auto mb-16">
+          <div class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-2" data-i18n="arch-badge">Diseño Robusto</div>
+          <h2 class="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mb-4" data-i18n="arch-title">Arquitectura y Flujo de Peticiones</h2>
+          <p class="text-base sm:text-lg text-slate-600 dark:text-slate-300" data-i18n="arch-subtitle">
+            Un único núcleo en Go que comparte transporte MCP, registry SQLite y motor de políticas.
+          </p>
+        </div>
+
+        <!-- Architecture Flow Diagram Card -->
+        <div class="p-6 sm:p-10 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm mb-16 overflow-x-auto">
+          <div class="min-w-[640px] flex items-center justify-between gap-4 py-4 text-center">
+            
+            <!-- Node 1: AI Client -->
+            <div class="flex-1 p-5 rounded-xl border-2 border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/30">
+              <div class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-1">Entrada</div>
+              <div class="font-bold text-slate-900 dark:text-white text-base mb-1" data-i18n="arch-diag-client">Cliente IA (MCP)</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400" data-i18n="arch-diag-client-sub">Claude, Cursor, CLI, Stdio/SSE</div>
+            </div>
+
+            <!-- Arrow -->
+            <div class="flex-shrink-0 text-slate-400 font-mono text-xl">➔</div>
+
+            <!-- Node 2: MCP-Pi Gateway -->
+            <div class="flex-1 p-5 rounded-xl border-2 border-indigo-500 dark:border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-500/20">
+              <div class="text-xs font-bold uppercase tracking-wider text-indigo-200 mb-1">Filtro y Control</div>
+              <div class="font-bold text-white text-base mb-1" data-i18n="arch-diag-gateway">MCP-Pi Gateway (Go Core)</div>
+              <div class="text-xs text-indigo-100" data-i18n="arch-diag-gateway-sub">Policy Engine · Registry SQLite · Admin</div>
+            </div>
+
+            <!-- Arrow -->
+            <div class="flex-shrink-0 text-slate-400 font-mono text-xl">➔</div>
+
+            <!-- Node 3: Target Systems -->
+            <div class="flex-1 p-5 rounded-xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/30">
+              <div class="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1">Ejecución</div>
+              <div class="font-bold text-slate-900 dark:text-white text-base mb-1" data-i18n="arch-diag-target">Targets Remotos</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400" data-i18n="arch-diag-target-sub">Linux SSH / Windows PowerShell</div>
+            </div>
+
+          </div>
+
+          <!-- Audit Sub-flow banner -->
+          <div class="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-center space-x-2 text-xs text-slate-500 dark:text-slate-400">
+            <span class="font-bold text-indigo-600 dark:text-indigo-400" data-i18n="arch-diag-audit">Auditoría SQLite:</span>
+            <span data-i18n="arch-diag-audit-sub">Evidencia forense inmutable persistida en cada call antes de responder al cliente.</span>
+          </div>
+        </div>
+
+        <!-- 5-Step Execution Pipeline List -->
+        <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div class="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+            <div class="text-indigo-600 dark:text-indigo-400 font-black text-lg mb-1">01</div>
+            <h4 class="font-bold text-sm text-slate-900 dark:text-white mb-2" data-i18n="arch-step1-title">1. Vinculación</h4>
+            <p class="text-xs text-slate-600 dark:text-slate-400 leading-relaxed" data-i18n="arch-step1-desc">El cliente autentica su identidad al conectarse; no puede suplantar otro cliente en los argumentos.</p>
+          </div>
+          <div class="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+            <div class="text-indigo-600 dark:text-indigo-400 font-black text-lg mb-1">02</div>
+            <h4 class="font-bold text-sm text-slate-900 dark:text-white mb-2" data-i18n="arch-step2-title">2. Proyección</h4>
+            <p class="text-xs text-slate-600 dark:text-slate-400 leading-relaxed" data-i18n="arch-step2-desc">La lista de herramientas (tools/list) solo expone las capacidades asignadas al cliente conectado.</p>
+          </div>
+          <div class="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+            <div class="text-indigo-600 dark:text-indigo-400 font-black text-lg mb-1">03</div>
+            <h4 class="font-bold text-sm text-slate-900 dark:text-white mb-2" data-i18n="arch-step3-title">3. Política</h4>
+            <p class="text-xs text-slate-600 dark:text-slate-400 leading-relaxed" data-i18n="arch-step3-desc">El Policy Engine valida grants, alcances por proyecto, límites de directorio y switches de emergencia.</p>
+          </div>
+          <div class="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+            <div class="text-indigo-600 dark:text-indigo-400 font-black text-lg mb-1">04</div>
+            <h4 class="font-bold text-sm text-slate-900 dark:text-white mb-2" data-i18n="arch-step4-title">4. Ejecución</h4>
+            <p class="text-xs text-slate-600 dark:text-slate-400 leading-relaxed" data-i18n="arch-step4-desc">Transporte SSH seguro con clave de host anclada. Operaciones nativas en POSIX o PowerShell.</p>
+          </div>
+          <div class="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+            <div class="text-indigo-600 dark:text-indigo-400 font-black text-lg mb-1">05</div>
+            <h4 class="font-bold text-sm text-slate-900 dark:text-white mb-2" data-i18n="arch-step5-title">5. Auditoría</h4>
+            <p class="text-xs text-slate-600 dark:text-slate-400 leading-relaxed" data-i18n="arch-step5-desc">Cada autorización, denegación y resultado se registra en SQLite con huella criptográfica.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 4. CAPABILITIES & LIMITS SECTION -->
+    <section id="capacidades" class="py-16 md:py-24 border-t border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/40">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="text-center max-w-3xl mx-auto mb-16">
+          <div class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-2" data-i18n="cap-badge">Transparencia Técnica</div>
+          <h2 class="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mb-4" data-i18n="cap-title">Capacidades y Límites Verificables</h2>
+          <p class="text-base sm:text-lg text-slate-600 dark:text-slate-300" data-i18n="cap-subtitle">
+            Claridad absoluta en lo que MCP-Pi hace y en lo que rehúsa hacer por diseño.
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-8">
+          
+          <!-- Column 1: Guaranteed Capabilities -->
+          <div class="p-6 sm:p-8 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <div class="flex items-center space-x-3 mb-6">
+              <span class="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">✔</span>
+              <h3 class="text-xl font-bold text-slate-900 dark:text-white" data-i18n="cap-col1-title">Capacidades Garantizadas</h3>
+            </div>
+            <div class="space-y-4">
+              <div class="border-l-2 border-emerald-500 pl-4 py-1">
+                <h4 class="font-semibold text-sm text-slate-900 dark:text-white mb-1" data-i18n="cap-feat1-title">Transportes Stdio y HTTP SSE</h4>
+                <p class="text-xs text-slate-600 dark:text-slate-400" data-i18n="cap-feat1-desc">Soporte nativo para asistentes de escritorio locales y agentes remotos en red local.</p>
+              </div>
+              <div class="border-l-2 border-emerald-500 pl-4 py-1">
+                <h4 class="font-semibold text-sm text-slate-900 dark:text-white mb-1" data-i18n="cap-feat2-title">Grants y Alcance por Proyecto</h4>
+                <p class="text-xs text-slate-600 dark:text-slate-400" data-i18n="cap-feat2-desc">Restricción de operaciones de archivos al subárbol de proyecto; previene escape por symlinks.</p>
+              </div>
+              <div class="border-l-2 border-emerald-500 pl-4 py-1">
+                <h4 class="font-semibold text-sm text-slate-900 dark:text-white mb-1" data-i18n="cap-feat3-title">Elevación target_admin Controlada</h4>
+                <p class="text-xs text-slate-600 dark:text-slate-400" data-i18n="cap-feat3-desc">Requiere doble autorización explícita antes de ejecutar comandos con privilegios elevados.</p>
+              </div>
+              <div class="border-l-2 border-emerald-500 pl-4 py-1">
+                <h4 class="font-semibold text-sm text-slate-900 dark:text-white mb-1" data-i18n="cap-feat4-title">Eficiencia Extrema en ARMv6</h4>
+                <p class="text-xs text-slate-600 dark:text-slate-400" data-i18n="cap-feat4-desc">Construido en Go estático sin dependencias de Python ni Node en tiempo de ejecución.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 2: Strict Security Boundaries -->
+          <div class="p-6 sm:p-8 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <div class="flex items-center space-x-3 mb-6">
+              <span class="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">🛡</span>
+              <h3 class="text-xl font-bold text-slate-900 dark:text-white" data-i18n="cap-col2-title">Límites Estrictos de Seguridad</h3>
+            </div>
+            <div class="space-y-4">
+              <div class="border-l-2 border-indigo-500 pl-4 py-1">
+                <h4 class="font-semibold text-sm text-slate-900 dark:text-white mb-1" data-i18n="cap-limit1-title">No Ejecuta Payloads Sin Autorizar</h4>
+                <p class="text-xs text-slate-600 dark:text-slate-400" data-i18n="cap-limit1-desc">Cualquier herramienta fuera de catálogo o sin grant produce una denegación inmediata.</p>
+              </div>
+              <div class="border-l-2 border-indigo-500 pl-4 py-1">
+                <h4 class="font-semibold text-sm text-slate-900 dark:text-white mb-1" data-i18n="cap-limit2-title">No Oculta Errores ni Falla Abierto</h4>
+                <p class="text-xs text-slate-600 dark:text-slate-400" data-i18n="cap-limit2-desc">Discrepancias de clave de host, timeouts o caídas de red terminan en cierre seguro.</p>
+              </div>
+              <div class="border-l-2 border-indigo-500 pl-4 py-1">
+                <h4 class="font-semibold text-sm text-slate-900 dark:text-white mb-1" data-i18n="cap-limit3-title">Sin Dependencia de Servicios Cloud</h4>
+                <p class="text-xs text-slate-600 dark:text-slate-400" data-i18n="cap-limit3-desc">100% autónomo y privado en tu red local. Tus datos e historial nunca salen de tu control.</p>
+              </div>
+              <div class="border-l-2 border-indigo-500 pl-4 py-1">
+                <h4 class="font-semibold text-sm text-slate-900 dark:text-white mb-1" data-i18n="cap-limit4-title">Sin Bypass de Sudo</h4>
+                <p class="text-xs text-slate-600 dark:text-slate-400" data-i18n="cap-limit4-desc">El appliance no contiene reglas permisivas de sudoers ni credenciales maestras.</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 5. PROVEN USE CASES -->
+    <section id="casos" class="py-16 md:py-24 border-t border-slate-200 dark:border-slate-800">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="text-center max-w-3xl mx-auto mb-16">
+          <div class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-2" data-i18n="use-badge">Casos Reales</div>
+          <h2 class="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mb-4" data-i18n="use-title">Casos de Uso Comprobados</h2>
+          <p class="text-base sm:text-lg text-slate-600 dark:text-slate-300" data-i18n="use-subtitle">
+            Escenarios prácticos donde MCP-Pi protege tu entorno operativo.
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-8">
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col justify-between">
+            <div>
+              <div class="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold mb-4">01</div>
+              <h3 class="text-lg font-bold text-slate-900 dark:text-white mb-3" data-i18n="use-case1-title">Asistente IA de Código con Acceso Acotado</h3>
+              <p class="text-sm text-slate-600 dark:text-slate-400 leading-relaxed" data-i18n="use-case1-desc">
+                Permite que agentes como Claude o Cursor lean archivos de configuración y consulten estados git en un servidor de desarrollo, impidiendo categóricamente que editen archivos del sistema o reinicien servicios.
+              </p>
+            </div>
+            <div class="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+              #DevOps #ClaudeDesktop #Cursor
+            </div>
+          </div>
+
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col justify-between">
+            <div>
+              <div class="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold mb-4">02</div>
+              <h3 class="text-lg font-bold text-slate-900 dark:text-white mb-3" data-i18n="use-case2-title">Laboratorio Homelab y Domótica en Raspberry Pi</h3>
+              <p class="text-sm text-slate-600 dark:text-slate-400 leading-relaxed" data-i18n="use-case2-desc">
+                Convierte un Raspberry Pi Zero W o Pi 3 en un centinela de seguridad para orquestar microservicios, consultar métricas y ejecutar tareas programadas de forma totalmente privada.
+              </p>
+            </div>
+            <div class="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+              #RaspberryPi #HomeLab #IoT
+            </div>
+          </div>
+
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col justify-between">
+            <div>
+              <div class="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold mb-4">03</div>
+              <h3 class="text-lg font-bold text-slate-900 dark:text-white mb-3" data-i18n="use-case3-title">Auditoría Forense y Cumplimiento</h3>
+              <p class="text-sm text-slate-600 dark:text-slate-400 leading-relaxed" data-i18n="use-case3-desc">
+                Registro transparente e incontrovertible de cada petición realizada por modelos de IA, con marcas de tiempo, cliente invocador, target, decisión y código de error para trazabilidad total.
+              </p>
+            </div>
+            <div class="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+              #Forensics #AuditTrail #SQLite
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 6. DEMO: INTERACTIVE AUTHORIZATION LAB -->
+    <section id="demo" class="py-16 md:py-24 border-t border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-900/50">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="text-center max-w-3xl mx-auto mb-10">
+          <div class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-2" data-i18n="demo-badge">Laboratorio Interactivo</div>
+          <h2 class="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mb-4" data-i18n="demo-title">Simulador de Decisiones de Autorización</h2>
+          <p class="text-base sm:text-lg text-slate-600 dark:text-slate-300" data-i18n="demo-subtitle">
+            Explora cómo evalúa el Policy Engine oficial de MCP-Pi ante diversas peticiones y permisos.
+          </p>
+        </div>
+
+        <!-- Permanent Simulation Notice Badge -->
+        <div class="max-w-4xl mx-auto mb-10 p-4 rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 text-xs sm:text-sm flex items-start space-x-3">
+          <span class="text-base flex-shrink-0" aria-hidden="true">⚠️</span>
+          <p class="font-medium" data-i18n="demo-sim-notice">
+            Laboratorio de Simulación Educativo: Los escenarios presentados corresponden a casos de prueba oficiales y reproducibles del motor de políticas de MCP-Pi. No ejecuta comandos reales ni interactúa con servidores privados.
+          </p>
+        </div>
+
+        <!-- Scenario Selector Box -->
+        <div class="max-w-4xl mx-auto mb-8 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <label for="scenarioSelector" class="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2" data-i18n="demo-select-label">
+            Selecciona un escenario educativo:
+          </label>
+          <select id="scenarioSelector" class="w-full px-4 py-3 text-sm font-medium rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="read_authorized">[ALLOW] Lectura autorizada con grant de proyecto</option>
+            <option value="anonymous_denied">[DENY] Denegación por cliente anónimo</option>
+            <option value="unknown_tool">[DENY] Herramienta fuera de catálogo</option>
+            <option value="missing_grant">[DENY] Falta de grant para la herramienta</option>
+            <option value="writes_disabled_killswitch">[DENY] Kill switch global de escritura activo</option>
+            <option value="target_shell_disabled">[DENY] Ejecución de shell denegada por switch</option>
+            <option value="privilege_denied_target_admin">[DENY] Elevación denegada sin grant target_admin</option>
+            <option value="privilege_authorized">[ALLOW] Elevación autorizada con grant target_admin</option>
+            <option value="health_killswitch_exception">[ALLOW] Excepción vital: health con gateway desactivado</option>
+          </select>
+          <p id="demoScenarioDesc" class="mt-3 text-xs sm:text-sm text-slate-600 dark:text-slate-400 leading-relaxed italic">
+            El cliente autenticado cuenta con un grant activo con capacidad 'read' delimitado al proyecto 'core-api' en el target 'pi-node-01'. La operación se autoriza y audita.
+          </p>
+        </div>
+
+        <!-- 4-Grid Laboratory Display -->
+        <div class="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
+          
+          <!-- Panel 1: Request Payload -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white" data-i18n="demo-req-heading">1. Petición del Cliente MCP</h3>
+                <button type="button" data-copy-target="demoRequestJson" class="text-xs font-semibold px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100" data-i18n="demo-copy-btn">Copiar JSON</button>
+              </div>
+              <pre class="p-4 rounded-xl bg-slate-900 text-slate-100 text-xs font-mono overflow-x-auto"><code id="demoRequestJson">{
+  "client_id": "claude-dev-agent",
+  "tool": "read_file",
+  "target_id": "pi-node-01",
+  "project_id": "core-api",
+  "params": {
+    "path": "src/config/app.json"
+  },
+  "privilege_requested": "standard"
+}</code></pre>
+            </div>
+            <div class="mt-4 text-[11px] text-slate-500 dark:text-slate-400">
+              Validación de firma y argumentos antes de ejecutar la política.
+            </div>
+          </div>
+
+          <!-- Panel 2: Decision & Reason -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white" data-i18n="demo-decision-heading">2. Veredicto del Policy Engine</h3>
+                <div id="demoVerdictBadge" class="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold status-pill-allow">
+                  <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  <span data-i18n="demo-verdict-allow">AUTORIZADO</span>
+                </div>
+              </div>
+
+              <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 mb-4">
+                <div class="text-xs uppercase font-bold text-slate-500 dark:text-slate-400 mb-1">Código de Evaluación:</div>
+                <div id="demoDecisionCode" class="font-mono text-sm font-bold text-indigo-600 dark:text-indigo-400 mb-2">AUTHORIZED</div>
+                <div class="text-xs uppercase font-bold text-slate-500 dark:text-slate-400 mb-1">Justificación Oficial:</div>
+                <div id="demoDecisionReason" class="text-xs text-slate-700 dark:text-slate-300">Operación de lectura autorizada conforme a la política y grant asignado.</div>
+              </div>
+            </div>
+
+            <div class="text-[11px] text-slate-500 dark:text-slate-400">
+              Evaluación estricta sin fallback inseguro (Deny by default).
+            </div>
+          </div>
+
+          <!-- Panel 3: Verification Pipeline Trace -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col justify-between">
+            <div>
+              <h3 class="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white mb-4" data-i18n="demo-trace-heading">3. Pipeline de Verificación</h3>
+              <div id="demoTraceContainer" class="space-y-1">
+                <div class="flex items-start space-x-3 text-sm py-1.5 border-b border-slate-100 dark:border-slate-800">
+                  <span class="text-emerald-500 font-bold flex-shrink-0" aria-label="Passed">✔</span>
+                  <span class="text-slate-700 dark:text-slate-300">Identidad verificada: claude-dev-agent (habilitado)</span>
+                </div>
+                <div class="flex items-start space-x-3 text-sm py-1.5 border-b border-slate-100 dark:border-slate-800">
+                  <span class="text-emerald-500 font-bold flex-shrink-0" aria-label="Passed">✔</span>
+                  <span class="text-slate-700 dark:text-slate-300">Herramienta 'read_file' válida en catálogo (requiere 'read' o '*')</span>
+                </div>
+                <div class="flex items-start space-x-3 text-sm py-1.5 border-b border-slate-100 dark:border-slate-800">
+                  <span class="text-emerald-500 font-bold flex-shrink-0" aria-label="Passed">✔</span>
+                  <span class="text-slate-700 dark:text-slate-300">Grant coincidente: client=claude-dev-agent, cap=read, scope=pi-node-01/core-api</span>
+                </div>
+                <div class="flex items-start space-x-3 text-sm py-1.5 border-b border-slate-100 dark:border-slate-800">
+                  <span class="text-emerald-500 font-bold flex-shrink-0" aria-label="Passed">✔</span>
+                  <span class="text-slate-700 dark:text-slate-300">gateway_enabled=true; no requiere writes_enabled ni shell_enabled</span>
+                </div>
+                <div class="flex items-start space-x-3 text-sm py-1.5 border-b border-slate-100 dark:border-slate-800">
+                  <span class="text-emerald-500 font-bold flex-shrink-0" aria-label="Passed">✔</span>
+                  <span class="text-slate-700 dark:text-slate-300">Ruta dentro de la raíz de proyecto /opt/core-api (sin path traversal)</span>
+                </div>
+                <div class="flex items-start space-x-3 text-sm py-1.5">
+                  <span class="text-emerald-500 font-bold flex-shrink-0" aria-label="Passed">✔</span>
+                  <span class="text-slate-700 dark:text-slate-300">Privilegio estándar no requiere elevación</span>
+                </div>
+              </div>
+            </div>
+            <div class="mt-4 text-[11px] text-slate-500 dark:text-slate-400">
+              Secuencia atómica y determinista ejecutada en Go Core.
+            </div>
+          </div>
+
+          <!-- Panel 4: SQLite Audit Trail Record -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white" data-i18n="demo-audit-heading">4. Registro de Auditoría Generado</h3>
+                <button type="button" data-copy-target="demoAuditJson" class="text-xs font-semibold px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100" data-i18n="demo-copy-btn">Copiar JSON</button>
+              </div>
+              <pre class="p-4 rounded-xl bg-slate-900 text-slate-100 text-xs font-mono overflow-x-auto"><code id="demoAuditJson">{
+  "event_id": "aud_9a41b2c",
+  "timestamp": "2026-10-20T07:40:12Z",
+  "client_id": "claude-dev-agent",
+  "tool": "read_file",
+  "target_id": "pi-node-01",
+  "project_id": "core-api",
+  "decision": "ALLOW",
+  "error_code": null,
+  "sha256": "b6058d338de9dec9083389ff05f459c71ed2c4d87214b60f1ad892c5021a8f90"
+}</code></pre>
+            </div>
+            <div class="mt-4 text-[11px] text-slate-500 dark:text-slate-400">
+              Escrito en SQLite interno con hash criptográfico para evidencia forense.
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 7. GUIDE: QUICKSTART & DOCUMENTATION -->
+    <section id="guia" class="py-16 md:py-24 border-t border-slate-200 dark:border-slate-800">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="text-center max-w-3xl mx-auto mb-16">
+          <div class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-2" data-i18n="guide-badge">Puesta en Marcha</div>
+          <h2 class="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mb-4" data-i18n="guide-title">Guía de Instalación y Uso Rápido</h2>
+          <p class="text-base sm:text-lg text-slate-600 dark:text-slate-300" data-i18n="guide-subtitle">
+            Instala y configura MCP-Pi en minutos directamente desde la última versión compatible.
+          </p>
+        </div>
+
+        <!-- System Requirements Box -->
+        <div class="max-w-4xl mx-auto mb-12 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <h3 class="text-lg font-bold text-slate-900 dark:text-white mb-3" data-i18n="guide-req-heading">Requisitos Verificados</h3>
+          <ul class="space-y-2 text-sm text-slate-600 dark:text-slate-300 list-disc list-inside">
+            <li data-i18n="guide-req-1">Hardware: Raspberry Pi (ARMv6, ARMv7, ARM64) o Linux x86_64</li>
+            <li data-i18n="guide-req-2">Sistema Operativo: Linux con systemd (Raspberry Pi OS, Debian 11/12, Ubuntu)</li>
+            <li data-i18n="guide-req-3">Software: OpenSSH client y SQLite 3.35+ (Cero dependencias de Python o Node)</li>
+          </ul>
+        </div>
+
+        <!-- 4 Installation Steps -->
+        <div class="max-w-4xl mx-auto space-y-8 mb-16">
+          
+          <!-- Step 1 -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <h4 class="text-base font-bold text-slate-900 dark:text-white mb-2" data-i18n="guide-step1-title">1. Descargar la release oficial</h4>
+            <p class="text-sm text-slate-600 dark:text-slate-400 mb-3" data-i18n="guide-step1-desc">
+              Descarga el paquete inmutable empaquetado para tu arquitectura desde GitHub Releases.
+            </p>
+            <div class="flex items-center justify-between p-3 rounded-xl bg-slate-900 text-slate-100 text-xs font-mono">
+              <span id="cmdStep1">curl -LO https://github.com/yorologo/MCP-Pi/releases/latest/download/MCP-Pi-linux-armv6.tar.gz</span>
+              <button type="button" data-copy-target="cmdStep1" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800" data-i18n="demo-copy-btn">Copiar</button>
+            </div>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <h4 class="text-base font-bold text-slate-900 dark:text-white mb-2" data-i18n="guide-step2-title">2. Verificar checksums SHA256</h4>
+            <p class="text-sm text-slate-600 dark:text-slate-400 mb-3" data-i18n="guide-step2-desc">
+              Comprueba la integridad criptográfica del paquete antes de la extracción.
+            </p>
+            <div class="flex items-center justify-between p-3 rounded-xl bg-slate-900 text-slate-100 text-xs font-mono">
+              <span id="cmdStep2">sha256sum -c SHA256SUMS</span>
+              <button type="button" data-copy-target="cmdStep2" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800" data-i18n="demo-copy-btn">Copiar</button>
+            </div>
+          </div>
+
+          <!-- Step 3 -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <h4 class="text-base font-bold text-slate-900 dark:text-white mb-2" data-i18n="guide-step3-title">3. Ejecutar el instalador canónico</h4>
+            <p class="text-sm text-slate-600 dark:text-slate-400 mb-3" data-i18n="guide-step3-desc">
+              El script install.sh configura los usuarios del sistema, servicios systemd y la base de datos inicial.
+            </p>
+            <div class="flex items-center justify-between p-3 rounded-xl bg-slate-900 text-slate-100 text-xs font-mono">
+              <span id="cmdStep3">sudo ./install.sh && sudo systemctl status mcp-gateway.target</span>
+              <button type="button" data-copy-target="cmdStep3" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800" data-i18n="demo-copy-btn">Copiar</button>
+            </div>
+          </div>
+
+          <!-- Step 4 -->
+          <div class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <h4 class="text-base font-bold text-slate-900 dark:text-white mb-2" data-i18n="guide-step4-title">4. Conectar tu cliente MCP</h4>
+            <p class="text-sm text-slate-600 dark:text-slate-400 mb-3" data-i18n="guide-step4-desc">
+              Añade la configuración en Claude Desktop (claude_desktop_config.json) o tu agente preferido:
+            </p>
+            <pre class="p-4 rounded-xl bg-slate-900 text-slate-100 text-xs font-mono overflow-x-auto"><code id="codeMcpConfig">{
+  "mcpServers": {
+    "mcp-pi": {
+      "command": "/home/mcp-gateway/mcp-gateway/bin/mcp-gateway-client-stdio",
+      "args": ["--client", "claude-desktop"]
+    }
+  }
+}</code></pre>
+          </div>
+
+        </div>
+
+        <!-- Canonical Repository Documentation Links -->
+        <div class="max-w-4xl mx-auto p-8 rounded-2xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20">
+          <h3 class="text-xl font-bold text-slate-900 dark:text-white mb-2" data-i18n="docs-heading">Documentación Canónica del Repositorio</h3>
+          <p class="text-sm text-slate-600 dark:text-slate-300 mb-6" data-i18n="docs-sub">
+            Consulta las guías técnicas completas mantenidas en el repositorio principal:
+          </p>
+          <div class="grid sm:grid-cols-2 gap-3 text-sm">
+            <a href="https://github.com/yorologo/MCP-Pi/blob/main/docs/architecture.md" target="_blank" rel="noopener noreferrer" class="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center justify-between" data-i18n="docs-link-arch">
+              Arquitectura del Sistema (docs/architecture.md) ↗
+            </a>
+            <a href="https://github.com/yorologo/MCP-Pi/blob/main/docs/configuration.md" target="_blank" rel="noopener noreferrer" class="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center justify-between" data-i18n="docs-link-config">
+              Guía de Configuración (docs/configuration.md) ↗
+            </a>
+            <a href="https://github.com/yorologo/MCP-Pi/blob/main/docs/operations.md" target="_blank" rel="noopener noreferrer" class="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center justify-between" data-i18n="docs-link-ops">
+              Operaciones y Mantenimiento (docs/operations.md) ↗
+            </a>
+            <a href="https://github.com/yorologo/MCP-Pi/blob/main/docs/security.md" target="_blank" rel="noopener noreferrer" class="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center justify-between" data-i18n="docs-link-sec">
+              Modelo de Seguridad (docs/security.md) ↗
+            </a>
+            <a href="https://github.com/yorologo/MCP-Pi/blob/main/docs/recovery.md" target="_blank" rel="noopener noreferrer" class="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center justify-between" data-i18n="docs-link-rec">
+              Recuperación y Respaldo (docs/recovery.md) ↗
+            </a>
+            <a href="https://github.com/yorologo/MCP-Pi/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer" class="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center justify-between" data-i18n="docs-link-contrib">
+              Guía de Contribución (CONTRIBUTING.md) ↗
+            </a>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 8. FAQ: FREQUENTLY ASKED QUESTIONS -->
+    <section id="faq" class="py-16 md:py-24 border-t border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/40">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="text-center mb-16">
+          <div class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-2" data-i18n="faq-badge">Resolución de Dudas</div>
+          <h2 class="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mb-4" data-i18n="faq-title">Preguntas Frecuentes</h2>
+          <p class="text-base sm:text-lg text-slate-600 dark:text-slate-300" data-i18n="faq-subtitle">
+            Respuestas directas a dudas comunes de arquitectura, seguridad y despliegue.
+          </p>
+        </div>
+
+        <div class="space-y-4">
+          
+          <details class="group p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <summary class="flex items-center justify-between cursor-pointer font-bold text-base text-slate-900 dark:text-white focus:outline-none">
+              <span data-i18n="faq-q1">¿Por qué alojar el gateway en un Raspberry Pi independiente?</span>
+              <span class="faq-icon ml-4 text-slate-400 group-hover:text-indigo-600 transition-transform">▼</span>
+            </summary>
+            <p class="mt-4 text-sm text-slate-600 dark:text-slate-400 leading-relaxed border-t border-slate-100 dark:border-slate-800 pt-3" data-i18n="faq-a1">
+              El aislamiento físico garantiza que incluso si un agente de IA se descontrola o sufre un prompt injection severo, no tiene acceso a las claves maestras ni al hardware del servidor central. El Raspberry Pi actúa como una aduana insobornable.
+            </p>
+          </details>
+
+          <details class="group p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <summary class="flex items-center justify-between cursor-pointer font-bold text-base text-slate-900 dark:text-white focus:outline-none">
+              <span data-i18n="faq-q2">¿Cómo se previenen ataques de inyección de comandos?</span>
+              <span class="faq-icon ml-4 text-slate-400 group-hover:text-indigo-600 transition-transform">▼</span>
+            </summary>
+            <p class="mt-4 text-sm text-slate-600 dark:text-slate-400 leading-relaxed border-t border-slate-100 dark:border-slate-800 pt-3" data-i18n="faq-a2">
+              MCP-Pi no pasa comandos de texto a una shell abierta a menos que se use la herramienta 'run_command' con el switch 'shell_enabled=true' y un grant explícito. Las mutaciones de archivos usan primitivas atómicas del sistema de archivos con validación estricta de límites de proyecto.
+            </p>
+          </details>
+
+          <details class="group p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <summary class="flex items-center justify-between cursor-pointer font-bold text-base text-slate-900 dark:text-white focus:outline-none">
+              <span data-i18n="faq-q3">¿Qué ocurre si cambia la clave de host SSH del servidor remoto?</span>
+              <span class="faq-icon ml-4 text-slate-400 group-hover:text-indigo-600 transition-transform">▼</span>
+            </summary>
+            <p class="mt-4 text-sm text-slate-600 dark:text-slate-400 leading-relaxed border-t border-slate-100 dark:border-slate-800 pt-3" data-i18n="faq-a3">
+              MCP-Pi falla cerrado inmediatamente. Si la clave no coincide con el pin criptográfico registrado, la conexión se rechaza para evitar ataques Man-in-the-Middle, registrando una alerta en la auditoría.
+            </p>
+          </details>
+
+          <details class="group p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <summary class="flex items-center justify-between cursor-pointer font-bold text-base text-slate-900 dark:text-white focus:outline-none">
+              <span data-i18n="faq-q4">¿Requiere conexión a internet o servicios externos?</span>
+              <span class="faq-icon ml-4 text-slate-400 group-hover:text-indigo-600 transition-transform">▼</span>
+            </summary>
+            <p class="mt-4 text-sm text-slate-600 dark:text-slate-400 leading-relaxed border-t border-slate-100 dark:border-slate-800 pt-3" data-i18n="faq-a4">
+              No. MCP-Pi funciona de manera 100% local en tu red privada. No envía telemetría ni depende de APIs de terceros para evaluar políticas o gestionar el registry.
+            </p>
+          </details>
+
+          <details class="group p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <summary class="flex items-center justify-between cursor-pointer font-bold text-base text-slate-900 dark:text-white focus:outline-none">
+              <span data-i18n="faq-q5">¿Cómo se auditan las operaciones?</span>
+              <span class="faq-icon ml-4 text-slate-400 group-hover:text-indigo-600 transition-transform">▼</span>
+            </summary>
+            <p class="mt-4 text-sm text-slate-600 dark:text-slate-400 leading-relaxed border-t border-slate-100 dark:border-slate-800 pt-3" data-i18n="faq-a5">
+              Todas las peticiones recibidas, aprobadas y denegadas se escriben en la base de datos SQLite interna con marcas de tiempo ISO, identificadores de cliente, herramientas invocadas y códigos de resultado.
+            </p>
+          </details>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 py-12 text-sm text-slate-500 dark:text-slate-400">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+        
+        <!-- Brand Info -->
+        <div class="md:col-span-2 space-y-3">
+          <div class="flex items-center space-x-2">
+            <img src="./assets/brand/isotipo.svg" alt="MCP-Pi Logo" class="w-6 h-6" width="24" height="24">
+            <span class="font-extrabold text-base text-slate-900 dark:text-white">MCP-Pi</span>
+          </div>
+          <p class="text-xs text-slate-600 dark:text-slate-400 max-w-sm" data-i18n="footer-tagline">
+            Gateway de seguridad Go-only para Model Context Protocol.
+          </p>
+          <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+            Tu IA. Tus sistemas. Tus reglas.
+          </div>
+        </div>
+
+        <!-- Ecosystem Links -->
+        <div>
+          <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 dark:text-white mb-3" data-i18n="footer-ecosystem">Ecosistema Yorologo</h4>
+          <ul class="space-y-2 text-xs">
+            <li><a href="https://yorologo.github.io/Me/" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">yorologo/Me ↗</a></li>
+            <li><a href="https://github.com/yorologo/DealHunter" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">DealHunter ↗</a></li>
+            <li><a href="https://github.com/yorologo/AdFilter" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">AdFilter ↗</a></li>
+          </ul>
+        </div>
+
+        <!-- Technical Resources -->
+        <div>
+          <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 dark:text-white mb-3" data-i18n="footer-resources">Recursos Técnicos</h4>
+          <ul class="space-y-2 text-xs">
+            <li><a href="https://github.com/yorologo/MCP-Pi" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="footer-repo">Repositorio MCP-Pi ↗</a></li>
+            <li><a href="https://github.com/yorologo/MCP-Pi/releases" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="footer-releases">Versiones y Releases ↗</a></li>
+            <li><a href="https://github.com/yorologo/MCP-Pi/issues" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" data-i18n="footer-issues">Reporte de Problemas ↗</a></li>
+          </ul>
+        </div>
+
+      </div>
+
+      <div class="pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between text-xs space-y-4 sm:space-y-0">
+        <p data-i18n="footer-rights">
+          Proyecto de código abierto bajo licencia MIT · Ecosistema Yorologo
+        </p>
+        <p class="font-mono text-slate-400">
+          © <span id="currentYear">2026</span> Yorologo
+        </p>
+      </div>
+
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="./assets/js/demo-scenarios.js"></script>
+  <script src="./assets/js/site.js"></script>
+</body>
+</html>
