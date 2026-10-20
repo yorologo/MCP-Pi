@@ -54,16 +54,30 @@ jobs:
 
       - name: Check real browser behavior using the runner's Chrome
         run: |
-          google-chrome --headless --no-sandbox --disable-gpu \
-            --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+          google-chrome \
+            --headless=new \
+            --no-sandbox \
+            --disable-gpu \
+            --disable-dev-shm-usage \
+            --remote-debugging-port=9222 \
             --user-data-dir="$RUNNER_TEMP/mcp-site-browser" about:blank \
             > "$RUNNER_TEMP/mcp-site-browser.log" 2>&1 &
           browser_pid=$!
           trap 'kill "$browser_pid" 2>/dev/null || true' EXIT
-          for attempt in $(seq 1 50); do
-            if curl --fail --silent http://127.0.0.1:9222/json/version >/dev/null; then break; fi
-            sleep 0.1
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:9222/json/version >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 0.2
           done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::Chrome failed to start or open port 9222 within 12 seconds."
+            echo "--- Chrome log ($RUNNER_TEMP/mcp-site-browser.log) ---"
+            cat "$RUNNER_TEMP/mcp-site-browser.log" || true
+            exit 1
+          fi
           node site/scripts/browser-smoke.mjs http://127.0.0.1:9222
 
       - name: Prepare public files only
