@@ -189,7 +189,7 @@ func (s *SSHTransport) ProbePrivilege(
 		command = "include_boot=" + include + "; " +
 			"b64(){ if [ -z \"$1\" ]; then printf ''; else printf '%s' \"$1\" | base64 | tr -d '\\n'; fi; }; " +
 			"boot=''; if [ \"$include_boot\" -eq 1 ] && [ -r /proc/sys/kernel/random/boot_id ]; then boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\\r\\n'); fi; " +
-			"user=$(id -un 2>/dev/null || printf ''); uid=$(id -u 2>/dev/null || printf ''); euid=$uid; " +
+			"user=$(whoami 2>/dev/null || id -un 2>/dev/null || printf ''); uid=$(id -u 2>/dev/null || printf ''); euid=$uid; " +
 			"termux=0; if [ -n \"${TERMUX_VERSION:-}\" ]; then termux=1; else case \"${PREFIX:-}\" in *com.termux*) termux=1;; esac; fi; " +
 			"has_sudo=0; command -v sudo >/dev/null 2>&1 && has_sudo=1; has_rish=0; command -v rish >/dev/null 2>&1 && has_rish=1; " +
 			"current=standard; maximum=standard; backend=''; ready=0; reason=''; shell_elevate=0; independent=''; " +
@@ -301,7 +301,7 @@ func (s *SSHTransport) ProbeFacts(
 			`case "$release" in *[Mm]icrosoft*) [ "$termux" -eq 1 ] || environment=wsl;; esac; ` +
 			`ram=''; if [ -r /proc/meminfo ]; then ram=$(awk '/^MemTotal:/{print int($2/1024); exit}' /proc/meminfo 2>/dev/null); fi; ` +
 			`boot=''; if [ "$include_boot" -eq 1 ] && [ -r /proc/sys/kernel/random/boot_id ]; then boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r\n'); fi; ` +
-			`user=$(id -un 2>/dev/null || printf ''); uid=$(id -u 2>/dev/null || printf ''); euid=$uid; ` +
+			`user=$(whoami 2>/dev/null || id -un 2>/dev/null || printf ''); uid=$(id -u 2>/dev/null || printf ''); euid=$uid; ` +
 			`current=standard; maximum=standard; backend=''; ready=0; reason=''; shell_elevate=0; independent=''; ` +
 			`has_sudo=0; command -v sudo >/dev/null 2>&1 && has_sudo=1; has_rish=0; command -v rish >/dev/null 2>&1 && has_rish=1; ` +
 			`if [ "$euid" = "0" ]; then current=root; maximum=root; backend=direct; ready=1; ` +
