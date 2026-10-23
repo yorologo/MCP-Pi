@@ -239,7 +239,11 @@ func cmdDoctor(args []string) int {
 		return 1
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	doctorTimeout := 30 * time.Second
+	if os.Getenv("MCP_GATEWAY_POSTBOOT") == "1" {
+		doctorTimeout = 90 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), doctorTimeout)
 	defer cancel()
 
 	resp := c.Invoke(ctx, core.Invocation{ClientID: "local"}, "gateway_doctor", map[string]any{
