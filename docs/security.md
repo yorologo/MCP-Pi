@@ -65,6 +65,9 @@ Human approval is scoped to the same Client/Target/Project. One-use approval is 
 
 Native privilege mechanisms are reused after authorization (for example verified root/Administrator SSH or Shizuku/rish where supported). MCP-Pi does not weaken host sudo/UAC policy or filter arbitrary shell strings as a substitute for authorization.
 
+On Android/Termux devices with Magisk, a detectable /debug_ramdisk/su is an independent privilege elevator. A standard trusted shell on this Target requires scoped target_admin because the shell could invoke su itself. A privilege=required request runs only after a bounded non-interactive Magisk probe returns exactly UID 0; execution then uses the verified native Magisk su, never a counterfeit Shizuku helper. Approval in the Magisk manager remains a separate Android-side prerequisite.
+
+
 ## Kill switches and SSH trust
 
 Disabled gateway/write/shell state denies the operation; it never routes elsewhere.

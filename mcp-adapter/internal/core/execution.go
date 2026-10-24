@@ -92,7 +92,7 @@ func (c *Core) authorizeExecutionPrivilege(
 	state.TransportAlreadyElevated = state.CurrentLevel == "root" || state.CurrentLevel == "administrator"
 	bootID, _ := facts["boot_id"].(string)
 
-	if privilegeRequest != "required" && !state.TransportAlreadyElevated {
+	if privilegeRequest != "required" && !state.TransportAlreadyElevated && state.IndependentElevator != "magisk-su" {
 		return state, nil
 	}
 
@@ -240,7 +240,7 @@ func (c *Core) CheckRunCommandAccess(
 				Reason:    "Privileged SSH user is not configured",
 				Privilege: privilege,
 			}, nil
-		case state.Backend != "privileged-ssh" && state.Backend != "shizuku" && !state.TransportAlreadyElevated:
+		case state.Backend != "privileged-ssh" && state.Backend != "shizuku" && state.Backend != "magisk-su" && !state.TransportAlreadyElevated:
 			return ExecutionAccessCheck{
 				Code:      "PRIVILEGE_SETUP_REQUIRED",
 				Reason:    fmt.Sprintf("Privilege backend %q cannot execute this request safely", state.Backend),
@@ -347,6 +347,10 @@ func (c *Core) RunCommand(
 				return errorResponse("run_command", "PRIVILEGE_SETUP_REQUIRED", "Privileged SSH user is not configured", requestID, targetID, projectID, started)
 			}
 			executionTarget.User = target.PrivilegeUser
+		} else if backend == "magisk-su" {
+			executionEnv = nil
+			executionCWD = "/"
+			remoteCommand = prepareMagiskCommand(command, req.Env)
 		} else if backend == "shizuku" {
 			executionEnv = nil
 			executionCWD = "/"
@@ -557,6 +561,22 @@ func (c *Core) RunTask(
 		return errorResponseWithResult("run_task", "TASK_EXIT_NONZERO", fmt.Sprintf("Task %q exited with status %d", taskName, res.ExitCode), result, requestID, targetID, projectID, started)
 	}
 	return successResponse("run_task", result, requestID, targetID, projectID, started)
+}
+
+// prepareMagiskCommand is called only after policy and Magisk UID 0 verification.
+func prepareMagiskCommand(command string, env map[string]string) string {
+	var envParts []string
+	for k, v := range env {
+		if isSafeEnvKey(k) {
+			envParts = append(envParts, fmt.Sprintf("export %s=%s;", k, shellQuote(v)))
+		}
+	}
+	prefix := strings.Join(envParts, " ")
+	if prefix != "" {
+		prefix += " "
+	}
+	inner := fmt.Sprintf("%scd / && %s", prefix, command)
+	return fmt.Sprintf("/debug_ramdisk/su -c %s", shellQuote(inner))
 }
 
 func prepareShizukuCommand(command string, env map[string]string) string {

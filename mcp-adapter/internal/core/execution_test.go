@@ -211,6 +211,89 @@ func TestStandardRunCommandDoesNotDependOnPrivilegeBackendReadiness(t *testing.T
 	}
 }
 
+// A Magisk-capable Termux transport can use su even for an ordinary SSH
+// command. Standard requests therefore require target_admin without
+// automatically running the requested command as root.
+func TestMagiskStandardShellRequiresExplicitAdminGrant(t *testing.T) {
+	core, fake, ctx := seededExecutionCore(t)
+	fake.facts = map[string]any{
+		"probe_status": "ok",
+		"privilege": map[string]any{
+			"current_level": "standard", "maximum_level": "root",
+			"backend": "magisk-su", "backend_ready": false,
+			"transport_already_elevated": false,
+			"shell_can_elevate":          true, "independent_elevator": "magisk-su",
+		},
+	}
+	check, err := core.CheckRunCommandAccess(ctx, "test-client", "termux-main", "MCP_Local", "standard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if check.Allowed || check.Code != "PRIVILEGE_GRANT_REQUIRED" {
+		t.Fatalf("standard Magisk capable SSH must require target_admin: %+v", check)
+	}
+	resp := core.RunCommand(ctx, "req-magisk-deny", "test-client", "termux-main", "MCP_Local", "id", CommandRequest{Privilege: "standard"})
+	if resp.OK || resp.Error.Code != "PRIVILEGE_GRANT_REQUIRED" {
+		t.Fatalf("Magisk-capable standard command bypassed admin gate: %+v", resp)
+	}
+
+	if _, err := core.store.AddGrant(ctx, registry.Grant{
+		ClientID: "test-client", TargetID: "termux-main", ProjectID: "MCP_Local",
+		Capability: policy.TargetPrivilegeCapability, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.store.DB().ExecContext(ctx, "UPDATE targets SET privilege_policy='always_allow' WHERE id='termux-main'"); err != nil {
+		t.Fatal(err)
+	}
+	resp = core.RunCommand(ctx, "req-magisk-standard", "test-client", "termux-main", "MCP_Local", "id", CommandRequest{Privilege: "standard"})
+	if !resp.OK {
+		t.Fatalf("authorized normal SSH should still work: %+v", resp)
+	}
+	if fake.lastCommand != "id" {
+		t.Fatalf("standard SSH unexpectedly elevated: %q", fake.lastCommand)
+	}
+}
+
+func TestMagiskRequiredCommandNeedsVerifiedBackendAndUsesSu(t *testing.T) {
+	core, fake, ctx := seededExecutionCore(t)
+	fake.facts = map[string]any{
+		"probe_status": "ok",
+		"privilege": map[string]any{
+			"current_level": "standard", "maximum_level": "root",
+			"backend": "magisk-su", "backend_ready": false,
+			"transport_already_elevated": false,
+			"shell_can_elevate":          true, "independent_elevator": "magisk-su",
+		},
+	}
+	if _, err := core.store.AddGrant(ctx, registry.Grant{
+		ClientID: "test-client", TargetID: "target-elevated", ProjectID: "MCP_Local",
+		Capability: policy.TargetPrivilegeCapability, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.store.DB().ExecContext(ctx, "UPDATE targets SET privilege_policy='always_allow' WHERE id='target-elevated'"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := core.RunCommand(ctx, "req-magisk-notready", "test-client", "target-elevated", "MCP_Local", "id", CommandRequest{Privilege: "required"})
+	if resp.OK || resp.Error.Code != "PRIVILEGE_SETUP_REQUIRED" {
+		t.Fatalf("unverified Magisk must fail closed: %+v", resp)
+	}
+	fake.facts["privilege"].(map[string]any)["backend_ready"] = true
+	fake.facts["privilege"].(map[string]any)["maximum_level"] = "root"
+	resp = core.RunCommand(ctx, "req-magisk-elevated", "test-client", "target-elevated", "MCP_Local", "/system/bin/id -u", CommandRequest{Privilege: "required"})
+	if !resp.OK {
+		t.Fatalf("verified Magisk command denied: %+v", resp)
+	}
+	if got, want := fake.lastCommand, "/debug_ramdisk/su -c 'cd / && /system/bin/id -u'"; got != want {
+		t.Fatalf("magisk shell=%q want=%q", got, want)
+	}
+	if fake.lastCWD != "/" || fake.lastEnv != nil || !fake.verifyPrivilegeBackend {
+		t.Fatalf("Magisk isolation/capability verification not applied: cwd=%q env=%v verified=%t", fake.lastCWD, fake.lastEnv, fake.verifyPrivilegeBackend)
+	}
+}
+
 func TestCheckRunCommandAccessUsesPrivilegeGateWithoutConsumingApproval(t *testing.T) {
 	core, fake, ctx := seededExecutionCore(t)
 

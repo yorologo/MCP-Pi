@@ -113,6 +113,20 @@ func (s *SSHTransport) probeShizukuUID(
 	}
 }
 
+// probeMagiskUID checks whether Magisk grants non-interactive UID 0
+// to this particular Termux SSH identity.
+func (s *SSHTransport) probeMagiskUID(ctx context.Context, target registry.Target, timeout time.Duration) (string, bool, string) {
+	probeTimeout := 5 * time.Second
+	if timeout > 0 && timeout < probeTimeout {
+		probeTimeout = timeout
+	}
+	result, err := s.RunCommand(ctx, target, "if command -v timeout >/dev/null 2>&1; then timeout -k 1s 3s /debug_ramdisk/su -c '/system/bin/id -u' 2>/dev/null; else exit 1; fi", CommandOptions{Timeout: probeTimeout})
+	if err != nil || !result.OK() || strings.TrimSpace(result.Stdout) != "0" {
+		return "", false, "Magisk did not grant non-interactive UID 0 to the SSH Termux identity"
+	}
+	return "root", true, ""
+}
+
 func (s *SSHTransport) applyPrivilegeBackendVerification(
 	ctx context.Context,
 	target registry.Target,
@@ -140,6 +154,20 @@ func (s *SSHTransport) applyPrivilegeBackendVerification(
 
 	features, _ := facts["features"].(map[string]any)
 	if features == nil {
+		return
+	}
+	if features["termux"] == true && features["magisk"] == true && privilege["current_level"] != "root" {
+		level, ready, reason := s.probeMagiskUID(ctx, target, timeout)
+		privilege["backend"] = "magisk-su"
+		privilege["shell_can_elevate"] = true
+		privilege["independent_elevator"] = "magisk-su"
+		privilege["backend_ready"] = ready
+		if ready {
+			privilege["maximum_level"] = level
+			privilege["backend_reason"] = nil
+		} else {
+			privilege["backend_reason"] = reason
+		}
 		return
 	}
 	if features["termux"] == true && features["shizuku"] == true && privilege["current_level"] != "root" {
@@ -191,15 +219,16 @@ func (s *SSHTransport) ProbePrivilege(
 			"boot=''; if [ \"$include_boot\" -eq 1 ] && [ -r /proc/sys/kernel/random/boot_id ]; then boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\\r\\n'); fi; " +
 			"user=$(whoami 2>/dev/null || id -un 2>/dev/null || printf ''); uid=$(id -u 2>/dev/null || printf ''); euid=$uid; " +
 			"termux=0; if [ -n \"${TERMUX_VERSION:-}\" ]; then termux=1; else case \"${PREFIX:-}\" in *com.termux*) termux=1;; esac; fi; " +
-			"has_sudo=0; command -v sudo >/dev/null 2>&1 && has_sudo=1; has_rish=0; command -v rish >/dev/null 2>&1 && has_rish=1; " +
+			"has_sudo=0; command -v sudo >/dev/null 2>&1 && has_sudo=1; has_rish=0; command -v rish >/dev/null 2>&1 && has_rish=1; has_magisk=0; if [ \"$termux\" -eq 1 ] && [ -x /debug_ramdisk/su ]; then has_magisk=1; fi; " +
 			"current=standard; maximum=standard; backend=''; ready=0; reason=''; shell_elevate=0; independent=''; " +
 			"if [ \"$euid\" = \"0\" ]; then current=root; maximum=root; backend=direct; ready=1; " +
+			"elif [ \"$termux\" -eq 1 ] && [ \"$has_magisk\" -eq 1 ]; then backend=magisk-su; maximum=root; shell_elevate=1; independent=magisk-su; reason='Magisk root authorization not verified'; " +
 			"elif [ \"$termux\" -eq 1 ] && [ \"$has_rish\" -eq 1 ]; then backend=shizuku; maximum=elevated; shell_elevate=1; independent=shizuku; reason='Shizuku readiness not verified'; " +
 			"elif [ \"$has_sudo\" -eq 1 ]; then maximum=root; backend=sudo; reason='sudo is installed, but arbitrary sudo shell execution is intentionally not accepted as a safe MCP-Pi backend'; fi; " +
 			"printf 'probe_status=ok\\n'; printf 'boot_id_b64=%s\\n' \"$(b64 \"$boot\")\"; printf 'identity_user_b64=%s\\n' \"$(b64 \"$user\")\"; " +
 			"printf 'uid=%s\\neuid=%s\\ncurrent_level=%s\\nmaximum_level=%s\\nbackend=%s\\nbackend_ready=%s\\n' \"$uid\" \"$euid\" \"$current\" \"$maximum\" \"$backend\" \"$ready\"; " +
 			"printf 'backend_reason_b64=%s\\n' \"$(b64 \"$reason\")\"; printf 'transport_already_elevated=%s\\nshell_can_elevate=%s\\nindependent_elevator=%s\\n' \"$([ \"$current\" = root ] && printf 1 || printf 0)\" \"$shell_elevate\" \"$independent\"; " +
-			"printf 'feature_sudo=%s\\nfeature_termux=%s\\nfeature_shizuku=%s\\n' \"$has_sudo\" \"$termux\" \"$has_rish\""
+			"printf 'feature_sudo=%s\\nfeature_termux=%s\\nfeature_shizuku=%s\\nfeature_magisk=%s\\n' \"$has_sudo\" \"$termux\" \"$has_rish\" \"$has_magisk\""
 	}
 
 	result, err := s.RunCommand(ctx, target, command, CommandOptions{Timeout: timeout})
@@ -252,6 +281,7 @@ func (s *SSHTransport) ProbePrivilege(
 			"sudo":    factsBool(kv, "feature_sudo"),
 			"termux":  factsBool(kv, "feature_termux"),
 			"shizuku": factsBool(kv, "feature_shizuku"),
+			"magisk":  factsBool(kv, "feature_magisk"),
 		},
 	}
 	if verifyPrivilegeBackend {
@@ -303,8 +333,9 @@ func (s *SSHTransport) ProbeFacts(
 			`boot=''; if [ "$include_boot" -eq 1 ] && [ -r /proc/sys/kernel/random/boot_id ]; then boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r\n'); fi; ` +
 			`user=$(whoami 2>/dev/null || id -un 2>/dev/null || printf ''); uid=$(id -u 2>/dev/null || printf ''); euid=$uid; ` +
 			`current=standard; maximum=standard; backend=''; ready=0; reason=''; shell_elevate=0; independent=''; ` +
-			`has_sudo=0; command -v sudo >/dev/null 2>&1 && has_sudo=1; has_rish=0; command -v rish >/dev/null 2>&1 && has_rish=1; ` +
+			`has_sudo=0; command -v sudo >/dev/null 2>&1 && has_sudo=1; has_rish=0; command -v rish >/dev/null 2>&1 && has_rish=1; has_magisk=0; if [ "$termux" -eq 1 ] && [ -x /debug_ramdisk/su ]; then has_magisk=1; fi; ` +
 			`if [ "$euid" = "0" ]; then current=root; maximum=root; backend=direct; ready=1; ` +
+			`elif [ "$termux" -eq 1 ] && [ "$has_magisk" -eq 1 ]; then backend=magisk-su; maximum=root; shell_elevate=1; independent=magisk-su; reason='Magisk root authorization not verified'; ` +
 			`elif [ "$termux" -eq 1 ] && [ "$has_rish" -eq 1 ]; then backend=shizuku; maximum=elevated; shell_elevate=1; independent=shizuku; reason='Shizuku readiness not verified'; ` +
 			`elif [ "$has_sudo" -eq 1 ]; then maximum=root; backend=sudo; reason='sudo is installed, but arbitrary sudo shell execution is intentionally not accepted as a safe MCP-Pi backend'; ` +
 			`if sudo -n true >/dev/null 2>&1; then shell_elevate=1; independent=sudo-noninteractive; fi; fi; ` +
@@ -312,9 +343,9 @@ func (s *SSHTransport) ProbeFacts(
 			`pm=''; for n in pkg apt apt-get dnf yum pacman apk brew; do if command -v "$n" >/dev/null 2>&1; then [ -z "$pm" ] && pm=$n || pm="$pm,$n"; fi; done; ` +
 			`nodep=$(command -v node 2>/dev/null || true); gop=$(command -v go 2>/dev/null || true); gitp=$(command -v git 2>/dev/null || true); ` +
 			`osid=''; osver=''; if [ -r /etc/os-release ]; then osid=$(sed -n 's/^ID=//p' /etc/os-release | head -n1 | tr -d '"'); osver=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | head -n1 | tr -d '"'); fi; ` +
-			`printf 'probe_status=ok\nos_b64=%s\narch_b64=%s\nshell_b64=%s\nenvironment=%s\nram_mb=%s\nboot_id_b64=%s\nidentity_user_b64=%s\nuid=%s\neuid=%s\ncurrent_level=%s\nmaximum_level=%s\nbackend=%s\nbackend_ready=%s\nbackend_reason_b64=%s\ntransport_already_elevated=%s\nshell_can_elevate=%s\nindependent_elevator=%s\nfeature_sudo=%s\nfeature_termux=%s\nfeature_shizuku=%s\nservice_manager=%s\npackage_managers=%s\nruntime_node_b64=%s\nruntime_go_b64=%s\nruntime_git_b64=%s\nos_release_id_b64=%s\nos_release_version_b64=%s\n' ` +
+			`printf 'probe_status=ok\nos_b64=%s\narch_b64=%s\nshell_b64=%s\nenvironment=%s\nram_mb=%s\nboot_id_b64=%s\nidentity_user_b64=%s\nuid=%s\neuid=%s\ncurrent_level=%s\nmaximum_level=%s\nbackend=%s\nbackend_ready=%s\nbackend_reason_b64=%s\ntransport_already_elevated=%s\nshell_can_elevate=%s\nindependent_elevator=%s\nfeature_sudo=%s\nfeature_termux=%s\nfeature_shizuku=%s\nfeature_magisk=%s\nservice_manager=%s\npackage_managers=%s\nruntime_node_b64=%s\nruntime_go_b64=%s\nruntime_git_b64=%s\nos_release_id_b64=%s\nos_release_version_b64=%s\n' ` +
 			`"$(b64 "$os")" "$(b64 "$arch")" "$(b64 "$shell")" "$environment" "$ram" "$(b64 "$boot")" "$(b64 "$user")" "$uid" "$euid" "$current" "$maximum" "$backend" "$ready" "$(b64 "$reason")" ` +
-			`"$([ "$current" = root ] && printf 1 || printf 0)" "$shell_elevate" "$independent" "$has_sudo" "$termux" "$has_rish" "$service" "$pm" "$(b64 "$nodep")" "$(b64 "$gop")" "$(b64 "$gitp")" "$(b64 "$osid")" "$(b64 "$osver")"`
+			`"$([ "$current" = root ] && printf 1 || printf 0)" "$shell_elevate" "$independent" "$has_sudo" "$termux" "$has_rish" "$has_magisk" "$service" "$pm" "$(b64 "$nodep")" "$(b64 "$gop")" "$(b64 "$gitp")" "$(b64 "$osid")" "$(b64 "$osver")"`
 	}
 
 	result, err := s.RunCommand(ctx, target, command, CommandOptions{Timeout: timeout})
@@ -400,6 +431,7 @@ func (s *SSHTransport) ProbeFacts(
 			"sudo":    factsBool(kv, "feature_sudo"),
 			"termux":  factsBool(kv, "feature_termux"),
 			"shizuku": factsBool(kv, "feature_shizuku"),
+			"magisk":  factsBool(kv, "feature_magisk"),
 		},
 	}
 	osID := factsString(kv, "os_release_id_b64")

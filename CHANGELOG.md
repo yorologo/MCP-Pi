@@ -4,6 +4,15 @@ All notable user-visible changes are documented here. Immutable Git tags/GitHub 
 
 ## Unreleased
 
+## 1.6.12
+
+### Android / Magisk administrative privilege
+- Android/Termux Targets recognize the native Magisk su executable when available and verify non-interactive UID 0 before accepting it as an administrative backend. Failed probes deny elevated execution.
+- Privileged requests execute through verified Magisk su after the existing explicit target_admin, Target policy, approval and audit gates. No extra Android root service or credential is installed.
+- Standard trusted shells on Magisk-capable Termux Targets require the explicit administrative grant because arbitrary shell code could invoke su. Ordinary commands are not automatically elevated.
+- Adds regression tests for missing grants, unavailable privileged backends, non-elevated normal shells and the Magisk command wrapper.
+
+
 ## 1.6.11
 
 ### Reliability / production acceptance
